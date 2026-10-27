@@ -4,7 +4,7 @@
 
 - [x] 1.1 核对公开查询、错误惯例与持久读取边界，确认无已有结构化缺省入口，冻结最小方案。
 - [x] 1.2 用真实签名包回归验证安装未选择/重开、选择保留 disabled 状态及失败不误报，再实现单一 sentinel 分支与 API 文档。
-- [ ] 1.3 执行相关 integration/race/vet、全仓验证与严格规格检查，独立 Review 公开分类。
+- [x] 1.3 执行相关 integration/race/vet、全仓验证与严格规格检查，独立 Review 公开分类。
 - [ ] 1.4 只提交本写集并发布，提供不可变 commit、版本和 changelog；不修改消费者或 VM。
 
 ## 验证与发布
@@ -23,7 +23,13 @@ darwin/arm64，Go 1.27.3：
 - `openspec validate --all --strict`：5 个 change 通过；另两个既有 change 的归档来源 INFO 仍在，不是本 change 的失败。
 - `npm run docs:test`、`npm run docs:build`、`npm run docs:sync` 通过。广义 packagehost 路径触发 9 页基线提醒：已核对 API/概念/入门/CLI/Host/运维/恢复/故障处理的原声明不变，只更新 packages 的查询语义；packages 的 codeCommit 在实现提交产生后固定到包含新 API 的提交。
 
-独立 Review 和公开下载验证尚未完成。没有运行 Windows/VM 或消费者回归，不扩展已有平台认证结论。
+没有运行 Windows/VM 或消费者回归，不扩展已有平台认证结论。
+
+### 独立 Review
+
+非作者只读审查固定实现提交 `063f92ae95335e8579ca5056a900ecac2a7451b6` 相对 `eee6f6be8565901d92a66ce61c230d4c954ba647`，未发现可确认缺陷或阻塞项。确认没有遗漏已有公开 typed getter，Selected 关闭优先级和 get 路径未变，新的分类仅来自缺映射分支。
+
+审查者在 darwin/arm64、Go 1.27.3 独立运行 5 项 packagehost integration/race 10 次，含安装/选择/重开、关闭、真实读取失败、返回值独立复制和 Snapshot 篡改/信任检查；另运行 5 项 Host integration/race 回归及 `go vet -mod=readonly -tags=integration ./packagehost .`，全部通过。Host 测试使用 fixture runtime，不作为该审查实际运行 native/WASI 或 Windows 的证据。审查没有修改仓库或消费者，未重复作者全仓门禁；公开下载验证另行记录。
 
 ## Changelog
 
