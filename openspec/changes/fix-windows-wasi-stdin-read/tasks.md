@@ -72,7 +72,7 @@
 - Module sum：`h1:rGlDcJZOO8AK/kk2iY4wMQS3YStlZiIiOnQ7pyvhzJs=`
 - go.mod sum：`h1:u0eONvN7OoZfKBwUs38LMF5Uo+ISas143TMBj4eYB4U=`
 
-从下载 module 重建 Windows amd64/arm64 worker 成功，生产源与已测试修复逐字节一致。下载 module 的构建元数据包含发布版本，二进制摘要与本地工作树构建不同，不能将它们冒充已传入 VM 的相同二进制：
+从下载 module 重建 Windows amd64/arm64 worker 成功，生产源与已测试修复逐字节一致。下载 module 目录内执行 go build 与 Git 工作树构建的 VCS 元数据不同（版本化 go install 另记录准确 module 版本），二进制摘要与本地工作树构建不同，不能将它们冒充已传入 VM 的相同二进制：
 
 | 公开 module 重建产物 | SHA-256（仅交叉构建，未实跑） |
 |---|---|
