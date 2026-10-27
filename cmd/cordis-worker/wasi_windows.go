@@ -5,10 +5,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"os"
+	"syscall"
 	"unsafe"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+	wasisys "github.com/tetratelabs/wazero/experimental/sys"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 	"golang.org/x/sys/windows"
 )
@@ -34,6 +36,9 @@ func instantiateWASI(ctx context.Context, runtime wazero.Runtime) error {
 	}
 	builder := runtime.NewHostModuleBuilder(wasi_snapshot_preview1.ModuleName)
 	wasi_snapshot_preview1.NewFunctionExporter().ExportFunctions(builder)
+	if err := overrideStdinRead(builder, original, os.Stdin); err != nil {
+		return err
+	}
 	builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, module api.Module, stack []uint64) {
 		input, output, count, result := uint32(stack[0]), uint32(stack[1]), uint32(stack[2]), uint32(stack[3])
 		if count > ^uint32(0)/48 {
@@ -80,6 +85,71 @@ func instantiateWASI(ctx context.Context, runtime wazero.Runtime) error {
 }
 
 var peekStdinPipe = windows.NewLazySystemDLL("kernel32.dll").NewProc("PeekNamedPipe")
+
+// Keep wazero's file table and poll path, replacing only its unsafe nonblocking
+// pipe read. Track flags/close only after the original host function succeeds.
+func overrideStdinRead(builder wazero.HostModuleBuilder, original wazero.CompiledModule, stdin *os.File) error {
+	info, err := stdin.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeNamedPipe == 0 {
+		return nil
+	}
+	var nonblock, closed bool
+	for _, name := range []string{"fd_read", "fd_fdstat_set_flags", "fd_close"} {
+		definition := original.ExportedFunctions()[name]
+		function, ok := definition.GoFunction().(api.GoModuleFunction)
+		if !ok {
+			return errors.New("WASI stdin function is unavailable")
+		}
+		builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, module api.Module, stack []uint64) {
+			fd := uint32(stack[0])
+			if name == "fd_read" && fd == 0 && nonblock && !closed {
+				stack[0] = stdinWASIErrno(readStdin(module.Memory(), uint32(stack[1]), uint32(stack[2]), uint32(stack[3]), func(buffer []byte) (int, wasisys.Errno) {
+					return readStdinPipe(stdin, buffer)
+				}))
+				return
+			}
+			var flags uint16
+			if name == "fd_fdstat_set_flags" {
+				flags = uint16(stack[1])
+			}
+			function.Call(ctx, module, stack)
+			if fd == 0 && stack[0] == 0 {
+				switch name {
+				case "fd_fdstat_set_flags":
+					nonblock = flags&4 != 0 // WASI FD_NONBLOCK
+				case "fd_close":
+					closed = true
+				}
+			}
+		}), definition.ParamTypes(), definition.ResultTypes()).Export(name)
+	}
+	return nil
+}
+
+func readStdinPipe(stdin *os.File, buffer []byte) (int, wasisys.Errno) {
+	if len(buffer) == 0 {
+		return 0, 0
+	}
+	var available uint32
+	ok, _, err := peekStdinPipe.Call(stdin.Fd(), 0, 0, 0, uintptr(unsafe.Pointer(&available)), 0)
+	if ok == 0 {
+		if errors.Is(err, windows.ERROR_BROKEN_PIPE) {
+			return 0, 0
+		}
+		return 0, wasisys.UnwrapOSError(err)
+	}
+	if available == 0 {
+		return 0, wasisys.EAGAIN
+	}
+	n, err := syscall.Read(syscall.Handle(stdin.Fd()), buffer[:min(uint64(len(buffer)), uint64(available))])
+	if errors.Is(err, windows.ERROR_BROKEN_PIPE) {
+		return 0, 0
+	}
+	return n, wasisys.UnwrapOSError(err)
+}
 
 func stdinHangup() bool {
 	var available uint32
