@@ -17,6 +17,12 @@ coverage/
 # Frontend tooling
 node_modules/
 .bun/
+site/.astro/
+site/dist/
+site/node_modules/
+.impeccable/review/
+.impeccable/live/
+.impeccable/mocks/
 
 # Local configuration and runtime data
 .env

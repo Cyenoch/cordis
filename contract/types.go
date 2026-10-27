@@ -68,7 +68,7 @@ func (p Protocol) Negotiate(other Protocol) (uint32, error) {
 	for _, features := range [][]string{p.RequiredFeatures, other.RequiredFeatures} {
 		for _, feature := range features {
 			switch feature {
-			case "cancel", "parent", "tasks", "events":
+			case "cancel", "parent", "tasks", "events", "children":
 			default:
 				return 0, Fail(Incompatible, "unsupported required session feature: "+feature)
 			}

@@ -126,6 +126,10 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) (result 
 		worker := flags.String("worker", "", "worker binary for WASM")
 		dev := flags.Bool("dev-unsigned", false, "explicitly trust only this archive digest for this run")
 		service := flags.String("service", "", "service name to call")
+		definitionID := flags.String("definition", "", "package definition (default: manifest default)")
+		major := flags.Uint("major", 0, "service major (default: unique declared major)")
+		minMinor := flags.Uint("min-minor", 0, "minimum compatible minor")
+		maxMinor := flags.Uint("max-minor", uint(^uint32(0)), "maximum compatible minor")
 		input := flags.String("input", "{}", "JSON call input")
 		config := flags.String("config", "{}", "JSON plugin configuration")
 		if err := flags.Parse(args[1:]); err != nil {
@@ -160,7 +164,15 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) (result 
 		if err := host.Select(ctx, pkg.Ref); err != nil {
 			return err
 		}
-		instance, err := host.Enable(ctx, contract.Entry{ID: "cli.instance", Package: pkg.Ref.ID, Config: json.RawMessage(*config)})
+		selected := *definitionID
+		if selected == "" {
+			selected = pkg.Manifest.DefaultDefinition
+		}
+		required, err := selectService(pkg.Manifest, selected, *service, *major, *minMinor, *maxMinor)
+		if err != nil {
+			return err
+		}
+		instance, err := host.Enable(ctx, contract.Entry{ID: "cli.instance", Package: pkg.Ref.ID, Definition: selected, Config: json.RawMessage(*config)})
 		if err != nil {
 			return err
 		}
@@ -170,7 +182,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) (result 
 		if *service == "" {
 			return writeJSON(instance.Status())
 		}
-		result, err := host.Call(ctx, "", contract.Requirement{Name: *service, Major: 1}, json.RawMessage(*input))
+		result, err := host.Call(ctx, "", required, json.RawMessage(*input))
 		if err != nil {
 			return err
 		}
@@ -181,4 +193,29 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) (result 
 	default:
 		return &usageError{message: "unknown command: " + args[0]}
 	}
+}
+
+func selectService(manifest contract.Manifest, definition, name string, major, minMinor, maxMinor uint) (contract.Requirement, error) {
+	if major > uint(^uint32(0)) || maxMinor > uint(^uint32(0)) || minMinor > maxMinor {
+		return contract.Requirement{}, &usageError{message: "service versions require uint32 values and min-minor <= max-minor"}
+	}
+	for _, candidate := range manifest.Definitions {
+		if candidate.ID != definition {
+			continue
+		}
+		if name == "" {
+			return contract.Requirement{}, nil
+		}
+		matches := []contract.Service{}
+		for _, service := range candidate.Provides {
+			if service.Name == name && (major == 0 || uint(service.Major) == major) && uint(service.Minor) >= minMinor && uint(service.Minor) <= maxMinor {
+				matches = append(matches, service)
+			}
+		}
+		if len(matches) != 1 {
+			return contract.Requirement{}, &usageError{message: "service version is absent or ambiguous; specify -definition, -major and a compatible minor range"}
+		}
+		return contract.Requirement{Name: name, Major: matches[0].Major, MinMinor: uint32(minMinor), MaxMinor: uint32(maxMinor)}, nil
+	}
+	return contract.Requirement{}, &usageError{message: "unknown definition: " + definition}
 }

@@ -234,15 +234,22 @@ func (c *Client) handle(ctx context.Context, method string, input json.RawMessag
 		handlers := append([]contract.EventHandler{}, c.events[event.Name]...)
 		c.mu.Unlock()
 		results := []contract.EventResult{}
-		for _, handler := range handlers {
+		var failures []error
+		for n, handler := range handlers {
 			result, err := handler(ctx, event.Input)
 			if err != nil {
-				return nil, err
+				if event.Mode != contract.Parallel {
+					return nil, err
+				}
+				failures = append(failures, fmt.Errorf("event %s listener %d: %w", event.Name, n, err))
 			}
 			results = append(results, result)
 			if event.Mode == contract.First && result.Handled {
 				break
 			}
+		}
+		if len(failures) > 0 {
+			return nil, errors.Join(failures...)
 		}
 		return json.Marshal(results)
 	default:
@@ -292,7 +299,7 @@ func (c *Client) initialize(ctx context.Context, input json.RawMessage) (json.Ra
 	for name := range c.events {
 		subscriptions = append(subscriptions, name)
 	}
-	return json.Marshal(contract.Registration{Minor: minor, Features: []string{"cancel", "parent", "tasks", "events"}, Services: c.serviceInfo, Subscriptions: subscriptions, Contributions: c.contributions})
+	return json.Marshal(contract.Registration{Minor: minor, Features: []string{"cancel", "parent", "tasks", "events", "children"}, Services: c.serviceInfo, Subscriptions: subscriptions, Contributions: c.contributions})
 }
 
 func (c *Client) close(ctx context.Context) error {

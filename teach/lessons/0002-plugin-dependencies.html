@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 2 课：插件依赖插件 · Cordis 课程</title>
+<link rel="stylesheet" href="../assets/course.css">
+<script src="../assets/quiz.js" defer></script>
+</head>
+<body>
+<main>
+
+<p class="meta"><a href="../index.html">课程首页</a> · 第 2 课 · <span class="tag">依赖与组合</span> · <a href="../reference/dependency-model.html">速查</a> · <a href="0001-type-safety.html">上一课</a></p>
+
+<h1>插件依赖插件：三层，别混</h1>
+
+<p class="lede">“依赖”在这里是三个不同的问题：能不能装（包依赖）、什么时候能跑（服务需求）、谁先停（父子所有权）。用错层，症状都长成“不起作用”。</p>
+
+<h2>第 1 层：服务需求——决定“能不能调用”</h2>
+<p>声明在 <code>Definition.Requires</code>，匹配规则是<strong>名字 + major 相同、minor 落在闭区间</strong>。发布后再调用：</p>
+
+<pre><code>requiresA := contract.Requirement{Name: "chain.a", Major: 1, MinMinor: 1, MaxMinor: 3}
+
+data, err := scope.Call(ctx, requiresA, input)          // 原始 JSON
+// 或类型化：sdk.Call[Request, Response](ctx, scope, requiresA, req)</code></pre>
+
+<p>provider 没出现时，实例照常启用，但状态是 <code>waiting</code>，<code>Status.WaitingFor</code> 里是 <code>chain.a@1</code>；provider 退役后消费者退回 waiting，新 provider 发布后得到<strong>新的 activation</strong>。绑定在初始化时固定，不会在调用中悄悄换 provider。</p>
+
+<h2>第 2 层：包依赖——决定“能不能启用”</h2>
+<p>manifest 里按包 ID 与严格 SemVer 声明。它检查的是<strong>已选择</strong>的版本，不是“已安装”：</p>
+
+<pre><code>"dependencies": [{"id": "demo.core", "min": "1.0.0", "max": "2.0.0"}],
+"optionalDependencies": [{"id": "demo.extra", "range": "&gt;=1.2.0 &lt;2.0.0"}]</code></pre>
+
+<p>必需依赖缺失、版本不符或成环，<code>Enable</code> 前的 <code>Preflight</code> 直接报错；可选依赖缺失只会写进 <code>Status.Diagnostics</code>，实例仍然 active。</p>
+
+<h2>第 3 层：父子——决定“谁先停”</h2>
+<p>宿主侧用 <code>Entry.Parent</code>，持久、<code>Disable(parent)</code> 停整棵子树。作者侧用 <code>contract.CreateChild</code>，绑定当前 activation：</p>
+
+<pre><code>child, err := contract.CreateChild(ctx, scope, contract.Child{
+    ID: "optional", Definition: "middle", Config: scope.Config(),
+})
+// 只登记，不等待；父发布后再 child.Wait(ctx)。初始化里 Wait 自己的子实例会返回 reentrant_call。</code></pre>
+
+<p>子实例不参与服务依赖解析：它解决的是“这个包的可选功能”，不是“我需要另一个包的服务”。</p>
+
+<section class="practice" aria-labelledby="drill">
+<h2 id="drill">练习：这次会发生什么？</h2>
+<p class="small">选项等长，别靠形状猜；点错可以重试，Esc 重置当前题。</p>
+
+<div class="pick" data-answer="启用时报错">
+  <span class="q">① 包 A 的必需包依赖 <code>demo.core</code> 已安装，但从未被选择，宿主 <code>Enable(A)</code>。</span>
+  <div class="choices">
+    <button data-choice="安装时失败">安装时失败</button>
+    <button data-choice="启用时报错">启用时报错</button>
+    <button data-choice="启用后等待">启用后等待</button>
+    <button data-choice="直接可调用">直接可调用</button>
+  </div>
+  <div class="why"><code>Preflight</code> 在启用前跑，报 <code>A requires missing selected package demo.core</code>。安装本身不做依赖检查。</div>
+</div>
+
+<div class="pick" data-answer="启用后等待">
+  <span class="q">② consumer 要求 <code>chain.a@1 [1,3]</code>，provider 已启用但声明的 minor 是 0。</span>
+  <div class="choices">
+    <button data-choice="安装时失败">安装时失败</button>
+    <button data-choice="启用时报错">启用时报错</button>
+    <button data-choice="启用后等待">启用后等待</button>
+    <button data-choice="直接可调用">直接可调用</button>
+  </div>
+  <div class="why">服务绑定的失败不是启用失败：实例 active 不了，停在 waiting，<code>WaitingFor</code> 里是 <code>chain.a@1</code>。</div>
+</div>
+
+<div class="pick" data-answer="直接可调用">
+  <span class="q">③ provider 在同一 realm 且已 active（minor 2），consumer 要求 <code>[1,3]</code>。</span>
+  <div class="choices">
+    <button data-choice="安装时失败">安装时失败</button>
+    <button data-choice="启用时报错">启用时报错</button>
+    <button data-choice="启用后等待">启用后等待</button>
+    <button data-choice="直接可调用">直接可调用</button>
+  </div>
+  <div class="why">2 ∈ [1,3]，major 相同，realm 可见：绑定成立，<code>scope.Call</code> 可达。</div>
+</div>
+
+<div class="pick" data-answer="直接可调用">
+  <span class="q">④ 可选依赖不存在，其余依赖都满足。</span>
+  <div class="choices">
+    <button data-choice="安装时失败">安装时失败</button>
+    <button data-choice="启用时报错">启用时报错</button>
+    <button data-choice="启用后等待">启用后等待</button>
+    <button data-choice="直接可调用">直接可调用</button>
+  </div>
+  <div class="why">可选依赖只产诊断（<code>optional dependency … is not selected</code>），实例照常 active；诊断留在 <code>Status.Diagnostics</code>。</div>
+</div>
+
+<div class="pick" data-answer="启用时报错">
+  <span class="q">⑤ A 的必需依赖 <code>demo.core</code> 已选择为 2.0.0，但 A 要求 <code>[1.0.0,2.0.0)</code>。</span>
+  <div class="choices">
+    <button data-choice="安装时失败">安装时失败</button>
+    <button data-choice="启用时报错">启用时报错</button>
+    <button data-choice="启用后等待">启用后等待</button>
+    <button data-choice="直接可调用">直接可调用</button>
+  </div>
+  <div class="why">包层是严格 SemVer 半开区间：2.0.0 落在区间外。报错形如 <code>A requires demo.core [1.0.0,2.0.0), selected 2.0.0</code>。（依赖环也在同一处判定，但正常 <code>Select</code> 通常会先把它挡掉。）</div>
+</div>
+
+<p class="tally" data-tally></p>
+</section>
+
+<h2>回忆：晚到的 provider</h2>
+<details class="reveal">
+<summary>先启用 C，再启用 B，最后启用 A（C→B→A 依赖链），每一步分别看到什么？</summary>
+<p>C 启用后 waiting（等 <code>chain.b@1</code>），B 启用后也 waiting（等 <code>chain.a@1</code>），A 发布后 B、C 依次收敛为 active。<code>examples/plugins/chain</code> 的断言 <code>consumer-first-late-provider</code> 就在验证这条路径，且调用 C 时能看到两层存活资源。</p>
+</details>
+
+<details class="reveal">
+<summary>为什么“已安装”不等于“可依赖”？</summary>
+<p>安装只往 catalog 里放内容；包依赖的匹配对象是 <code>Selected</code>，而选择是宿主的显式动作（<code>Host.Select</code>），安装不会改变选择。所以“装了但没选”在包层是缺失，在服务层也不可能出现 provider。</p>
+</details>
+
+<h2>这一课你该带走的</h2>
+<p>症状定位顺序：<strong>Enable 报错</strong>看包依赖与 Preflight；<strong>一直 waiting</strong>看 <code>WaitingFor</code>、realm 与 minor 区间；<strong>停用顺序不对</strong>看父子所有权。三者互不替代——子实例不解析服务，服务需求也不检查包版本。</p>
+
+<div class="callout">
+<span class="label">主源</span>
+<p>必读：<a href="../../docs/composition.md">docs/composition.md</a> 的「配置与依赖快照」「作者创建可选子实例」两节。配套样本：<a href="../../examples/plugins/chain/main.go">examples/plugins/chain/main.go</a>（一个产物三个定义 + 作者子实例），以及 <a href="../../docs/packages.md">docs/packages.md</a> 的版本区间与 Preflight 说明。</p>
+</div>
+
+<footer>
+<nav><a href="../index.html">课程首页</a><a href="0001-type-safety.html">上一课：类型安全吗</a><a href="../reference/dependency-model.html">依赖模型速查</a><a href="../reference/glossary.html">术语表</a></nav>
+<p>下一步候选：宿主能力边界（<code>Authorize</code> + <code>Broker</code> 的 scope 校验），或更新与收敛（Superseded / Retry / Supervise）。想先学哪个直接说；有卡住的地方也直接问老师。</p>
+</footer>
+
+</main>
+</body>
+</html>

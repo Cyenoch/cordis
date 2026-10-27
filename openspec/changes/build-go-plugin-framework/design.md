@@ -211,3 +211,41 @@ race、可控调度和 goroutine/进程泄漏检查覆盖 core/host；解码器�
 ## Open Questions
 
 - CI runner 提供者与签名私钥保管方式：不影响平台矩阵和 TrustPolicy seam，实施时选择，不在规格中绑定云服务。
+
+### 文档站与 GitHub Pages（2026-10-27）
+
+- 文档站由仓库根 `package.json` 和 `bun.lock` 管理，采用当前稳定的 Astro 7.4.2 与 Starlight 0.42.7；`docs/` 是唯一正文源，`site/` 仅负责导航、主题及构建，通过 Astro glob loader 直接读取原文。不复制现有参考文章到第二棵站点目录，不引入运行时服务、外部搜索账号或 Go 依赖。
+- 内容面向中文 Go 插件作者与宿主集成者：先运行真实 counter，再学习 Package / Definition / Entry / Activation / Scope，分别进入作者和宿主路径；公开 API 参考链接至 pkg.go.dev，源码及验收记录链接至 GitHub。现有指向 `../openspec/` 的 Markdown 链接在渲染时重写为仓库地址，源文件继续适合 GitHub 阅读。
+- 用户追加现代、美观的要求后，替换初始 VitePress/纸色草稿：冷白、石墨灰与青绿色强调，自托管 Manrope/JetBrains Mono 字体，中文使用平台中文字体。首页以真实安装/运行代码和宿主/插件关系构图建立辨识度，正文保持紧凑侧栏、合理行宽与清晰代码层级。复用 Starlight 的键盘导航、移动侧栏、代码复制和主题切换，不自造组件系统，不修改现有课程资产，不使用营销指标或虚构认证。
+- Pages 的部署基路径固定为 `/cordis/`，输出为 `site/dist`。本地搜索使用 Starlight 内置 Pagefind 的静态中文索引，不依赖外部服务。生产构建额外检查生成页链接、资源和锚点，避免把子路径问题留给上线。
+- `.github/workflows/docs.yml` 复用既有 Bun 版本及锁文件：push main / pull_request / workflow_dispatch 构建；仅 main 的非 PR 执行可以上传 Pages artifact 并部署。构建 job 只有 contents:read，部署 job 才申请 pages:write 与 id-token:write；按 ref 的 workflow 级并发串行覆盖 build→deploy 全链，避免较旧构建晚完成覆盖新站点，失败构建不部署。使用 GitHub 官方 Pages artifact/OIDC，不创建 gh-pages 分支、不需要自备 PAT。
+- 首次在 GitHub 启用 Pages 的 GitHub Actions source。提交工作流后的主分支推送才形成真实远端发布证据；本地构建与启用设置不能报告为已上线。现有未提交改动不代为提交或推送。
+- 否决 VitePress 1.6：稳定版仍使用 Vite 5，2.0 仍为 alpha，不符合本次明确的现代稳定工具链要求；否决 Docusaurus：当前 Markdown 文档量与无版本站点需求不值得引入 React 客户端；否决自写静态站点：需要重复实现搜索与无障碍导航；否决 Jekyll：现有 Node/Bun 工具链可直接复用且不需要 Ruby。
+
+### 12. 审计整改与统一公开契约（2026-10-27）
+
+用户明确当前项目未上线，本轮不兼容旧插件；直接同步契约、SDK、工具及示例，不增加旧协议 shim、双轨执行、兼容开关。保留项目既有签名字节定义不是旧插件兼容层；签名输入与摘要仍独立于签名证明，重签可原子刷新。
+
+控制面使用可取消的操作准入，不在普通 mutex 上无期限等待。局部 provider 发布前检查服务与父子所有权组成的动态图；拒绝会使祖先依赖后代的覆盖，不通过无限重启或并发回调绕过。builtin/external 使用统一 Host instance 记录期望配置；durable 提交错误必须区分已提交与未提交，前者同步内存目标并保留错误。
+
+作者通过独立的 ChildScope 能力和 `contract.CreateChild` 创建同包定义子实例，既有 Scope 的原始服务职责不扩张为通用 Context。子请求携带本地 ID、definition/config，宿主以 parent activation 验证并生成 entry 身份；创建只登记不等待激活，避免初始化等待父发布死锁。SDK 和宿主使用同一生命周期请求，子实例拥有独立 activation/进程/绑定与先子后父清理。builtin 父的持久锚点仅记录外部父引用，Restore 要求应用先注册该 builtin；不将 builtin 回调或配置持久化。
+
+严格 typed codec 按有效 JSON 字段、显式 null、数组精确长度和安全整数规则统一校验；自定义 codec 负责其内部值，框架 Nullable 亦使用严格校验。生成 number 使用保留原始十进制的 `json.Number` 表示，不以 float64 舍入合法 const/minimum。原始进程内 Handler 仍支持 JSON；公开 typed 路径基准单独记录，不将 raw 分发当 typed 性能。
+
+候选发现只校验显式来源集合，不下载、启用或自动求解；发现返回逐候选诊断及重复双方来源。级联计划基于 durable enabled 意图与包反向依赖，Host 显式确认后停止相关实例。activation 运行记录与 catalog 分离为宿主持有的有界记录；正常结束写终态，打开存储将遗留运行记录标为 interrupted。
+
+namespace 改为增量持久操作日志，避免每次小写整库；全局 Policy 锁只用于准入/撤权，不覆盖编码、写入、fsync。每次提交重查 owner，撤权与该 owner 的短提交资格有序，其他 owner 不被磁盘阶段阻塞。日志恢复校验顺序、配额和校验和，显式报告损坏；需要压缩时由宿主显式调用，不在热写入路径重写所有数据。
+
+终态接管任务提供显式 Release，宿主持有的 Task 不失效；manager 不承担永久业务历史。CI 覆盖当前声明的平台、conformance、vet、规格和结构向量；只能记录真实执行平台，不把 CI 配置写成已通过证据。
+
+### 12.7 显式动作与存储故障语义
+
+级联计划带 SelectPackage/RemovePackage 动作，不从当前选择猜测；同版本替换不解释成卸载。确认回调只读独立快照，不重入管理队列。所有包、信任、配置与共享数据预检在停用前完成；部分清理后的错误不承诺事务回滚。
+
+作者 ChildInstance 提供 Refresh，远程 Status 是上次应答快照。创建是非阻塞登记，每 activation 限 256 个直接子实例，child 与父使用同 digest；初始化等待自己的子树明确报 reentrant，不靠文档掩盖死锁。Instance 等待参与现有调用等待图。
+
+namespace 使用带序号/hash的有界增量日志，Compact 显式原子替换，单条记录最大64MiB。完整同步后错误是 CommittedError；无法证明回滚或提交时为 RecoveryError 并停止后续访问，重新打开严格验证。这里不承诺断电认证或多写者协调。
+
+独立复核补充：任务 begin/finish/cancel 绑定每次创建的 token，不以可复用逻辑 ID 识别一次任务，避免 Release 后串写。配额持久字段用十进制字符串，namespace/package/key 的 UTF-8 在信任边界校验；维护操作取得存储锁后重新检查取消。typed DecodeData 与协议 Decode 分离：前者容器必须显式 nullable，后者保留 envelope 已声明的 null。注册与 codec 共用 JSON 有效字段，Nullable 递归检查内部类型；原始浮点目标也拒绝超安全整数。已确认取消立即释放监督 timer/goroutine，实例级等待边跨 activation 替换保持直到 revision 完成。
+
+静态与作者子实例共用 entry ID 预留，覆盖预检、持久意图到 engine 登记；失败后释放，不在磁盘等待期间持 Host mutex，也不占用整个清理锁。已 disabled 且非 live 的历史子 entry 无需再次保存，包已卸载时仍能清理父树。namespace 恢复沿用热写路径的增量字节计数，只有 migrate 扫描替换值集，避免每次恢复小写入都重扫全库。

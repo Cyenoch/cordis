@@ -42,10 +42,17 @@ func TestReverseDependenciesPlansTransitiveCascadeWithoutMutation(t *testing.T) 
 	}
 	enabled := []string{"c", "optional", "a", "b", "b", "unrelated"}
 	for _, ref := range []contract.PackageRef{a, a2} {
-		blocked, err := s.ReverseDependencies(ref, enabled)
+		action := SelectPackage
+		if ref == a {
+			action = RemovePackage
+		}
+		blocked, err := s.ReverseDependencies(ref, enabled, action)
 		if err != nil || !reflect.DeepEqual(blocked, []string{"b", "c"}) {
 			t.Fatalf("cascade %+v: %v, %v", ref, blocked, err)
 		}
+	}
+	if blocked, err := s.ReverseDependencies(a, enabled, SelectPackage); err != nil || len(blocked) != 0 {
+		t.Fatal("same-version selection treated as removal", blocked, err)
 	}
 	if selected, err := s.Selected("a"); err != nil || selected.Ref != a {
 		t.Fatal("plan changed selection", selected, err)

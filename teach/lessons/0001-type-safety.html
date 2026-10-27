@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 1 课：类型安全吗 · Cordis 课程</title>
+<link rel="stylesheet" href="../assets/course.css">
+<script src="../assets/quiz.js" defer></script>
+</head>
+<body>
+<main>
+
+<p class="meta"><a href="../index.html">课程首页</a> · 第 1 课 · <span class="tag">类型边界</span> · <a href="../reference/type-boundary.html">速查</a> · <a href="../reference/glossary.html">术语</a></p>
+
+<h1>类型安全吗？</h1>
+
+<p class="lede">半分安全：每个进程内部由 Go 编译期保证；跨进程没有类型系统，只有四道会把错配变成显式失败的闸门。</p>
+
+<h2>先把“安全”拆成两半</h2>
+<p>宿主和插件是两个独立 module（<code>examples/plugins/counter/go.mod</code> 用 <code>replace</code> 指向本仓库），宿主编译时看不到插件的类型。所以：</p>
+<ul>
+<li><strong>进程内</strong>：<code>sdk.Provide[In, Out]</code> 让作者拿到真实的 Go 类型，写错字段是编译错误。</li>
+<li><strong>跨进程</strong>：唯一共享的是 JSON + 名字/版本。宿主侧 <code>host.Call</code> 拿回的是 <code>json.RawMessage</code>——类型由<em>你的</em>解码决定，不是框架猜的。</li>
+</ul>
+
+<pre><code>// 插件侧：编译期类型
+sdk.Provide(scope, contract.Service{Name: "demo.greet", Major: 1},
+    func(ctx context.Context, req Request) (Response, error) { … })
+
+// 宿主侧：边界只给字节
+out, err := host.Call(ctx, "", contract.Requirement{Name: "demo.greet", Major: 1}, input)
+var resp Response
+if err := contract.Decode(out, &amp;resp); err != nil { /* 显式失败 */ }</code></pre>
+
+<h2>四道闸门</h2>
+<table>
+<thead><tr><th>闸门</th><th>触发点</th><th>拦住的样子</th></tr></thead>
+<tbody>
+<tr><td>生成阶段</td><td><code>cordis generate</code> / <code>schema.Compile</code></td><td><code>$ref</code>、<code>allOf</code>、名称冲突：生成不出文件</td></tr>
+<tr><td>注册阶段</td><td><code>sdk.Provide</code> → <code>contract.CheckDataType</code></td><td><code>service type int64 requires an explicit decimal-string codec</code></td></tr>
+<tr><td>编解码期</td><td><code>contract.Decode/Encode</code></td><td>未知字段、重复 key、尾随数据、深度 &gt; 32</td></tr>
+<tr><td>业务错误</td><td>Handler 返回 <code>contract.Fail(...)</code></td><td><code>invalid_message</code>、<code>denied</code>、<code>timeout</code> …</td></tr>
+</tbody>
+</table>
+<p class="small">细节（允许/禁止类型全表、严格 JSON 规则、错误码）见 <a href="../reference/type-boundary.html">类型边界速查</a>。</p>
+
+<section class="practice" aria-labelledby="drill">
+<h2 id="drill">练习：它会被哪道闸门拦住？</h2>
+<p class="small">点一个选项即可得到反馈；点错可以继续试。Esc 重置当前题。</p>
+
+<div class="pick" data-answer="注册阶段">
+  <span class="q">① 插件作者把请求体写成 <code>struct{ N int64 }</code>。</span>
+  <div class="choices">
+    <button data-choice="生成阶段">生成阶段</button>
+    <button data-choice="注册阶段">注册阶段</button>
+    <button data-choice="编解码期">编解码期</button>
+    <button data-choice="业务错误">业务错误</button>
+  </div>
+  <div class="why"><code>CheckDataType</code> 在注册时拒绝裸 64 位整数，要求显式十进制字符串 codec。</div>
+</div>
+
+<div class="pick" data-answer="编解码期">
+  <span class="q">② 宿主发来 <code>{"value":1,"extra":true}</code>，插件 struct 里没有 <code>extra</code>。</span>
+  <div class="choices">
+    <button data-choice="生成阶段">生成阶段</button>
+    <button data-choice="注册阶段">注册阶段</button>
+    <button data-choice="编解码期">编解码期</button>
+    <button data-choice="业务错误">业务错误</button>
+  </div>
+  <div class="why"><code>Decode</code> 开 <code>DisallowUnknownFields</code>：未知字段是错误，不会静默丢弃。</div>
+</div>
+
+<div class="pick" data-answer="生成阶段">
+  <span class="q">③ 契约文件里写了 <code>"$ref": "#/definitions/x"</code>。</span>
+  <div class="choices">
+    <button data-choice="生成阶段">生成阶段</button>
+    <button data-choice="注册阶段">注册阶段</button>
+    <button data-choice="编解码期">编解码期</button>
+    <button data-choice="业务错误">业务错误</button>
+  </div>
+  <div class="why">受限 schema 明确拒绝 <code>$ref</code>；不合规输入不会写出半份文件。</div>
+</div>
+
+<div class="pick" data-answer="注册阶段">
+  <span class="q">④ 响应类型是 <code>map[int]string</code>。</span>
+  <div class="choices">
+    <button data-choice="生成阶段">生成阶段</button>
+    <button data-choice="注册阶段">注册阶段</button>
+    <button data-choice="编解码期">编解码期</button>
+    <button data-choice="业务错误">业务错误</button>
+  </div>
+  <div class="why">map key 必须是 string；注册时就会报 <code>service map keys must be strings</code>。</div>
+</div>
+
+<div class="pick" data-answer="编解码期">
+  <span class="q">⑤ 请求 JSON 里同一个字段出现两次。</span>
+  <div class="choices">
+    <button data-choice="生成阶段">生成阶段</button>
+    <button data-choice="注册阶段">注册阶段</button>
+    <button data-choice="编解码期">编解码期</button>
+    <button data-choice="业务错误">业务错误</button>
+  </div>
+  <div class="why">重复 key 属于解码期错误：框架不接受“后者覆盖前者”的运气。</div>
+</div>
+
+<div class="pick" data-answer="业务错误">
+  <span class="q">⑥ 插件拒绝这次调用，返回 <code>contract.Fail(contract.Denied, …)</code>。</span>
+  <div class="choices">
+    <button data-choice="生成阶段">生成阶段</button>
+    <button data-choice="注册阶段">注册阶段</button>
+    <button data-choice="编解码期">编解码期</button>
+    <button data-choice="业务错误">业务错误</button>
+  </div>
+  <div class="why">这是显式业务结果：调用方拿到 <code>*contract.Error</code>，<code>errors.As</code> 可读 <code>Code</code>。</div>
+</div>
+
+<p class="tally" data-tally></p>
+</section>
+
+<h2>回忆：先自己想，再展开</h2>
+
+<details class="reveal">
+<summary>为什么 int64 不能用裸 JSON number？</summary>
+<p>JSON 数字在通用解码里会落到 float64，超过 2<sup>53</sup> 的整数会静默丢精度（见 <a href="https://pkg.go.dev/encoding/json#Unmarshal">encoding/json</a> 对 <code>interface{}</code> 的说明）。Cordis 的选择是在注册期就拒绝，让作者显式用十进制字符串表达 64 位整数；生成器对 <code>format:"int64"</code> 还要求规范十进制（无前导 <code>+</code>/<code>0</code>）。</p>
+</details>
+
+<details class="reveal">
+<summary>既然跨进程没有类型系统，为什么还说“类型安全”？</summary>
+<p>因为安全性可以退化为<strong>可观测的失败</strong>：错配必须在注册期或解码期报错，而不是变成零值、静默截断或“看起来成功”。Cordis 的取舍是把四道闸门都做成硬失败，并用生成契约让两边共享同一份约束。</p>
+</details>
+
+<h2>这一课你该带走的</h2>
+<p>看到类型问题时，先问“哪道闸门”：<strong>写不出/编译不过</strong>是生成阶段，<strong>启动即失败</strong>是注册阶段，<strong>调用报 JSON 错误</strong>是编解码期，<strong>拿到业务错误码</strong>是业务层。定位对了，修法基本唯一。</p>
+
+<div class="callout">
+<span class="label">主源</span>
+<p>必读：<a href="../../docs/contracts.md">docs/contracts.md</a>（生成格式、受限 schema、严格编解码）。配套可执行规范：<code>schema/testdata/echo.schema.json</code>，运行 <code>go test -tags=integration ./schema</code> 会生成独立 module 并真实编译运行 typed client/server。</p>
+</div>
+
+<footer>
+<nav><a href="../index.html">课程首页</a><a href="0002-plugin-dependencies.html">下一课：插件依赖插件</a><a href="../reference/type-boundary.html">类型边界速查</a><a href="../reference/glossary.html">术语表</a></nav>
+<p>有不清楚的地方直接问老师：把你看到的报错、涉及的 struct 和调用点贴出来，我们可以一起定位到具体闸门。</p>
+</footer>
+
+</main>
+</body>
+</html>

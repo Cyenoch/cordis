@@ -227,7 +227,8 @@
                   "cancel",
                   "parent",
                   "tasks",
-                  "events"
+                  "events",
+                  "children"
                 ]
               },
               "maxItems": 10000

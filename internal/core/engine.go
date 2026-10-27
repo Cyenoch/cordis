@@ -44,20 +44,21 @@ type Hooks struct {
 // Engine owns the registry, dependency graph, and all instance transitions.
 // Its mutex never protects execution of plugin code.
 type Engine struct {
-	mu           sync.Mutex
-	configMu     sync.Mutex
-	realms       map[string]realm
-	instances    map[string]*instance
-	services     map[string]map[string]*provider
-	events       []*subscription
-	edges        map[*activation]map[*activation]int
-	changed      chan struct{}
-	wake         chan struct{}
-	done         chan struct{}
-	closed       bool
-	sequence     uint64
-	hooks        Hooks
-	cleanupSlots chan struct{}
+	mu            sync.Mutex
+	configMu      sync.Mutex
+	realms        map[string]realm
+	instances     map[string]*instance
+	services      map[string]map[string]*provider
+	events        []*subscription
+	edges         map[*activation]map[*activation]int
+	instanceEdges map[*activation]map[*instance]int
+	changed       chan struct{}
+	wake          chan struct{}
+	done          chan struct{}
+	closed        bool
+	sequence      uint64
+	hooks         Hooks
+	cleanupSlots  chan struct{}
 }
 
 type instance struct {
@@ -104,7 +105,7 @@ type activation struct {
 func New() *Engine { return NewWithHooks(Hooks{}) }
 
 func NewWithHooks(hooks Hooks) *Engine {
-	e := &Engine{realms: map[string]realm{"": {}}, instances: map[string]*instance{}, services: map[string]map[string]*provider{}, edges: map[*activation]map[*activation]int{}, changed: make(chan struct{}), wake: make(chan struct{}, 1), done: make(chan struct{}), hooks: hooks, cleanupSlots: make(chan struct{}, 8)}
+	e := &Engine{realms: map[string]realm{"": {}}, instances: map[string]*instance{}, services: map[string]map[string]*provider{}, edges: map[*activation]map[*activation]int{}, instanceEdges: map[*activation]map[*instance]int{}, changed: make(chan struct{}), wake: make(chan struct{}, 1), done: make(chan struct{}), hooks: hooks, cleanupSlots: make(chan struct{}, 8)}
 	go e.coordinate()
 	return e
 }
@@ -135,6 +136,15 @@ func (e *Engine) ConfigureRealm(name, parent string, isolated []string) error {
 }
 
 func (e *Engine) Add(entry contract.Entry, definition contract.Definition, identity contract.Identity) (contract.Instance, error) {
+	return e.add(entry, definition, identity, nil)
+}
+
+func (e *Engine) AddOwned(entry contract.Entry, definition contract.Definition, identity, parent contract.Identity) (contract.Instance, error) {
+	entry.Parent = parent.Entry
+	return e.add(entry, definition, identity, &parent)
+}
+
+func (e *Engine) add(entry contract.Entry, definition contract.Definition, identity contract.Identity, owner *contract.Identity) (contract.Instance, error) {
 	if entry.ID == "" || definition.Start == nil {
 		return nil, contract.Fail(contract.Invalid, "entry id and start callback are required")
 	}
@@ -163,6 +173,9 @@ func (e *Engine) Add(entry contract.Entry, definition contract.Definition, ident
 		parent, ok := e.instances[entry.Parent]
 		if !ok || !parent.enabled || parent.removing || !e.descendantLocked(entry.Realm, parent.entry.Realm) {
 			return nil, contract.Fail(contract.Invalid, "parent is unavailable or outside realm ancestry")
+		}
+		if owner != nil && (parent.activation == nil || parent.activation.identity != *owner || parent.activation.retiring) {
+			return nil, contract.Fail(contract.NotReady, "parent activation is no longer current")
 		}
 	}
 	definition.Requires = slices.Clone(definition.Requires)
@@ -334,6 +347,9 @@ func (e *Engine) start(a *activation) {
 			}
 		}
 	}
+	if err == nil {
+		err = e.checkPublicationCycleLocked(a)
+	}
 	if err != nil {
 		a.startErr = err
 		e.retireLocked(a, contract.Failed)
@@ -376,6 +392,49 @@ func (e *Engine) start(a *activation) {
 	}
 	e.signalLocked()
 	e.mu.Unlock()
+}
+
+func (e *Engine) checkPublicationCycleLocked(a *activation) error {
+	// Resolve against the proposed snapshot before publishing it. The graph
+	// includes ownership, so a parent's new binding cannot depend on its child.
+	namespace := a.instance.entry.Realm
+	previous := e.services[namespace]
+	proposed := make(map[string]*provider, len(previous)+len(a.provided))
+	for key, p := range previous {
+		proposed[key] = p
+	}
+	for key, p := range a.provided {
+		proposed[key] = p
+	}
+	e.services[namespace] = proposed
+	defer func() { e.services[namespace] = previous }()
+	visiting := map[*instance]uint8{}
+	var visit func(*instance) bool
+	visit = func(i *instance) bool {
+		if visiting[i] == 1 {
+			return true
+		}
+		if visiting[i] == 2 {
+			return false
+		}
+		visiting[i] = 1
+		if parent := e.instances[i.entry.Parent]; parent != nil && visit(parent) {
+			return true
+		}
+		for _, req := range i.definition.Requires {
+			if p := e.resolveLocked(i.entry.Realm, req); p != nil && visit(p.owner.instance) {
+				return true
+			}
+		}
+		visiting[i] = 2
+		return false
+	}
+	for _, i := range e.instances {
+		if i.enabled && i.state != contract.Failed && visit(i) {
+			return contract.Fail(contract.Reentrant, "service publication creates an ownership/dependency cycle")
+		}
+	}
+	return nil
 }
 
 // retireLocked first revokes and cancels the complete transitive closure. Only
@@ -480,6 +539,7 @@ func (e *Engine) dispose(a *activation, dependents []*activation) {
 		}
 	}
 	delete(e.edges, a)
+	delete(e.instanceEdges, a)
 	for _, edges := range e.edges {
 		delete(edges, a)
 	}

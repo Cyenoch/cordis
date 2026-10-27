@@ -46,4 +46,6 @@ go run ./conformance/cmd/lifecycle-smoke -runtime wasm -guest /tmp/cordis-lifecy
 - **失败新代码恢复旧版本**：保持同一宿主和 entry 配置，1.0.0 可调用，替换为独立失败产物 1.2.0 后撤权并保留 failed 选择；显式 Replace 回 1.0.0 保留历史错误，同时恢复 Active、新 activation、原 digest 和可用服务，不重启宿主、不确认数据迁移。
 - **初始化失败后同 ID 恢复**：真实 guest 初始化失败，Wait 返回错误，Disable 保留历史启动错误；但完成清理后用同 entry ID 和有效配置重新 Enable 必须能启动和调用，不能被残留实例阻塞。
 
+- **作者可选子功能**：真实 native/WASI 的 optional-parent 在 Start 内创建 middle 子实例；父可先 Active，晚到 provider 后 child.Wait 成功且持有一份资源，停用父后资源计数归零，终态运行记录归属 `author-parent.optional`。
+
 故障 catalog 有意保留历史失败，最终 Close 必须报告它们，并在关闭期限内排空；健康 catalog 必须无错误关闭。场景覆盖组合、持久化和生命周期，不代表 OS 隔离边界、资源耗尽、性能、真实产品 UI 或游戏部署认证。宿主专属协议、授权投影和领域 provider 的验收由宿主仓库独立维护。

@@ -1,0 +1,242 @@
+/* Cordis 课程共用样式：单一来源，所有课程与速查页引用本文件。
+   设计目标：中文正文可读、打印友好、深浅色自适应、无外链字体。 */
+
+:root {
+  --bg: #fdfcf8;
+  --surface: #f6f2e9;
+  --fg: #1b1a17;
+  --muted: #6d675c;
+  --rule: #e2dbcd;
+  --accent: #8a4b23;
+  --accent-soft: #f0e3d6;
+  --ok: #2f6f4f;
+  --bad: #a33b32;
+  --code-bg: #f1ece1;
+  --serif: ui-serif, "Iowan Old Style", "Noto Serif SC", "Songti SC", Georgia, serif;
+  --sans: ui-sans-serif, system-ui, "PingFang SC", "Noto Sans SC", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161513;
+    --surface: #1f1d19;
+    --fg: #ece7dd;
+    --muted: #a09a8d;
+    --rule: #35312a;
+    --accent: #d9a273;
+    --accent-soft: #2a231c;
+    --ok: #7fbf9a;
+    --bad: #e08b7c;
+    --code-bg: #221f1a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--serif);
+  font-size: 18px;
+  line-height: 1.75;
+}
+
+main {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 6rem;
+}
+
+/* ---------- 排版 ---------- */
+
+h1, h2, h3, h4 { font-family: var(--sans); line-height: 1.3; font-weight: 650; }
+h1 { font-size: 1.9rem; margin: 0 0 .4rem; letter-spacing: -.01em; }
+h2 { font-size: 1.3rem; margin: 2.6rem 0 .8rem; padding-top: .9rem; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.05rem; margin: 1.8rem 0 .5rem; }
+p, li { max-width: 65ch; }
+p { margin: 0 0 1rem; }
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+strong { font-weight: 650; }
+small, .small { font-size: .85rem; color: var(--muted); }
+
+.lede {
+  font-size: 1.12rem;
+  color: var(--fg);
+  border-left: 3px solid var(--accent);
+  padding-left: 1rem;
+  margin: 1.2rem 0 2rem;
+  max-width: 58ch;
+}
+
+.meta {
+  font-family: var(--sans);
+  font-size: .8rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem .9rem;
+  align-items: baseline;
+  margin-bottom: 1.2rem;
+}
+.meta a { color: var(--muted); }
+.tag {
+  font-family: var(--sans);
+  font-size: .72rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: .05rem .55rem;
+}
+
+/* ---------- 代码 ---------- */
+
+code, pre, kbd { font-family: var(--mono); font-size: .86em; }
+code { background: var(--code-bg); padding: .1em .35em; border-radius: 3px; }
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: .9rem 1rem;
+  overflow-x: auto;
+  line-height: 1.6;
+  max-width: 100%;
+}
+pre code { background: none; padding: 0; }
+pre.diagram { font-family: var(--mono); font-size: .8rem; line-height: 1.5; }
+kbd { border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 4px; padding: .05em .4em; background: var(--surface); }
+
+/* ---------- 表格 ---------- */
+
+table { border-collapse: collapse; width: 100%; margin: 1rem 0 1.4rem; font-family: var(--sans); font-size: .88rem; }
+th, td { text-align: left; vertical-align: top; padding: .5rem .65rem; border-bottom: 1px solid var(--rule); }
+th { font-weight: 650; color: var(--muted); font-size: .78rem; letter-spacing: .03em; text-transform: uppercase; }
+tbody tr:hover { background: var(--surface); }
+td code { white-space: nowrap; }
+
+/* ---------- 强调块 ---------- */
+
+.callout {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: .9rem 1.1rem;
+  margin: 1.4rem 0;
+  font-size: .95rem;
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout .label {
+  font-family: var(--sans);
+  font-size: .72rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: block;
+  margin-bottom: .25rem;
+}
+
+/* ---------- 练习组件 ---------- */
+
+.practice { margin: 1.2rem 0 2rem; }
+.practice > h3 { margin-top: 1.4rem; }
+
+.pick {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: .8rem .9rem;
+  margin: .6rem 0;
+  background: var(--bg);
+}
+.pick .q { display: block; margin-bottom: .55rem; }
+.pick .choices { display: flex; flex-wrap: wrap; gap: .4rem; }
+.pick button {
+  font: inherit;
+  font-family: var(--sans);
+  font-size: .82rem;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: .18rem .7rem;
+  cursor: pointer;
+}
+.pick button:hover { border-color: var(--accent); }
+.pick button[aria-pressed="true"] { border-color: var(--accent); }
+.pick button.ok { border-color: var(--ok); color: var(--ok); background: transparent; }
+.pick button.bad { border-color: var(--bad); color: var(--bad); background: transparent; text-decoration: line-through; }
+.pick .why {
+  display: none;
+  margin-top: .6rem;
+  font-size: .9rem;
+  color: var(--muted);
+  border-top: 1px dashed var(--rule);
+  padding-top: .5rem;
+}
+.pick.solved .why { display: block; }
+.pick.solved { border-left: 3px solid var(--ok); }
+
+.tally {
+  font-family: var(--sans);
+  font-size: .8rem;
+  color: var(--muted);
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  padding: .4rem 0;
+}
+
+details.reveal {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: .6rem .9rem;
+  margin: .6rem 0;
+  background: var(--surface);
+}
+details.reveal summary { cursor: pointer; font-family: var(--sans); font-size: .88rem; }
+details.reveal > *:not(summary) { margin-top: .6rem; }
+
+.steps { counter-reset: step; list-style: none; padding: 0; }
+.steps > li { counter-increment: step; position: relative; padding-left: 2.2rem; margin: 0 0 1rem; }
+.steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0; top: .1rem;
+  width: 1.5rem; height: 1.5rem;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: .78rem;
+  display: grid; place-items: center;
+}
+
+footer {
+  margin-top: 3.5rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--rule);
+  font-family: var(--sans);
+  font-size: .82rem;
+  color: var(--muted);
+}
+footer nav { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; margin-bottom: .8rem; }
+
+/* ---------- 打印 ---------- */
+
+@media print {
+  :root { --bg: #fff; --fg: #000; --muted: #444; --surface: #f7f7f7; --code-bg: #f4f4f4; --rule: #bbb; --accent-soft: #eee; }
+  body { font-size: 11pt; line-height: 1.5; }
+  main { max-width: none; padding: 0; }
+  h2 { break-after: avoid; }
+  table, pre, .callout, .pick, details.reveal { break-inside: avoid; }
+  .pick .why { display: block; }
+  .tally { position: static; }
+  a[href^="http"]::after { content: " ⟨" attr(href) "⟩"; font-size: 85%; color: #555; }
+  footer { margin-top: 2rem; }
+}

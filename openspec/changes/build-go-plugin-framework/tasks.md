@@ -239,3 +239,60 @@ VortexGo 已固定上述版本并移除临时 sibling replace；其 module 解�
 再次执行 `bash conformance/run.sh` 成功，涵盖迁回 Adapter/fixture/API/Host 的 integration/race、
 14 项原始 ABI checks 和真实签名 provider/service 链。插件 integration vet、mod verify/tidy-diff 成功。
 VortexGo 的既有工作未提交、未推送；并行 App 会话/缓存增量不计入此次公开版本验证。
+
+## 12. 审计整改与完整 DX（2026-10-27）
+
+本组为新验收，不复用前文历史完成声明。当前未上线，用户明确不兼容旧插件；同步修改统一契约，不提供兼容胶水。
+
+- [x] 12.1 修复取消监督淘汰、已取消 parent 在途请求、可取消发送准入；真实双向 pipe 与背压回归。
+- [x] 12.2 拒绝动态所有权/服务环；统一 builtin 配置与可取消 Host 控制，验证父包替换及阻塞 Close。
+- [x] 12.3 修复 durable enabled 预检、Manifest 深复制、重签刷新、提交前取消、FIFO/ZIP 元数据限额、CommitError 内存一致性。
+- [x] 12.4 统一 typed null/数组/嵌入/安全整数/Nullable 严格边界，生成 number 无损往返；独立生成 consumer 回归。
+- [x] 12.5 修复 SDK Parallel 聚合，补齐公开作者子实例和 builtin/external 父子组合，native/WASI 真实可选子功能验收。
+- [x] 12.6 提供候选发现、显式反向依赖级联计划/执行、持久 interrupted 运行记录与有界历史。
+- [x] 12.7 实现终态接管任务 Release、增量 namespace 持久化和不持全局权限锁的提交；并发撤权/故障恢复/写放大回归。
+- [x] 12.8 补齐 CLI definition/服务版本、公开接入文档、typed 性能基准和跨平台 CI，所有示例不依赖 internal。
+- [x] 12.9 非作者审查公开契约与关键边界；完整 race/conformance、vet、互操作、规格和有界 fuzz，记录真实平台及限制。
+
+### 本轮实际验证与审查证据
+
+本节只记录本轮 darwin/arm64、Apple M5 Pro、Go 1.27.3 的运行结果，不继承前文其他平台或宿主历史证据。包存储子任务已以 `a5761d0` 集成，其余整改保留在工作区；本轮未推送、发布或自动 archive，不纳入并行课程和文档站工作的完成状态。
+
+- 最终 `go test -tags=integration -race -count=1 -timeout=90s ./...` 全部通过；`bash conformance/run.sh` 通过真实独立 counter 与 chain 的 native/WASI 构建、签名包安装、双实例、反向调用、事件、配置替换、恢复和失败路径。新增作者 optional-parent 在父发布后创建的子定义可等候迟到 provider，父停用后资源归零，子运行记录有终态。CLI integration 实际构建独立 native 插件并打包，默认选择已声明的 minor 2 后调用成功。
+- `go vet ./...`、`go vet -tags=integration ./...`、`go mod verify`、`go mod tidy -diff` 通过，module 无改动；`git diff --check` 通过，固定 third_party/cordis 未修改。OpenSpec 严格校验通过。
+- 外部 Python jsonschema 4.26.0 验证 4 个 metaschema、58 个结构向量、1 个固定签名字节/hash 向量；脚本明确未执行的 17 个 codeVectors 与 Ed25519 不计为 Python 结果，由真实 Go codec/package 测试另行验证。v1 schema 标识与原签名字节 fixture 保持不变，结构能力枚举同步支持 children。
+- 有界 fuzz 各请求 3 秒、4 workers：Frame 333,865 次、Manifest 80,545 次、PackagePath 57,158 次、VersionInRange 135,919 次、带 integration tag 的 ExtractZIP 3,634 次执行通过。首次漏 tag 的 ZIP 命令只报告 no fuzz tests，不计为证据。有限 fuzz 不证明输入空间已穷尽。
+- Windows amd64、Linux amd64/arm64、macOS amd64 的 `go build ./...` 和十个包的 integration 测试二进制交叉编译通过；没有在这些目标执行。跨平台 GitHub Actions 已配置，远端未运行，不等同于平台认证。
+
+非作者分别复核 wire/typed、access/task/namespace、packagehost/child/cascade/host。审查提出并已修正：已确认取消仍保留监督计时器、匿名嵌入注册不一致、浮点目标接受不安全整数、容器隐式 null、Nullable 内部类型/有效值遗漏、字面 JSON 字段名误判；大配额无法重开、已释放任务 ID 被旧完成消息串写、非法 UTF-8 键有损持久化、维护排队取消仍提交；Update 等待边跨 activation 丢失、未启用 runtime 的级联提前清理、未 Restore 子记录遗漏、静态与作者子实例并发抢占 ID、已卸载的 disabled 子记录阻塞父操作。全部有聚焦回归；最后两项由非作者以作者测试及独立 overlay 在 race 下各重复 10 次确认关闭，并补测 builtin 登记冲突和失败释放预留。
+
+Host Enable/Update/Disable 的提交后清理失败由独立 overlay 注入现有 Store commitObserver，三条 `TestReview*CommitErrorKeepsMemory` 在 integration/race 下通过：报告 CommitError 的同时同步已提交内存目标。该适配器仅存在临时审查目录，不以 unsafe/反射增加生产接口；它模拟文件清理失败，不是断电、掉盘或任意 I/O 故障认证。
+
+namespace 回放另发现每次 write/delete 扫描全部 key 的平方级成本。修正为增量配额计数、仅 migration 扫描替换集；真实重开覆盖写、删除和额度边界回归与 access/race 通过。非作者定向复核该修改无新 finding。同机 `BenchmarkNamespaceReplay`、`-benchtime=3x`：1,000/10,000 条从约 2.78/313.60 ms 改为 0.071/0.740 ms，分配不变；只测已解码记录，不含磁盘、JSON 或 checksum，不推导完整启动加速。
+
+公开 typed 往返 benchmark 正常非 race、每组 3 次：32 B 为 2,992/3,072/3,002 ns，4,586 B、73 allocs；1 KiB 为 13,299/13,566/13,262 ns，约 36,786–36,791 B、109 allocs。背景负载未独占，无旧版同方法基线，不声称 typed 加速或普适尾延迟。原 raw 分发基线不再代替 typed 性能。
+
+本轮直接调整 AddBuiltin(context)、ChildScope/ChildInstance、显式级联动作、任务 token 与严格 typed/number 表示，仓内 SDK、CLI、示例、生成 consumer、文档和 fixture 同步；不提供旧插件兼容层。现有 catalog 可读取，新增持久字段写入后不承诺旧二进制降级；namespace 日志新格式不迁就旧未上线快照。
+
+验收范围不包含真实业务宿主/游戏/UI、远端 CI 实际执行、其他 OS 运行、断电认证或不合作进程内 Go callback 的强制终止。原生插件仍有用户权限，资源释放不是事务回滚。定向审查无剩余已确认 finding 不代表所有未知 bug 已被证明不存在。
+
+## 13. Integrator：中文文档站与 GitHub Pages
+
+- [x] 13.1 增补文档站规格、现代 Astro/Starlight 选择与部署边界；保持已有 API、schema、签名字节和并行工作，按用户要求记录 AGENTS 协作原则。
+- [x] 13.2 使用现有 docs 正文建立 Astro/Starlight 导航、中文本地搜索、移动阅读与定制主题，补齐快速开始、核心概念、作者、宿主及 CLI 指南；更新 README 和贡献入口。
+- [x] 13.3 提交锁定依赖的 Pages 工作流，区分 PR 构建与 main 自动部署，校验生产子路径、内部链接及静态资源；记录首次 Pages 设置与发布前提。
+- [x] 13.4 实际执行文档构建、入门命令及通用验收、OpenSpec 校验，进行独立审查，记录当前平台证据与未验证的远端范围。
+
+### 文档站实际验证（2026-10-27）
+
+本组在 darwin/arm64、Node 24.22.1、Bun 1.4.4、Go 1.27.3 实际执行，不把其他并行任务或历史平台结果当作本次站点证据。
+
+- `bun install --frozen-lockfile`、`bun run docs:test`（2 项）、`bun run docs:build`、`actionlint .github/workflows/docs.yml`、`bun run spec:validate` 和 `git diff --check` 通过。最终生产构建无警告，生成 19 页与 77 个文件；检查器逐页验证内部链接、锚点与 `/cordis/` 静态资源。另导出 package/lock/docs/site/scripts 到不含 node_modules、.astro、dist 的临时目录，重新 frozen install、测试及生产构建全部通过，不依赖本机历史缓存。
+- 从指南提取实际 Manifest 与完整 Go 示例，在临时目录构建 Native 与 WASM counter、pack/inspect/run，均实际返回 `{"value":12,"events":0}`。独立作者与宿主 module 固定公开版本 `v0.0.0-20261027032746-e5e1f31da5f6` 编译通过，作者 Native/WASM 都成功；另按文档设置指向当前检出的绝对 replace，`go doc contract.CreateChild` 与作者构建通过，再移除 replace。早期 smoke 使用的是临时 worker 绝对路径，不能作为初稿相对路径示例正确的证据；独立审查发现后已统一修正指南、CLI 与宿主说明。
+- `bash conformance/run.sh` 实际通过当前源码的 integration/race、签名 Native/WASM 双实例与两条完整生命周期链；`go vet ./...`、`go mod verify` 通过。此处只报告本机 macOS arm64 运行，没有新增 Windows/Linux 实际执行结论。
+- 使用本机 Chrome / Playwright 检查 1440px 桌面和 390px 手机：浅色首页、指南、深色、中文搜索弹层、移动菜单与目录跳转；页面 scrollWidth 均不超 viewport，无 JS 错误或失败资源请求。Pagefind 的“插件”返回 15 页、“Scope”返回 10 页，首条 URL 均保留 `/cordis/`；代码复制读回剪贴板内容正确，无法匹配的搜索显示中文空态，Escape 关闭弹层。中文代码复制反馈与框架提示已核对，静态设计 detector 无确定性 finding。截图为被忽略的本地验收资产，不提交。
+- GitHub API 已实际创建 Pages 设置，回读 `build_type: workflow`、目标 `https://cyenoch.github.io/cordis/`。本轮未提交、推送或触发远端工作流，因此没有声称已上线；首次远端部署和 Ubuntu Actions 环境仍须在源码推送 main 后观察结果。
+
+首轮非作者审查指出并已修正：worker 相对路径不可执行；已公开版本不含新的子实例 API；仅 deploy job 的锁可能让较旧构建覆盖较新站点。修正为绝对路径示例、明确已发布/本地开发版本及 replace 步骤、workflow 级 ref 并发串行。
+
+最终非作者视觉/交付审查实际阅读全部七张桌面、手机、深色、搜索和菜单截图及设计/实现，抽查主要文字对比度、H1 与可访问名称；未发现材料级视觉或任务可达性问题，确认首轮三项修复，但 disposition 为 `fix`：作者指南在创建源码之前运行 tidy 会移除 requirement。集成者将 tidy 移至保存 main.go 之后、构建之前；分别从两个空目录实际执行文档中的 init/get、可选绝对 replace、保存源码、tidy、Native/WASM build，两条路径都通过，当前检出路径另确认 CreateChild 可用。修正后 docs:test、19 页生产构建/链接检查、actionlint、OpenSpec 与 diff-check 再次通过。该小修复由集成者直接验证，未另称非作者已重新给出 ship。屏幕阅读器、完整键盘遍历、200% 缩放和远端 Pages 发布未实测。

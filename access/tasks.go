@@ -41,6 +41,7 @@ func terminal(state TaskState) bool {
 
 type TaskStatus struct {
 	ID        string            `json:"id"`
+	Token     string            `json:"token"`
 	Owner     contract.Identity `json:"owner"`
 	HostOwned bool              `json:"hostOwned"`
 	State     TaskState         `json:"state"`
@@ -93,8 +94,8 @@ type Task struct {
 	err        error
 }
 
-func (m *TaskManager) Create(ctx context.Context, owner contract.Identity, id string) (*Task, error) {
-	if m.policy == nil || ctx == nil || id == "" {
+func (m *TaskManager) Create(ctx context.Context, owner contract.Identity, id, token string) (*Task, error) {
+	if m.policy == nil || ctx == nil || id == "" || token == "" {
 		return nil, contract.Fail(contract.Invalid, "invalid task request")
 	}
 	if err := ctx.Err(); err != nil {
@@ -125,7 +126,7 @@ func (m *TaskManager) Create(ctx context.Context, owner contract.Identity, id st
 	// explicit host transfer without retaining the plugin's cancellation lineage.
 	taskCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	task := &Task{
-		manager: m, status: TaskStatus{ID: id, Owner: owner, State: TaskQueued},
+		manager: m, status: TaskStatus{ID: id, Token: token, Owner: owner, State: TaskQueued},
 		ctx: taskCtx, parent: ctx, cancel: cancel, done: make(chan struct{}),
 	}
 	m.tasks[key] = task
@@ -248,6 +249,29 @@ func (t *Task) finishLocked(state TaskState, result json.RawMessage, failure err
 
 func (t *Task) Cancel() error { return t.Finish(TaskCanceled, nil, context.Canceled) }
 
+// Release removes a terminal host-owned task from the manager. Existing handles
+// retain their terminal snapshot; active work and guest task identities are not released.
+func (t *Task) Release() error {
+	p := t.manager.policy
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !t.status.HostOwned || !terminal(t.status.State) {
+		return contract.Fail(contract.Conflict, "only terminal host-owned tasks can be released")
+	}
+	key := taskKey{owner: t.status.Owner, id: t.status.ID}
+	if t.manager.tasks[key] != t {
+		return nil
+	}
+	delete(t.manager.tasks, key)
+	usage := t.manager.usage[t.status.Owner]
+	usage.count--
+	usage.resultBytes -= len(t.status.Result)
+	if usage.count == 0 {
+		delete(t.manager.usage, t.status.Owner)
+	}
+	return nil
+}
+
 // Transfer explicitly moves cancellation authority to the host. It neither
 // commits a business transaction nor stores a durable checkpoint.
 func (t *Task) Transfer(hostCtx context.Context) error {
@@ -290,7 +314,7 @@ func (t *Task) Transfer(hostCtx context.Context) error {
 // Finish is the activation-bound guest completion path. It rejects stale owners
 // and does not let a guest control tasks already transferred to the host.
 func (m *TaskManager) Finish(
-	owner contract.Identity, id string, state TaskState, result json.RawMessage, failure error,
+	owner contract.Identity, id, token string, state TaskState, result json.RawMessage, failure error,
 ) error {
 	if m.policy == nil {
 		return contract.Fail(contract.Invalid, "task manager not configured")
@@ -304,7 +328,7 @@ func (m *TaskManager) Finish(
 		return err
 	}
 	task := m.tasks[taskKey{owner: owner, id: id}]
-	if task == nil || task.status.HostOwned {
+	if task == nil || task.status.Token != token || task.status.HostOwned {
 		return contract.Fail(contract.Denied, "task not activation-owned")
 	}
 	if terminal(task.status.State) {

@@ -40,6 +40,14 @@ func (i *instance) Wait(ctx context.Context) error {
 	for {
 		e.mu.Lock()
 		state, err, changed := i.state, i.failure, e.changed
+		var release func()
+		if state != contract.Active && state != contract.Failed && state != contract.Stopped {
+			release, err = i.waitEdgeLocked(ctx)
+			if err != nil {
+				e.mu.Unlock()
+				return err
+			}
+		}
 		e.mu.Unlock()
 		switch state {
 		case contract.Active:
@@ -57,10 +65,45 @@ func (i *instance) Wait(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+			if release != nil {
+				release()
+			}
 			return fmt.Errorf("wait for instance: %w", ctx.Err())
 		case <-changed:
+			if release != nil {
+				release()
+			}
 		}
 	}
+}
+
+// Instance controls participate in the same wait graph as service calls.
+func (i *instance) waitEdgeLocked(ctx context.Context) (func(), error) {
+	e := i.engine
+	actor, _ := ctx.Value(actorKey{}).(*activation)
+	if actor == nil {
+		return nil, nil
+	}
+	if !actor.committed && (actor.instance == i || ownedByLocked(e, i, actor.instance.entry.ID)) {
+		return nil, contract.Fail(contract.Reentrant, "initialization cannot wait for its own publication or owned children")
+	}
+	target := i.activation
+	if target != nil && (target == actor || e.pathLocked(target, actor, map[*activation]bool{})) {
+		return nil, contract.Fail(contract.Reentrant, "instance control wait cycle")
+	}
+	if e.instanceEdges[actor] == nil {
+		e.instanceEdges[actor] = map[*instance]int{}
+	}
+	e.instanceEdges[actor][i]++
+	return func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		if e.instanceEdges[actor][i] <= 1 {
+			delete(e.instanceEdges[actor], i)
+		} else {
+			e.instanceEdges[actor][i]--
+		}
+	}, nil
 }
 func (i *instance) finishRevisionLocked(revision uint64, result contract.UpdateResult, err error) {
 	pending := i.revisions[revision]
@@ -128,6 +171,15 @@ func (i *instance) configure(config json.RawMessage, commit func() error) (func(
 	e.signalLocked()
 	e.mu.Unlock()
 	return func(ctx context.Context) (contract.UpdateResult, error) {
+		e.mu.Lock()
+		release, err := i.waitEdgeLocked(ctx)
+		e.mu.Unlock()
+		if err != nil {
+			return contract.UpdateResult{Revision: revision}, err
+		}
+		if release != nil {
+			defer release()
+		}
 		select {
 		case <-ctx.Done():
 			return contract.UpdateResult{Revision: revision}, fmt.Errorf("wait for configuration revision %d: %w", revision, ctx.Err())
@@ -144,6 +196,25 @@ func (i *instance) Stop(ctx context.Context) error {
 		e.mu.Unlock()
 		e.configMu.Unlock()
 		return contract.Fail(contract.NotReady, "instance was removed")
+	}
+	actor, _ := ctx.Value(actorKey{}).(*activation)
+	if actor != nil && (actor.instance == i || ownedByLocked(e, actor.instance, i.entry.ID)) {
+		e.mu.Unlock()
+		e.configMu.Unlock()
+		return contract.Fail(contract.Reentrant, "cannot synchronously stop the caller's ownership tree")
+	}
+	var release func()
+	var waitErr error
+	if i.activation != nil {
+		release, waitErr = i.waitEdgeLocked(ctx)
+	}
+	if waitErr != nil {
+		e.mu.Unlock()
+		e.configMu.Unlock()
+		return waitErr
+	}
+	if release != nil {
+		defer release()
 	}
 	i.enabled = false
 	// Parent ownership persists even while a child is waiting for dependencies.

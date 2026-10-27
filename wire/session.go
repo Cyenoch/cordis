@@ -35,18 +35,25 @@ type outbound struct {
 	shutdown bool
 }
 type pending struct {
-	ctx    context.Context
-	method string
-	result chan reply
+	ctx       context.Context
+	method    string
+	result    chan reply
+	cancelAck chan struct{}
 }
 type incoming struct {
 	cancel context.CancelFunc
 	method string
 }
+type cancellation struct {
+	ctx      context.Context
+	method   string
+	awaiting bool
+	ack      chan struct{}
+}
 
 type Endpoint struct {
 	mu             sync.Mutex
-	issueMu        sync.Mutex
+	issue          chan struct{}
 	transport      io.ReadWriteCloser
 	handler        Handler
 	limits         Limits
@@ -57,7 +64,7 @@ type Endpoint struct {
 	pending        map[string]*pending
 	incoming       map[string]incoming
 	remoteSequence uint64
-	canceled       map[string]bool
+	canceled       map[string]*cancellation
 	cancelOrder    []string
 	out            chan outbound
 	done           chan struct{}
@@ -92,7 +99,7 @@ func New(options Options) (*Endpoint, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Endpoint{transport: options.Transport, handler: options.Handler, limits: limits, guest: options.Guest,
 		identity: options.Identity, pending: map[string]*pending{}, incoming: map[string]incoming{},
-		canceled: map[string]bool{}, cancelOrder: []string{},
+		canceled: map[string]*cancellation{}, cancelOrder: []string{}, issue: make(chan struct{}, 1),
 		out: make(chan outbound, limits.Inflight+4), done: make(chan struct{}), ctx: ctx, cancel: cancel}
 	e.wg.Go(e.readLoop)
 	e.wg.Go(e.writeLoop)
@@ -137,7 +144,17 @@ func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessag
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	e.issueMu.Lock()
+	select {
+	case e.issue <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-e.done:
+		return nil, e.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		<-e.issue
+		return nil, err
+	}
 	e.mu.Lock()
 	ref, _ := ctx.Value(requestKey{}).(requestReference)
 	initializing := false
@@ -147,12 +164,12 @@ func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessag
 	}
 	if !e.ready && !initializing && method != "initialize" && method != "health" && method != "shutdown" {
 		e.mu.Unlock()
-		e.issueMu.Unlock()
+		<-e.issue
 		return nil, contract.Fail(contract.NotReady, "session not initialized")
 	}
 	if len(e.pending) >= e.limits.Inflight {
 		e.mu.Unlock()
-		e.issueMu.Unlock()
+		<-e.issue
 		return nil, contract.Fail(contract.NotReady, "inflight request limit reached")
 	}
 	e.sequence++
@@ -161,7 +178,7 @@ func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessag
 		prefix = "g:"
 	}
 	id := prefix + strconv.FormatUint(e.sequence, 10)
-	p := &pending{ctx: ctx, method: method, result: make(chan reply, 1)}
+	p := &pending{ctx: ctx, method: method, result: make(chan reply, 1), cancelAck: make(chan struct{})}
 	e.pending[id] = p
 	activation := e.identity.Activation
 	e.mu.Unlock()
@@ -173,11 +190,11 @@ func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessag
 	frame := Frame{Schema: contract.SessionSchema, Kind: "request", Activation: activation, ID: id, Method: method,
 		Payload: input, DeadlineMS: min(120000, max(1, time.Until(deadline).Milliseconds())), Parent: parentID}
 	if err := e.send(ctx, frame); err != nil {
-		e.issueMu.Unlock()
+		<-e.issue
 		e.removePending(id, false)
 		return nil, err
 	}
-	e.issueMu.Unlock()
+	<-e.issue
 	select {
 	case result := <-p.result:
 		if err := ctx.Err(); err != nil {
@@ -199,10 +216,13 @@ func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessag
 			select {
 			case <-e.done:
 				return
+			case <-p.cancelAck:
+				return
 			case <-timer.C:
 			}
 			e.mu.Lock()
-			unanswered := e.canceled[id]
+			record := e.canceled[id]
+			unanswered := record != nil && record.awaiting
 			e.mu.Unlock()
 			if unanswered {
 				e.shutdown(contract.Fail(contract.Timeout, "peer ignored cancellation"))
@@ -225,19 +245,33 @@ func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessag
 
 func (e *Endpoint) removePending(id string, canceled bool) bool {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if _, exists := e.pending[id]; !exists {
+		e.mu.Unlock()
 		return false
 	}
+	p := e.pending[id]
 	delete(e.pending, id)
 	if canceled {
-		e.canceled[id] = true
-		e.cancelOrder = append(e.cancelOrder, id)
-		if len(e.cancelOrder) > e.limits.Inflight*4 {
-			delete(e.canceled, e.cancelOrder[0])
-			e.cancelOrder = e.cancelOrder[1:]
+		// Only acknowledged history may be evicted. Unanswered cancellation is
+		// still a live obligation, even after it leaves the request table.
+		if len(e.cancelOrder) >= e.limits.Inflight*4 {
+			for n, old := range e.cancelOrder {
+				if !e.canceled[old].awaiting {
+					delete(e.canceled, old)
+					e.cancelOrder = append(e.cancelOrder[:n], e.cancelOrder[n+1:]...)
+					break
+				}
+			}
 		}
+		if len(e.cancelOrder) >= e.limits.Inflight*4 {
+			e.mu.Unlock()
+			e.shutdown(contract.Fail(contract.Timeout, "unanswered cancellation limit exceeded"))
+			return false
+		}
+		e.canceled[id] = &cancellation{ctx: p.ctx, method: p.method, awaiting: true, ack: p.cancelAck}
+		e.cancelOrder = append(e.cancelOrder, id)
 	}
+	e.mu.Unlock()
 	return true
 }
 
@@ -312,13 +346,13 @@ func (e *Endpoint) receive(frame Frame) error {
 		p, ok := e.pending[frame.ID]
 		if !ok {
 			late := e.canceled[frame.ID]
-			if late {
-				delete(e.canceled, frame.ID)
-			}
-			e.mu.Unlock()
-			if late {
+			if late != nil && late.awaiting && late.method == frame.Method {
+				late.awaiting = false
+				close(late.ack)
+				e.mu.Unlock()
 				return nil
 			}
+			e.mu.Unlock()
 			return contract.Fail(contract.Invalid, "unknown or duplicate response")
 		}
 		if p.method != frame.Method {
@@ -361,6 +395,8 @@ func (e *Endpoint) receive(frame Frame) error {
 	initializing := false
 	if parent, exists := e.pending[frame.Parent]; exists {
 		initializing = parent.method == "initialize" || parent.method == "shutdown"
+	} else if parent := e.canceled[frame.Parent]; parent != nil {
+		initializing = parent.method == "initialize" || parent.method == "shutdown"
 	}
 	if !e.ready && !initializing && frame.Method != "initialize" && frame.Method != "health" && frame.Method != "shutdown" {
 		e.mu.Unlock()
@@ -374,10 +410,15 @@ func (e *Endpoint) receive(frame Frame) error {
 	if frame.Parent != "" {
 		p, ok := e.pending[frame.Parent]
 		if !ok {
-			e.mu.Unlock()
-			return contract.Fail(contract.Invalid, "invalid parent request")
+			previous := e.canceled[frame.Parent]
+			if previous == nil {
+				e.mu.Unlock()
+				return contract.Fail(contract.Invalid, "invalid parent request")
+			}
+			parent = previous.ctx
+		} else {
+			parent = p.ctx
 		}
-		parent = p.ctx
 	}
 	ctx, cancel := context.WithTimeout(parent, time.Duration(frame.DeadlineMS)*time.Millisecond)
 	ctx = context.WithValue(ctx, requestKey{}, requestReference{endpoint: e, id: frame.ID})
@@ -390,7 +431,11 @@ func (e *Endpoint) receive(frame Frame) error {
 func (e *Endpoint) handle(ctx context.Context, cancel context.CancelFunc, frame Frame) {
 	defer cancel()
 	defer func() { e.mu.Lock(); delete(e.incoming, frame.ID); e.mu.Unlock() }()
-	payload, err := e.handler(ctx, frame.Method, frame.Payload)
+	var payload json.RawMessage
+	err := ctx.Err()
+	if err == nil {
+		payload, err = e.handler(ctx, frame.Method, frame.Payload)
+	}
 	e.mu.Lock()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		err = contract.Fail(contract.Timeout, "request deadline exceeded")

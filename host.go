@@ -31,7 +31,8 @@ type Options struct {
 
 type Host struct {
 	mu            sync.Mutex
-	operations    sync.Mutex
+	operations    chan struct{}
+	childMu       sync.Mutex
 	engine        *core.Engine
 	store         *packagehost.Store
 	policy        *access.Policy
@@ -45,6 +46,9 @@ type Host struct {
 	builtins      map[string]contract.Definition
 	batches       map[string]*access.Batch
 	sessions      map[string]contract.Session
+	dynamic       map[string]ownedChild
+	definitions   map[string]contract.Definition
+	admissions    map[string]bool
 	closed        bool
 }
 
@@ -58,8 +62,8 @@ func Open(options Options) (*Host, error) {
 	}
 	policy := access.NewPolicy()
 	h := &Host{store: store, policy: policy, broker: access.NewBroker(policy), contributions: access.NewContributionStore(policy),
-		tasks: access.NewTaskManager(policy), options: options, entries: map[string]contract.Instance{},
-		entrySpecs: map[string]contract.Entry{}, packages: map[string]contract.PackageRef{}, builtins: map[string]contract.Definition{}, batches: map[string]*access.Batch{}, sessions: map[string]contract.Session{}}
+		tasks: access.NewTaskManager(policy), operations: make(chan struct{}, 1), options: options, entries: map[string]contract.Instance{},
+		entrySpecs: map[string]contract.Entry{}, packages: map[string]contract.PackageRef{}, builtins: map[string]contract.Definition{}, batches: map[string]*access.Batch{}, sessions: map[string]contract.Session{}, dynamic: map[string]ownedChild{}, definitions: map[string]contract.Definition{}}
 	if h.options.Grace == 0 {
 		h.options.Grace = time.Second
 	}
@@ -75,6 +79,19 @@ func (h *Host) Access() *access.Policy                   { return h.policy }
 func (h *Host) Broker() *access.Broker                   { return h.broker }
 func (h *Host) Contributions() *access.ContributionStore { return h.contributions }
 func (h *Host) Tasks() *access.TaskManager               { return h.tasks }
+func (h *Host) lockOperation(ctx context.Context) error {
+	select {
+	case h.operations <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			h.unlockOperation()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (h *Host) unlockOperation() { <-h.operations }
 func (h *Host) ConfigureRealm(name, parent string, isolated []string) error {
 	return h.engine.ConfigureRealm(name, parent, isolated)
 }
@@ -105,6 +122,9 @@ func (h *Host) onRetire(owner contract.Identity) {
 			h.engine.FailActivation(owner, err)
 		}
 	}
+	if err := h.removeChildren(owner); err != nil {
+		h.engine.FailActivation(owner, err)
+	}
 }
 
 func (h *Host) Install(ctx context.Context, archive string) (packagehost.Package, error) {
@@ -112,16 +132,32 @@ func (h *Host) Install(ctx context.Context, archive string) (packagehost.Package
 }
 
 func (h *Host) Select(ctx context.Context, ref contract.PackageRef) error {
-	h.operations.Lock()
-	defer h.operations.Unlock()
-	return h.store.Select(ctx, ref, h.changeOptions())
+	if err := h.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer h.unlockOperation()
+	options, err := h.changeOptions()
+	if err != nil {
+		return err
+	}
+	return h.store.Select(ctx, ref, options)
 }
 
-func (h *Host) changeOptions() packagehost.ChangeOptions {
+func (h *Host) changeOptions() (packagehost.ChangeOptions, error) {
+	entries, err := h.store.Entries()
+	if err != nil {
+		return packagehost.ChangeOptions{}, err
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	options := packagehost.ChangeOptions{InUse: []contract.PackageRef{}, Enabled: []string{}}
 	seen := map[string]bool{}
+	for _, entry := range entries {
+		if entry.Enabled && !seen[entry.Package] {
+			options.Enabled = append(options.Enabled, entry.Package)
+			seen[entry.Package] = true
+		}
+	}
 	for id, instance := range h.entries {
 		if _, builtin := h.builtins[id]; builtin {
 			continue
@@ -132,21 +168,28 @@ func (h *Host) changeOptions() packagehost.ChangeOptions {
 		}
 		ref := h.packages[id]
 		options.InUse = append(options.InUse, ref)
-		if !seen[ref.ID] {
-			options.Enabled = append(options.Enabled, ref.ID)
-			seen[ref.ID] = true
-		}
 	}
-	return options
+	return options, nil
 }
 
 func (h *Host) Enable(ctx context.Context, entry contract.Entry) (contract.Instance, error) {
-	h.operations.Lock()
-	defer h.operations.Unlock()
+	if err := h.lockOperation(ctx); err != nil {
+		return nil, err
+	}
+	defer h.unlockOperation()
 	return h.enable(ctx, entry)
 }
 
 func (h *Host) enable(ctx context.Context, entry contract.Entry) (contract.Instance, error) {
+	return h.enableEntry(ctx, entry, nil)
+}
+
+func (h *Host) enableEntry(ctx context.Context, entry contract.Entry, owner *contract.Identity) (contract.Instance, error) {
+	release, err := h.reserveEntry(entry.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -163,6 +206,9 @@ func (h *Host) enable(ctx context.Context, entry contract.Entry) (contract.Insta
 	pkg, err := h.store.Selected(entry.Package)
 	if err != nil {
 		return nil, err
+	}
+	if owner != nil && pkg.Ref.Digest != owner.Digest {
+		return nil, contract.Fail(contract.Conflict, "child package selection differs from parent activation")
 	}
 	diagnostics, err := h.store.Preflight(pkg.Ref)
 	if err != nil {
@@ -201,24 +247,59 @@ func (h *Host) enable(ctx context.Context, entry contract.Entry) (contract.Insta
 	if err := h.engine.Preflight(entry, definition); err != nil {
 		return nil, err
 	}
-	if err := h.store.SaveEntry(ctx, entry); err != nil {
-		return nil, err
+	var commitErr error
+	if owner == nil {
+		if err := h.registerBuiltinParent(ctx, entry.Parent); err != nil {
+			return nil, err
+		}
+		commitErr = h.store.SaveEntry(ctx, entry)
 	}
-	instance, err := h.engine.Add(entry, definition, contract.Identity{Package: pkg.Ref.ID, Entry: entry.ID, Digest: pkg.Ref.Digest})
+	if commitErr != nil && !catalogCommitted(commitErr) {
+		return nil, commitErr
+	}
+	identity := contract.Identity{Package: pkg.Ref.ID, Entry: entry.ID, Digest: pkg.Ref.Digest}
+	var instance contract.Instance
+	if owner == nil {
+		instance, err = h.engine.Add(entry, definition, identity)
+	} else {
+		instance, err = h.engine.AddOwned(entry, definition, identity, *owner)
+	}
 	if err != nil {
 		return nil, err
 	}
 	instance = &hostInstance{Instance: instance, host: h, id: entry.ID, diagnostics: diagnostics}
 	h.mu.Lock()
+	if owner != nil {
+		instance = instance.(*hostInstance).Instance
+		h.dynamic[entry.ID] = ownedChild{owner: *owner, instance: instance}
+		h.mu.Unlock()
+		return instance, nil
+	}
 	h.entries[entry.ID] = instance
 	h.entrySpecs[entry.ID] = entry
 	h.packages[entry.ID] = pkg.Ref
 	h.mu.Unlock()
-	return instance, nil
+	return instance, commitErr
 }
 
 func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg packagehost.Package, entry contract.Entry, adapter contract.Runtime) error {
+	scope = &hostScope{Scope: scope, host: h, realm: entry.Realm}
 	owner := scope.Identity()
+	if err := h.store.BeginRun(ctx, owner); err != nil {
+		if catalogCommitted(err) {
+			return errors.Join(err, h.store.EndRun(context.Background(), owner, "failed"))
+		}
+		return err
+	}
+	if err := scope.Defer(func(cleanupCtx context.Context) error {
+		state := "stopped"
+		if core.FailedCleanup(cleanupCtx) {
+			state = "failed"
+		}
+		return h.store.EndRun(cleanupCtx, owner, state)
+	}); err != nil {
+		return errors.Join(err, h.store.EndRun(context.Background(), owner, "failed"))
+	}
 	minor, err := pkg.Manifest.Protocol.Negotiate(contract.Protocol{Major: 1})
 	if err != nil {
 		return err
@@ -397,12 +478,14 @@ func (h *Host) handleGuest(ctx context.Context, scope contract.Scope, method str
 		return h.options.HandleGuest(ctx, scope, method, input)
 	}
 	switch method {
+	case "child":
+		return h.handleChild(ctx, scope, input)
 	case "task.begin":
 		var request contract.TaskRequest
 		if err := contract.Decode(input, &request); err != nil {
 			return nil, err
 		}
-		task, err := h.tasks.Create(scope.Context(), scope.Identity(), request.ID)
+		task, err := h.tasks.Create(scope.Context(), scope.Identity(), request.ID, request.Token)
 		if err != nil {
 			return nil, err
 		}
@@ -426,7 +509,7 @@ func (h *Host) handleGuest(ctx context.Context, scope contract.Scope, method str
 			}
 			controlCtx, cancel := context.WithTimeout(context.Background(), h.options.Grace)
 			defer cancel()
-			data, err := json.Marshal(contract.TaskRequest{ID: request.ID})
+			data, err := json.Marshal(contract.TaskRequest{ID: request.ID, Token: request.Token})
 			if err == nil {
 				_, err = session.Call(controlCtx, "task.cancel", data)
 			}
@@ -444,7 +527,7 @@ func (h *Host) handleGuest(ctx context.Context, scope contract.Scope, method str
 		if request.Failure != "" {
 			failure = contract.Fail(request.Failure, "plugin task failed")
 		}
-		if err := h.tasks.Finish(scope.Identity(), request.ID, access.TaskState(request.State), request.Result, failure); err != nil {
+		if err := h.tasks.Finish(scope.Identity(), request.ID, request.Token, access.TaskState(request.State), request.Result, failure); err != nil {
 			return nil, err
 		}
 		return json.RawMessage(`{}`), nil
@@ -476,16 +559,23 @@ func (h *Host) handleGuest(ctx context.Context, scope contract.Scope, method str
 }
 
 func (h *Host) Disable(ctx context.Context, id string) error {
-	h.operations.Lock()
-	defer h.operations.Unlock()
+	if err := h.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer h.unlockOperation()
 	return h.disable(ctx, id)
 }
 
 func (h *Host) disable(ctx context.Context, id string) error {
+	all, err := h.store.Entries()
+	if err != nil {
+		return err
+	}
 	h.mu.Lock()
-	all := make([]contract.Entry, 0, len(h.entrySpecs))
-	for _, entry := range h.entrySpecs {
-		all = append(all, entry)
+	for id, entry := range h.entrySpecs {
+		if _, builtin := h.builtins[id]; builtin {
+			all = append(all, entry)
+		}
 	}
 	h.mu.Unlock()
 	owned := ownedEntries(all, map[string]bool{id: true})
@@ -494,9 +584,22 @@ func (h *Host) disable(ctx context.Context, id string) error {
 	}
 	var result error
 	for n := len(owned) - 1; n >= 0; n-- {
-		err := h.disableOne(ctx, owned[n].ID)
+		h.mu.Lock()
+		_, live := h.entries[owned[n].ID]
+		h.mu.Unlock()
+		var err error
+		if live {
+			err = h.disableOne(ctx, owned[n].ID)
+		} else {
+			entry := owned[n]
+			if !entry.Enabled {
+				continue
+			}
+			entry.Enabled = false
+			err = h.store.SaveEntry(ctx, entry)
+		}
 		result = errors.Join(result, err)
-		if !h.engine.Missing(owned[n].ID) {
+		if err != nil && (!h.engine.Missing(owned[n].ID) || !live && !catalogCommitted(err)) {
 			return result
 		}
 	}
@@ -521,10 +624,12 @@ func (h *Host) disableOne(ctx context.Context, id string) error {
 	if !h.engine.Missing(id) {
 		return errors.Join(stopErr, removeErr)
 	}
+	var persistErr error
 	if !builtin {
 		entry.Enabled = false
-		if err := h.store.SaveEntry(ctx, entry); err != nil {
-			return errors.Join(stopErr, removeErr, err)
+		persistErr = h.store.SaveEntry(ctx, entry)
+		if persistErr != nil && !catalogCommitted(persistErr) {
+			return errors.Join(stopErr, removeErr, persistErr)
 		}
 	}
 	h.mu.Lock()
@@ -533,20 +638,31 @@ func (h *Host) disableOne(ctx context.Context, id string) error {
 	delete(h.entrySpecs, id)
 	delete(h.builtins, id)
 	h.mu.Unlock()
-	return errors.Join(stopErr, removeErr)
+	return errors.Join(stopErr, removeErr, persistErr)
 }
 
 func (h *Host) Uninstall(ctx context.Context, ref contract.PackageRef, deleteData bool) (packagehost.Removal, error) {
-	h.operations.Lock()
-	defer h.operations.Unlock()
-	options := h.changeOptions()
+	if err := h.lockOperation(ctx); err != nil {
+		return packagehost.Removal{}, err
+	}
+	defer h.unlockOperation()
+	options, err := h.changeOptions()
+	if err != nil {
+		return packagehost.Removal{}, err
+	}
 	options.DeleteData = deleteData
 	return h.store.Uninstall(ctx, ref, options)
 }
 
 func (h *Host) Replace(ctx context.Context, ref contract.PackageRef, options packagehost.ChangeOptions) error {
-	h.operations.Lock()
-	defer h.operations.Unlock()
+	if err := h.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer h.unlockOperation()
+	return h.replace(ctx, ref, options)
+}
+
+func (h *Host) replace(ctx context.Context, ref contract.PackageRef, options packagehost.ChangeOptions) error {
 	if options.MigrationCommitted {
 		if err := h.store.ConfirmDataVersion(ctx, ref.ID, options.DataVersion); err != nil {
 			return err
@@ -568,10 +684,16 @@ func (h *Host) Replace(ctx context.Context, ref contract.PackageRef, options pac
 	h.mu.Unlock()
 	entries := ownedEntries(all, roots)
 	// Preflight with actual reverse dependencies while leaving live old instances untouched.
-	actual := h.changeOptions()
+	actual, err := h.changeOptions()
+	if err != nil {
+		return err
+	}
 	actual.DataVersion = options.DataVersion
 	actual.MigrationCommitted = options.MigrationCommitted
 	if err := h.store.CheckSelect(ref, actual); err != nil {
+		return err
+	}
+	if err := h.checkRuntime(ref); err != nil {
 		return err
 	}
 	var retirementErrors error
@@ -583,13 +705,17 @@ func (h *Host) Replace(ctx context.Context, ref contract.PackageRef, options pac
 			retirementErrors = errors.Join(retirementErrors, err)
 		}
 	}
-	actual = h.changeOptions()
+	actual, err = h.changeOptions()
+	if err != nil {
+		return errors.Join(retirementErrors, err)
+	}
 	actual.DataVersion = options.DataVersion
 	actual.MigrationCommitted = options.MigrationCommitted
-	if err := h.store.Select(ctx, ref, actual); err != nil {
-		return err
+	selectErr := h.store.Select(ctx, ref, actual)
+	if selectErr != nil && !catalogCommitted(selectErr) {
+		return errors.Join(retirementErrors, selectErr)
 	}
-	result := retirementErrors
+	result := errors.Join(retirementErrors, selectErr)
 	instances := []contract.Instance{}
 	for _, entry := range entries {
 		var instance contract.Instance
@@ -601,7 +727,8 @@ func (h *Host) Replace(ctx context.Context, ref contract.PackageRef, options pac
 		}
 		if err != nil {
 			result = errors.Join(result, err)
-		} else {
+		}
+		if instance != nil {
 			instances = append(instances, instance)
 		}
 	}
@@ -612,8 +739,10 @@ func (h *Host) Replace(ctx context.Context, ref contract.PackageRef, options pac
 }
 
 func (h *Host) Close(ctx context.Context) error {
-	h.operations.Lock()
-	defer h.operations.Unlock()
+	if err := h.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer h.unlockOperation()
 	h.mu.Lock()
 	h.closed = true
 	h.mu.Unlock()
@@ -624,25 +753,41 @@ func (h *Host) Close(ctx context.Context) error {
 	return errors.Join(err, h.store.Close())
 }
 
-func (h *Host) AddBuiltin(entry contract.Entry, definition contract.Definition) (contract.Instance, error) {
-	h.operations.Lock()
-	defer h.operations.Unlock()
+func (h *Host) AddBuiltin(ctx context.Context, entry contract.Entry, definition contract.Definition) (contract.Instance, error) {
+	if err := h.lockOperation(ctx); err != nil {
+		return nil, err
+	}
+	defer h.unlockOperation()
 	return h.addBuiltin(entry, definition)
 }
 
 func (h *Host) addBuiltin(entry contract.Entry, definition contract.Definition) (contract.Instance, error) {
+	release, err := h.reserveEntry(entry.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if definition.Start == nil {
+		return nil, contract.Fail(contract.Invalid, "builtin start callback is required")
+	}
 	if entry.Package == "" {
 		entry.Package = "builtin"
 	}
 	entry.Enabled = true
+	entry.Config = append(json.RawMessage(nil), entry.Config...)
+	original := definition
+	definition.Start = func(ctx context.Context, scope contract.Scope) error {
+		return original.Start(ctx, &hostScope{Scope: scope, host: h, realm: entry.Realm})
+	}
 	instance, err := h.engine.Add(entry, definition, contract.Identity{Package: entry.Package, Entry: entry.ID, Digest: "builtin"})
 	if err != nil {
 		return nil, err
 	}
+	instance = &hostInstance{Instance: instance, host: h, id: entry.ID}
 	h.mu.Lock()
 	h.entries[entry.ID] = instance
 	h.entrySpecs[entry.ID] = entry
-	h.builtins[entry.ID] = definition
+	h.builtins[entry.ID] = original
 	h.mu.Unlock()
 	return instance, nil
 }
@@ -655,6 +800,16 @@ func (h *Host) Status(id string) (contract.Status, error) {
 		return contract.Status{}, fmt.Errorf("entry %q not found", id)
 	}
 	return instance.Status(), nil
+}
+
+// Resume re-enables an existing, fully stopped entry. Disable removes the entry;
+// use Enable/AddBuiltin to create it again after Disable instead.
+func (h *Host) Resume(ctx context.Context, id string) error {
+	if err := h.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer h.unlockOperation()
+	return h.engine.Enable(ctx, id)
 }
 
 // Supervise explicitly restarts failed activations within a finite lifetime

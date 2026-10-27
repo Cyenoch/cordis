@@ -176,6 +176,11 @@ func (e *Engine) pathLocked(from, to *activation, seen map[*activation]bool) boo
 			return true
 		}
 	}
+	for target, count := range e.instanceEdges[from] {
+		if count > 0 && target.activation != nil && e.pathLocked(target.activation, to, seen) {
+			return true
+		}
+	}
 	return false
 }
 func invokeHandler(handler contract.Handler, ctx context.Context, input json.RawMessage) (output json.RawMessage, err error) {

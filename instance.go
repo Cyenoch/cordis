@@ -3,9 +3,11 @@ package cordis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/packagehost"
 )
 
 type hostInstance struct {
@@ -23,36 +25,51 @@ func (i *hostInstance) Status() contract.Status {
 
 func (i *hostInstance) Update(ctx context.Context, config json.RawMessage) (contract.UpdateResult, error) {
 	h := i.host
-	h.operations.Lock()
+	if err := h.lockOperation(ctx); err != nil {
+		return contract.UpdateResult{}, err
+	}
 	h.mu.Lock()
 	current := h.entries[i.id]
 	entry := h.entrySpecs[i.id]
+	_, builtin := h.builtins[i.id]
 	h.mu.Unlock()
 	if current != i {
-		h.operations.Unlock()
+		h.unlockOperation()
 		return contract.UpdateResult{}, contract.Fail(contract.NotReady, "instance has been replaced")
 	}
 	entry.Config = slices.Clone(config)
+	var commitErr error
 	wait, err := h.engine.Configure(i.id, config, func() error {
-		if err := h.store.SaveEntry(ctx, entry); err != nil {
-			return err
+		if !builtin {
+			commitErr = h.store.SaveEntry(ctx, entry)
+			if commitErr != nil && !catalogCommitted(commitErr) {
+				return commitErr
+			}
 		}
 		h.mu.Lock()
 		h.entrySpecs[i.id] = entry
 		h.mu.Unlock()
 		return nil
 	})
-	h.operations.Unlock()
+	h.unlockOperation()
 	if err != nil {
 		return contract.UpdateResult{}, err
 	}
-	return wait(ctx)
+	result, waitErr := wait(ctx)
+	return result, errors.Join(commitErr, waitErr)
+}
+
+func catalogCommitted(err error) bool {
+	var committed *packagehost.CommitError
+	return errors.As(err, &committed)
 }
 
 func (i *hostInstance) Stop(ctx context.Context) error {
 	h := i.host
-	h.operations.Lock()
-	defer h.operations.Unlock()
+	if err := h.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer h.unlockOperation()
 	return i.Instance.Stop(ctx)
 }
 
@@ -93,29 +110,31 @@ func orderedEntries(entries []contract.Entry) []contract.Entry {
 // Restore enables the catalog's selected entries only when the host explicitly
 // requests it, after configuring realms, capability handlers and validators.
 func (h *Host) Restore(ctx context.Context) error {
-	h.operations.Lock()
+	if err := h.lockOperation(ctx); err != nil {
+		return err
+	}
 	entries, err := h.store.Entries()
 	if err != nil {
-		h.operations.Unlock()
+		h.unlockOperation()
 		return err
 	}
 	instances := []contract.Instance{}
+	var result error
 	for _, entry := range orderedEntries(entries) {
 		if !entry.Enabled {
 			continue
 		}
 		instance, err := h.enable(ctx, entry)
-		if err != nil {
-			h.operations.Unlock()
-			return err
+		if err != nil && instance == nil {
+			h.unlockOperation()
+			return errors.Join(result, err)
 		}
+		result = errors.Join(result, err)
 		instances = append(instances, instance)
 	}
-	h.operations.Unlock()
+	h.unlockOperation()
 	for _, instance := range instances {
-		if err := instance.Wait(ctx); err != nil {
-			return err
-		}
+		result = errors.Join(result, instance.Wait(ctx))
 	}
-	return nil
+	return result
 }

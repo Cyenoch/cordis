@@ -25,7 +25,7 @@ func TestCloseDrainsFailedBuiltinCleanupAndReleasesStore(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	instance, err := host.AddBuiltin(contract.Entry{ID: "cleanup", Config: json.RawMessage(`{}`)}, contract.Definition{
+	instance, err := host.AddBuiltin(t.Context(), contract.Entry{ID: "cleanup", Config: json.RawMessage(`{}`)}, contract.Definition{
 		Start: func(_ context.Context, scope contract.Scope) error {
 			return scope.Defer(func(context.Context) error {
 				close(cleaned)
@@ -73,7 +73,7 @@ func TestBuiltinCallRejectsSuccessReturnedAfterCancellation(t *testing.T) {
 		service := contract.Service{Name: "builtin.late", Major: 1}
 		entered := make(chan struct{})
 		release := make(chan struct{})
-		instance, err := host.AddBuiltin(contract.Entry{ID: "late", Config: json.RawMessage(`{}`)}, contract.Definition{
+		instance, err := host.AddBuiltin(t.Context(), contract.Entry{ID: "late", Config: json.RawMessage(`{}`)}, contract.Definition{
 			Provides: []contract.Service{service},
 			Start: func(_ context.Context, scope contract.Scope) error {
 				return scope.Provide(service, func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {

@@ -21,4 +21,5 @@
 
 - Integrator 统一修改公开契约、go.mod/go.sum、schema 与 OpenSpec；其他 Agent 只改分配的写集。
 - 并行修改使用独立 worktree，不覆盖用户或其他 Agent 的改动；关键边界由非作者 Review。
+- 默认同一仓库存在并行工作：先读当前内容，按职责协调并合并增量，保留他人改动，继续完成自己的任务；发现其他改动本身无需询问。仅在实际冲突无法安全合并或存在覆盖、丢失工作风险时请求确认。
 - Go 和 OpenSpec 的通用 skills 位于 `.agents/skills/`，保留各自来源与许可。

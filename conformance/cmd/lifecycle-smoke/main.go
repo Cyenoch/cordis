@@ -282,7 +282,7 @@ func run(kind, guest, worker, badGuest string) (result report, resultErr error) 
 	}
 	builtinEntry := contract.Entry{ID: "family-builtin-child", Parent: "family-z-provider", Realm: "family", Config: json.RawMessage(`{}`)}
 	builtinDef := contract.Definition{ID: "owned-builtin", Start: func(context.Context, contract.Scope) error { return nil }}
-	builtin, err := host.AddBuiltin(builtinEntry, builtinDef)
+	builtin, err := host.AddBuiltin(ctx, builtinEntry, builtinDef)
 	if err != nil {
 		return result, err
 	}
@@ -392,7 +392,78 @@ func run(kind, guest, worker, badGuest string) (result report, resultErr error) 
 		return result, err
 	}
 	result.Assertions = append(result.Assertions, "failed-new-code-restores-old-version-live")
+	options.Directory = filepath.Join(root, "author-child-catalog")
+	if err := authorChildren(ctx, options, archives[0]); err != nil {
+		return result, err
+	}
+	result.Assertions = append(result.Assertions, "author-created-optional-child-wait-cleanup")
 	return result, nil
+}
+
+func authorChildren(ctx context.Context, options cordis.Options, archive string) (result error) {
+	host, err := cordis.Open(options)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		result = errors.Join(result, host.Close(closeCtx))
+	}()
+	pkg, err := host.Install(ctx, archive)
+	if err != nil {
+		return err
+	}
+	if err := host.Select(ctx, pkg.Ref); err != nil {
+		return err
+	}
+	parent, err := host.Enable(ctx, entry("author-parent", "optional-parent", "", ""))
+	if err != nil {
+		return err
+	}
+	if err := parent.Wait(ctx); err != nil {
+		return fmt.Errorf("author parent: %w", err)
+	}
+	// The child has a declared required service, but the parent's optional
+	// feature does not prevent the parent from publishing its subscription.
+	if parent.Status().State != contract.Active {
+		return errors.New("optional child blocked its parent")
+	}
+	provider, err := host.Enable(ctx, entry("author-provider", "provider", "", ""))
+	if err != nil {
+		return err
+	}
+	if err := provider.Wait(ctx); err != nil {
+		return err
+	}
+	results, err := host.Emit(ctx, "", "chain.optional-ready", json.RawMessage(`{}`), contract.First)
+	if err != nil {
+		return fmt.Errorf("wait author child: %w", err)
+	}
+	if len(results) != 1 || !results[0].Handled {
+		return errors.New("author child did not acknowledge readiness")
+	}
+	stats, err := invoke(ctx, host, "", "chain.a", "stats")
+	if err != nil || stats.Live != 1 {
+		return fmt.Errorf("author child acquisition: %+v: %w", stats, err)
+	}
+	if err := host.Disable(ctx, "author-parent"); err != nil {
+		return fmt.Errorf("author child retirement: %w", err)
+	}
+	stats, err = invoke(ctx, host, "", "chain.a", "stats")
+	if err != nil || stats.Live != 0 || stats.Acquired != stats.Released {
+		return fmt.Errorf("author child cleanup: %+v: %w", stats, err)
+	}
+	runs, err := host.Store().Runs()
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.Owner.Entry == "author-parent.optional" && run.State == "stopped" {
+			return nil
+		}
+	}
+	return errors.New("author child terminal run not recorded")
 }
 
 func entry(id, definition, realm, parent string) contract.Entry {
@@ -752,6 +823,7 @@ func makeArchive(ctx context.Context, root, kind, guest, version string, key ed2
 			{ID: "provider", Requires: []contract.Requirement{}, Provides: provides("chain.a")},
 			{ID: "middle", Requires: requires("chain.a"), Provides: provides("chain.b")},
 			{ID: "consumer", Requires: requires("chain.b"), Provides: provides("chain.c")},
+			{ID: "optional-parent", Requires: []contract.Requirement{}, Provides: []contract.Service{}},
 		}, Runtime: contract.RuntimeSpec{Kind: kind}, Dependencies: []contract.Dependency{},
 		OptionalDependencies: []contract.Dependency{{ID: "example.optional", Range: "^1.0.0"}}, Capabilities: []contract.Capability{}, Contributions: []contract.Contribution{}}
 	if kind == "wasm" {

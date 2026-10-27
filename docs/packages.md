@@ -117,3 +117,9 @@ BeginRun 在启动前持久记录 `running`，EndRun 在实际结束后记录 `s
 独立 `runs.json` 原子替换，取消边界与 catalog 相同，但两个文件不是联合事务。Open 在返回 Store 前把遗留 running 持久标为 interrupted。最多保留最近 256 条 terminal，按更新顺序淘汰；running 不淘汰，达到 10,000 条时拒绝新的 BeginRun。读取文件上限 16 MiB。Runs 返回独立副本，按更新时间顺序排列，最旧在前。Close 不假报正在运行的实例已停止；宿主必须先结束实际运行并 EndRun，重开发现的残留才算 interrupted。被淘汰记录不再用于去重，宿主仍须为每次启动生成全新 activation ID。
 
 行为测试使用真实临时目录和 ZIP，位于 `//go:build integration` 测试；包括无效路径/链接、大小写与 NFC 冲突、配额、签名/吊销/身份不匹配、开发快照、恢复、反向依赖和数据降级。另有 SemVer/Manifest/path fuzz 入口。复现入口为 `go test ./packagehost`、`go test -tags=integration ./packagehost` 及对应 race/fuzz；集成负责人已执行的结果、源码修订和平台边界以 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md) 为准。
+
+## 显式级联
+
+`Store.ReverseDependencies(ref, enabled, action)` 的 action 为 `packagehost.SelectPackage` 或 `RemovePackage`，不会根据 ref 是否当前选中猜测意图。同版本重新选择不等于卸载。结果是排序去重的必需反向依赖包闭包，不包含可选依赖和目标自身。
+
+`Host.PlanCascade(ctx, ref, action)` 返回目标、动作和受影响 entry 的独立快照。`ReplaceCascade` 和 `UninstallCascade` 在任何停用前完成包/信任/配置/数据预检，再要求 `ConfirmCascade` 明确批准；缺 callback 或拒绝不会停用。卸载计划包含仍启用的目标 entry，替换只关闭阻塞反向依赖，目标由正常 Replace 重建。回调不得重入 Host 管理操作；修改回调收到的计划不会改变执行计划。已明确停用的反向依赖不会被偷偷重启；取消/清理失败可能留下部分停用，操作不是业务事务回滚。

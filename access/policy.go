@@ -11,6 +11,7 @@ import (
 )
 
 type activation struct {
+	commit   sync.Mutex
 	owner    contract.Identity
 	declared map[string]json.RawMessage
 	grants   map[string]*Grant
@@ -53,8 +54,8 @@ func (p *Policy) Activate(owner contract.Identity, capabilities []contract.Capab
 		}
 		declared[capability.ID] = append(json.RawMessage(nil), capability.Scope...)
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	previous := p.lockCurrent(instanceKey{packageID: owner.Package, entry: owner.Entry})
+	defer p.unlockCurrent(previous)
 	if p.seen == nil {
 		p.seen = make(map[string]struct{})
 	}
@@ -65,7 +66,7 @@ func (p *Policy) Activate(owner contract.Identity, capabilities []contract.Capab
 		p.current = make(map[instanceKey]*activation)
 	}
 	key := instanceKey{packageID: owner.Package, entry: owner.Entry}
-	if previous := p.current[key]; previous != nil {
+	if previous != nil {
 		p.revokeLocked(previous)
 	}
 	p.seen[owner.Activation] = struct{}{}
@@ -92,14 +93,41 @@ func (p *Policy) Check(owner contract.Identity) error {
 }
 
 func (p *Policy) Revoke(owner contract.Identity) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	previous := p.lockCurrent(instanceKey{packageID: owner.Package, entry: owner.Entry})
+	defer p.unlockCurrent(previous)
 	a, err := p.activeLocked(owner)
 	if err != nil {
 		return err
 	}
 	p.revokeLocked(a)
 	return nil
+}
+
+// Only the affected activation waits for its durable commit. Never wait for
+// disk while holding the policy registry lock needed by unrelated activations.
+func (p *Policy) lockCurrent(key instanceKey) *activation {
+	for {
+		p.mu.Lock()
+		a := p.current[key]
+		if a == nil {
+			return nil
+		}
+		p.mu.Unlock()
+		a.commit.Lock()
+		p.mu.Lock()
+		if p.current[key] == a {
+			return a
+		}
+		p.mu.Unlock()
+		a.commit.Unlock()
+	}
+}
+
+func (p *Policy) unlockCurrent(a *activation) {
+	p.mu.Unlock()
+	if a != nil {
+		a.commit.Unlock()
+	}
 }
 
 func (p *Policy) revokeLocked(a *activation) {

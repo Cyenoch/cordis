@@ -30,7 +30,7 @@ func Subscribe[T any](scope EventSubscriber, event EventKey[T], handler func(con
 	}
 	return scope.On(event.Name, func(ctx context.Context, data json.RawMessage) (EventResult, error) {
 		var input T
-		if err := Decode(data, &input); err != nil {
+		if err := DecodeData(data, &input); err != nil {
 			return EventResult{}, err
 		}
 		if event.Validate != nil {
@@ -48,7 +48,7 @@ func Publish[T any](ctx context.Context, scope EventEmitter, event EventKey[T], 
 			return nil, err
 		}
 	}
-	data, err := json.Marshal(input)
+	data, err := Encode(input)
 	if err != nil {
 		return nil, err
 	}

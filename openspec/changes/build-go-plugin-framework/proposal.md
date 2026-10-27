@@ -11,7 +11,10 @@
 - 支持 Go 编写的 WASM 插件和原生独立进程插件；两者共用生命周期与会话契约，但明确区分沙箱能力和原生进程权限。
 - 提供版本化调用、取消、跨运行时服务代理、Go SDK、示例和一致性工具，避免插件作者直接处理宿主内部类型。
 - 提供 activation 所有权、能力撤销、贡献批量发布/撤销与结构化任务机制；实际文件事务、权限语义、UI schema 和持久化恢复由宿主拥有。
+- 使用 Astro 7 与 Starlight 将现有中文 Markdown 发布为可检索的现代使用文档站，补齐入门、作者、宿主和 CLI 路径，通过 GitHub Actions 自动部署至 GitHub Pages；不引入文档后端或修改框架契约。
 - 按 2026-10-27 用户确认，将既有框架迁至独立 Cordis 仓库 `github.com/Cyenoch/cordis` 并公开发布，采用 MIT。本 change 随代码迁移，仍为唯一规划源；VortexGo 专属 Adapter、ABI fixture 和验收归还宿主。
+
+本次审计补齐作者子实例、候选集合发现、显式级联、运行中断记录、增量命名空间及跨平台 CI；修复取消监督、生命周期、严格 typed 数据和工具体验。当前未上线，不兼容旧插件；同步修改所有公开调用者，不添加 shim。已有 v1 schema 与签名字节不变。
 
 兼容边界：借鉴 `third_party/cordis` 固定提交 `35fdc969e4b6c48c48ed44717c7a018324e4dd88` 的行为，不提供 TypeScript/Node/npm 兼容层，也不兼容 Cordis 或 Vortex 的现有插件二进制。上游源码事实不自动成为本框架规范；取舍见 design。
 

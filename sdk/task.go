@@ -10,6 +10,7 @@ import (
 type Task struct {
 	client *Client
 	id     string
+	token  string
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -27,10 +28,10 @@ func (c *Client) BeginTask(ctx context.Context, id string) (*Task, error) {
 		return nil, contract.Fail(contract.Conflict, "task already exists or client closed")
 	}
 	taskCtx, cancel := context.WithCancel(c.ctx)
-	task := &Task{client: c, id: id, ctx: taskCtx, cancel: cancel}
+	task := &Task{client: c, id: id, token: contract.NewID(), ctx: taskCtx, cancel: cancel}
 	c.tasks[id] = task
 	c.mu.Unlock()
-	data, err := json.Marshal(contract.TaskRequest{ID: id})
+	data, err := json.Marshal(contract.TaskRequest{ID: id, Token: task.token})
 	if err == nil {
 		_, err = c.endpoint.Call(ctx, "task.begin", data)
 	}
@@ -46,7 +47,7 @@ func (c *Client) BeginTask(ctx context.Context, id string) (*Task, error) {
 
 func (t *Task) Context() context.Context { return t.ctx }
 func (t *Task) Finish(ctx context.Context, state string, result json.RawMessage, failure contract.Code) error {
-	data, err := json.Marshal(contract.TaskRequest{ID: t.id, State: state, Result: result, Failure: failure})
+	data, err := json.Marshal(contract.TaskRequest{ID: t.id, Token: t.token, State: state, Result: result, Failure: failure})
 	if err != nil {
 		return err
 	}
@@ -68,7 +69,7 @@ func (c *Client) cancelTask(input json.RawMessage) (json.RawMessage, error) {
 	c.mu.Lock()
 	task := c.tasks[request.ID]
 	c.mu.Unlock()
-	if task == nil {
+	if task == nil || task.token != request.Token {
 		return nil, contract.Fail(contract.NotReady, "task not found")
 	}
 	task.cancel()

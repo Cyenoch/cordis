@@ -4,16 +4,24 @@
 
 ## 宿主入口
 
-- `core.New()` 创建独立 Engine；`NewWithHooks(Hooks)` 集成 activation 所有的外部记录。
-- `Add(entry, definition, identity)` 返回独立 `contract.Instance`；entry 必须显式设置 `Enabled: true` 才会启动。
-- `ConfigureRealm(name, parent, isolatedKeys)` 声明命名空间；key 使用 `Service.Key()`。局部 provider 优先，隔离 key 不继承父服务，其他 key 可继承祖先服务。相同 realm 的同一 key 不允许重复发布。
-- `AddChild(parentEntryID, entry, definition, identity)` 等价于设置 `Entry.Parent` 后 Add。父实例关闭会停止整棵子树，包括尚未激活的子实例。子实例缺失依赖或失败不会停止父实例。将可选功能拆为子实例，无需把 optional 服务混入必需依赖。
-- `Call(ctx, realm, requirement, input)` 只解析已经完整发布的服务；`Emit(ctx, realm, name, input, mode)` 按显式事件模式分发。
-- `Fail(entryID, err)` 将当前 activation 退役并保留故障，不会自动重试。Runtime/session 故障应使用 `FailActivation(identity, err)`，原子拒绝旧会话迟到故障影响新 activation。
-- `Close(ctx)` 关闭 Engine；取消等待只表示调用者不再等待，不会将未释放资源假报为已释放。
-- `Enable(ctx, entryID)` 重新启用已经完整停止的 entry；FAILED 只能 Retry。`Remove(ctx, entryID)` 等待成功清理后释放 Entry ID，再用 Add 安装新 Definition；必须先移除子 entry，失败清理不会抹掉诊断。
+公开入口是根包 `cordis.Host`，不是 `internal/core`：
 
-同一个 Engine 中 Entry ID 唯一。同一 Definition 可以以不同 Entry、多份配置运行。`Identity.Activation` 由 Engine 在每次真实启动时重新生成，调用者传入的 activation 不会复用。
+- `cordis.Open(Options)` 打开独占包存储；`AddBuiltin(ctx, entry, definition)` 注册进程内定义，`Enable(ctx, entry)` 启用已选择的外部包。
+- `ConfigureRealm(name, parent, isolatedKeys)` 配置作用域。局部 provider 优先；隔离 key 不继承父服务。key 为 `Service.Key()`，同 realm 同 key 不允许重复发布。
+- `Call(ctx, realm, requirement, input)` 与 `Emit(ctx, realm, name, input, mode)` 仅使用已发布服务和订阅。
+- `Instance.Stop` 停止但保留实例；`Host.Resume(ctx,id)` 重新启用指定的已完全停止实例，静态子实例仍分别 Resume，作者动态子实例则随 Start 重建；失败状态用 `Instance.Retry`。`Host.Disable(ctx,id)` 清理并移除整棵静态所有权子树，释放 ID，之后用 AddBuiltin/Enable 重建。
+- `Replace(ctx, ref, options)` 先预检，再退役并重建目标包及其静态子树。反向依赖不被隐式关闭；需要时使用显式级联 API。
+- `Close(ctx)` 排空后释放包目录。等待取消不等于资源已经释放；管理队列上的调用也遵守各自 context。
+
+Entry ID 在同 Host 内唯一。相同 Definition 可用不同 Entry/Config 多开。每次真实启动生成新的 `Identity.Activation`，不复用旧会话权限。
+
+### 作者创建可选子实例
+
+Start 内调用公开 `contract.CreateChild(ctx, scope, contract.Child{ID:"optional", Definition:"feature", Config: config})`，SDK 与 builtin 使用同一 API。外部子定义必须来自父 activation 的同一包版本；builtin 先由宿主 `RegisterDefinition(ctx, packageID, definition)` 注册。每个 activation 最多拥有 256 个直接子实例。
+
+CreateChild 只登记，不等待启动。父实例发布后子实例才可启动，因此子功能缺依赖或失败不会阻止父实例 Active。初始化中不能 Wait 自己的子实例；框架返回 `reentrant_call`，不要等待超时。初始化返回后可用返回的 `ChildInstance.Wait/Update/Retry/Stop` 管理；`Refresh(ctx)` 读取最新状态，跨进程 `Status()` 为上次确认的快照。
+
+作者子实例 ID 为 `parentEntry.localID`，绑定当前 activation，不持久保存为独立启用 entry。父退役会停止并移除子树，重启父时由新的 Start 重新创建。旧 Scope/远程 handle 不能操作新 activation 的子实例。独立持久子实例由宿主设置 `Entry.Parent` 后 Enable/AddBuiltin；builtin 父锚点持久保存，但应用必须在 Restore 前重建 builtin 回调和配置。
 
 ## 配置与依赖快照
 

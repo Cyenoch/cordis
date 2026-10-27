@@ -22,7 +22,7 @@ func TestTaskTransferSurvivesActivationAndCallerCancellation(t *testing.T) {
 	manager := access.NewTaskManager(policy)
 	caller, cancelCaller := context.WithCancel(t.Context())
 	defer cancelCaller()
-	task, err := manager.Create(caller, owner, "host-transaction")
+	task, err := manager.Create(caller, owner, "host-transaction", "test-generation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestTaskTransferSurvivesActivationAndCallerCancellation(t *testing.T) {
 	if !task.Status().HostOwned {
 		t.Fatal("host ownership missing")
 	}
-	if err := manager.Finish(owner, "host-transaction", access.TaskCompleted, json.RawMessage(`{}`), nil); err == nil {
+	if err := manager.Finish(owner, "host-transaction", "test-generation", access.TaskCompleted, json.RawMessage(`{}`), nil); err == nil {
 		t.Fatal("retired guest completed host task")
 	}
 	if err := task.Finish(access.TaskCompleted, json.RawMessage(`{"committed":true}`), nil); err != nil {
@@ -62,7 +62,7 @@ func TestTaskTerminalTransitionIsUniqueAndRevokeInterrupts(t *testing.T) {
 	owner := identity("first")
 	activate(t, policy, owner)
 	manager := access.NewTaskManager(policy)
-	task, err := manager.Create(t.Context(), owner, "race")
+	task, err := manager.Create(t.Context(), owner, "race", "test-generation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestTaskTerminalTransitionIsUniqueAndRevokeInterrupts(t *testing.T) {
 	if successes.Load() != 1 {
 		t.Fatalf("terminal commits = %d", successes.Load())
 	}
-	unfinished, err := manager.Create(t.Context(), owner, "unfinished")
+	unfinished, err := manager.Create(t.Context(), owner, "unfinished", "test-generation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestTaskTerminalTransitionIsUniqueAndRevokeInterrupts(t *testing.T) {
 	if unfinished.Context().Err() == nil || unfinished.Status().State != access.TaskInterrupted {
 		t.Fatalf("unowned task still running: %#v", unfinished.Status())
 	}
-	if _, err := manager.Create(t.Context(), owner, "late"); err == nil {
+	if _, err := manager.Create(t.Context(), owner, "late", "test-generation"); err == nil {
 		t.Fatal("stopped owner created task")
 	}
 }
@@ -128,7 +128,7 @@ func TestTaskCancellationPrecedesFinishAndTransfer(t *testing.T) {
 			if name == "host-finish" {
 				initialParent = t.Context()
 			}
-			task, err := manager.Create(initialParent, owner, "canceled")
+			task, err := manager.Create(initialParent, owner, "canceled", "test-generation")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +143,7 @@ func TestTaskCancellationPrecedesFinishAndTransfer(t *testing.T) {
 			cancel()
 			switch name {
 			case "guest-finish":
-				err = manager.Finish(owner, "canceled", access.TaskCompleted, json.RawMessage(`true`), nil)
+				err = manager.Finish(owner, "canceled", "test-generation", access.TaskCompleted, json.RawMessage(`true`), nil)
 			case "transfer":
 				err = task.Transfer(t.Context())
 			default:
@@ -178,34 +178,34 @@ func TestTaskFloodQuotaAndRetirementPreserveHostHandles(t *testing.T) {
 	activate(t, policy, owner)
 	manager := access.NewTaskManager(policy)
 	failure := errors.New("host-only failure detail")
-	failed, err := manager.Create(t.Context(), owner, "failed")
+	failed, err := manager.Create(t.Context(), owner, "failed", "test-generation")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := failed.Finish(access.TaskFailed, json.RawMessage(`{"failure":true}`), failure); err != nil {
 		t.Fatal(err)
 	}
-	transferred, err := manager.Create(t.Context(), owner, "transferred")
+	transferred, err := manager.Create(t.Context(), owner, "transferred", "test-generation")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := transferred.Transfer(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	unfinished, err := manager.Create(t.Context(), owner, "unfinished")
+	unfinished, err := manager.Create(t.Context(), owner, "unfinished", "test-generation")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 3; i < access.MaxTasksPerActivation; i++ {
 		id := fmt.Sprintf("flood-%d", i)
-		if _, err := manager.Create(t.Context(), owner, id); err != nil {
+		if _, err := manager.Create(t.Context(), owner, id, "test-generation"); err != nil {
 			t.Fatalf("task %d below quota: %v", i, err)
 		}
-		if err := manager.Finish(owner, id, access.TaskCompleted, nil, nil); err != nil {
+		if err := manager.Finish(owner, id, "test-generation", access.TaskCompleted, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := manager.Create(t.Context(), owner, "over-quota"); !errors.Is(err, access.ErrTaskQuota) {
+	if _, err := manager.Create(t.Context(), owner, "over-quota", "test-generation"); !errors.Is(err, access.ErrTaskQuota) {
 		t.Fatalf("completed-task flood bypassed quota: %v", err)
 	}
 	if got := len(manager.Snapshot()); got != access.MaxTasksPerActivation {
@@ -229,7 +229,7 @@ func TestTaskFloodQuotaAndRetirementPreserveHostHandles(t *testing.T) {
 	}
 	replacement := identity("replacement")
 	activate(t, policy, replacement)
-	if _, err := manager.Create(t.Context(), replacement, "new-budget"); err != nil {
+	if _, err := manager.Create(t.Context(), replacement, "new-budget", "test-generation"); err != nil {
 		t.Fatalf("retired owner consumed new activation quota: %v", err)
 	}
 }
@@ -245,13 +245,13 @@ func TestTaskResultQuotaBoundaries(t *testing.T) {
 			manager := access.NewTaskManager(policy)
 			finish := func(task *access.Task, result json.RawMessage) error {
 				if guest {
-					return manager.Finish(owner, task.Status().ID, access.TaskCompleted, result, nil)
+					return manager.Finish(owner, task.Status().ID, task.Status().Token, access.TaskCompleted, result, nil)
 				}
 				return task.Finish(access.TaskCompleted, result, nil)
 			}
 			result := json.RawMessage(`"` + strings.Repeat("x", access.MaxTaskResultBytes-2) + `"`)
 			for i := range access.MaxTaskResultBytesPerActivation / access.MaxTaskResultBytes {
-				task, err := manager.Create(t.Context(), owner, fmt.Sprintf("result-%d", i))
+				task, err := manager.Create(t.Context(), owner, fmt.Sprintf("result-%d", i), "test-generation")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -268,7 +268,7 @@ func TestTaskResultQuotaBoundaries(t *testing.T) {
 					t.Fatalf("result at byte boundary rejected: %v", err)
 				}
 			}
-			over, err := manager.Create(t.Context(), owner, "aggregate-overflow")
+			over, err := manager.Create(t.Context(), owner, "aggregate-overflow", "test-generation")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -297,13 +297,13 @@ func TestTaskFinishRejectsMalformedResultsWithoutCommitting(t *testing.T) {
 			owner := identity("first")
 			activate(t, policy, owner)
 			manager := access.NewTaskManager(policy)
-			task, err := manager.Create(t.Context(), owner, "invalid-result")
+			task, err := manager.Create(t.Context(), owner, "invalid-result", "test-generation")
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, err := range []error{
 				task.Finish(access.TaskCompleted, json.RawMessage(result), nil),
-				manager.Finish(owner, "invalid-result", access.TaskCompleted, json.RawMessage(result), nil),
+				manager.Finish(owner, "invalid-result", "test-generation", access.TaskCompleted, json.RawMessage(result), nil),
 			} {
 				var coded *contract.Error
 				if !errors.As(err, &coded) || coded.Code != contract.Invalid {
@@ -314,5 +314,70 @@ func TestTaskFinishRejectsMalformedResultsWithoutCommitting(t *testing.T) {
 				t.Fatal("invalid result committed task")
 			}
 		})
+	}
+}
+
+func TestTransferredTaskReleasePreservesHandleAndRecoversQuota(t *testing.T) {
+	policy := access.NewPolicy()
+	manager := access.NewTaskManager(policy)
+	owner := identity("release")
+	activate(t, policy, owner)
+	task, err := manager.Create(t.Context(), owner, "job", "test-generation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = task.Transfer(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = task.Release(); err == nil {
+		t.Fatal("released active work")
+	}
+	if err = policy.Revoke(owner); err != nil {
+		t.Fatal(err)
+	}
+	if err = task.Finish(access.TaskCompleted, []byte(`{"ok":true}`), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = task.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err = task.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if len(manager.Snapshot()) != 0 || task.Status().State != access.TaskCompleted || string(task.Status().Result) != `{"ok":true}` {
+		t.Fatal("release lost handle or retained ledger")
+	}
+}
+
+func TestReleasedTaskIDRejectsOldGeneration(t *testing.T) {
+	policy := access.NewPolicy()
+	owner := identity("first")
+	activate(t, policy, owner)
+	manager := access.NewTaskManager(policy)
+	old, err := manager.Create(t.Context(), owner, "job", "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = old.Transfer(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = old.Finish(access.TaskCompleted, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = old.Release(); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := manager.Create(t.Context(), owner, "job", "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = manager.Finish(owner, "job", "old", access.TaskCompleted, []byte(`"stale"`), nil); err == nil {
+		t.Fatal("stale task completed replacement")
+	}
+	if replacement.Status().State != access.TaskQueued {
+		t.Fatal(replacement.Status())
+	}
+	if err = manager.Finish(owner, "job", "new", access.TaskCompleted, []byte(`"current"`), nil); err != nil {
+		t.Fatal(err)
 	}
 }

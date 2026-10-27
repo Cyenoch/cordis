@@ -15,7 +15,7 @@
       "accept": true,
       "instance": {
         "schema": "cordis-go.package/v1", "id": "example.plugin", "version": "1.0.0", "publisher": "example",
-        "protocol": {"major": 1, "minMinor": 0, "maxMinor": 0, "requiredFeatures": ["cancel", "parent", "tasks", "events"]},
+        "protocol": {"major": 1, "minMinor": 0, "maxMinor": 0, "requiredFeatures": ["cancel", "parent", "tasks", "events", "children"]},
         "definitions": [{"id": "main", "requires": [], "provides": []}], "defaultDefinition": "main",
         "runtime": {"kind": "wasm", "entry": "plugin.wasm"},
         "dependencies": [{"id": "example.shared", "range": ">=1.2.0 <2.0.0"}],
@@ -51,7 +51,7 @@
     {"name": "dependency-empty-range", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/dependencies/items", "accept": false, "instance": {"id": "example.shared", "range": ""}},
     {"name": "dependency-missing-upper-bound", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/dependencies/items", "accept": false, "instance": {"id": "example.shared", "min": "1.0.0"}},
     {"name": "dependency-wildcard-is-structurally-a-string", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/dependencies/items", "accept": true, "instance": {"id": "example.shared", "range": "*"}, "note": "Package code rejects this comparator; schema acceptance is not dependency resolution."},
-    {"name": "protocol-supported-features", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/protocol", "accept": true, "instance": {"major": 1, "minMinor": 0, "maxMinor": 0, "requiredFeatures": ["cancel", "parent", "tasks", "events"]}},
+    {"name": "protocol-supported-features", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/protocol", "accept": true, "instance": {"major": 1, "minMinor": 0, "maxMinor": 0, "requiredFeatures": ["cancel", "parent", "tasks", "events", "children"]}},
     {"name": "protocol-unsupported-required-feature", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/protocol", "accept": false, "instance": {"major": 1, "minMinor": 0, "maxMinor": 0, "requiredFeatures": ["arbitrary-host-objects"]}},
     {"name": "protocol-unsupported-major", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/protocol", "accept": false, "instance": {"major": 2, "minMinor": 0, "maxMinor": 0}},
     {"name": "protocol-negative-minor", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/protocol", "accept": false, "instance": {"major": 1, "minMinor": -1, "maxMinor": 0}},

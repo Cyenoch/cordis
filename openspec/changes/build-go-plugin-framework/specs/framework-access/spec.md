@@ -68,3 +68,29 @@
 #### Scenario: 导出失败诊断
 - **WHEN** 宿主导出一次插件加载失败、授权外调用和清理错误记录
 - **THEN** 记录能区分阶段与所有者，不包含宿主凭据、完整用户路径或未经脱敏的载荷
+
+### Requirement: 已接管终态资源可释放
+宿主 SHALL 能显式释放已完成的接管任务 ledger 和结果，活跃任务不得被删除；已有 Task 句柄仍可读取唯一终态。退休 activation 的记录释放 SHALL 回收计数和结果配额。每次创建 MUST 使用新的 token 并在 begin/finish/cancel 中匹配，不能只凭可复用逻辑 ID 修改任务。
+
+#### Scenario: 多次接管后释放
+- **WHEN** 多个 activation 的任务完成并由宿主释放
+- **THEN** manager 不再永久持有历史任务，已有句柄终态保持不变
+
+#### Scenario: 已释放任务的迟到完成
+- **WHEN** 同一 activation 释放一个终态任务并复用逻辑 ID，旧任务的 finish 或 cancel 才到达
+- **THEN** 旧 token 不匹配新任务，新任务状态及结果保持不变
+
+### Requirement: 存储写入不占全局权限锁
+持久 namespace SHALL 按操作写入有界增量记录，不因小写入重写所有 namespace。磁盘等待 MUST 不持全局 Policy 锁；撤权后未提交写入 SHALL 不发布，已提交错误 SHALL 明确可见。持久恢复 SHALL 拒绝损坏记录，不静默丢弃数据。
+
+#### Scenario: 写入期间撤权
+- **WHEN** 一个 namespace 写入等待磁盘，另一 activation 被撤权
+- **THEN** 撤权不等待前者全量持久化，未获提交资格的写入不在撤权后提交
+
+#### Scenario: 增量日志恢复与压缩
+- **WHEN** 大量小写入后重新打开 namespace 或显式 Compact
+- **THEN** 恢复逐条增量维护配额，不为每条写入重扫全部 key；压缩后值与配额相同，仍可继续写入
+
+#### Scenario: 无损的持久配置与维护取消
+- **WHEN** 配置大于安全 JSON 整数范围的 int64 配额，或在维护排队期间取消 context
+- **THEN** 配额以十进制字符串无损恢复，取得锁后的已取消维护不提交；非 UTF-8 的持久标识在写入前拒绝

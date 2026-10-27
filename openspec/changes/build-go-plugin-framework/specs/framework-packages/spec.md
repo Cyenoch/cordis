@@ -118,3 +118,31 @@
 #### Scenario: 提交或运行时宿主退出
 - **WHEN** 宿主在包切换记录提交期间退出，随后重新启动
 - **THEN** 包存储能确定选定版本并清理未提交暂存，旧激活被标记为中断，未验证包不执行
+
+### Requirement: 启用意图与包副本一致
+反向依赖预检 SHALL 包括 Failed 及尚未 Restore 的持久 enabled entry；InUse SHALL 独立表示实际运行引用。公开返回的 Manifest MUST 与 catalog 无共享可变字段。相同 digest 的可信重签安装 SHALL 刷新签名证明，提交前取消 SHALL 不替换 catalog。已提交但同步失败 SHALL 保持宿主内存期望状态与 durable 状态一致并返回显式提交错误。
+
+#### Scenario: 重签与失败实例预检
+- **WHEN** 同内容换可信密钥重签，或失败但启用的依赖方存在
+- **THEN** 新签名重开后生效，版本切换仍检查启用依赖方
+
+### Requirement: 安装输入在分配前受限
+安装 SHALL 在阻塞打开前拒绝非普通文件，ZIP 中央目录 SHALL 在完整索引分配前按实际记录数和元数据预算受限，不信任声明条目数。
+
+#### Scenario: FIFO 与中央目录洪泛
+- **WHEN** 安装输入为无 writer FIFO 或条目数超限 ZIP
+- **THEN** 安装有界失败，不持锁永久阻塞，不先分配全部条目对象
+
+### Requirement: 显式候选发现与级联计划
+框架 SHALL 提供只检查不执行的候选集合发现 API，包含来源、平台和重复身份诊断。宿主 SHALL 可取得反向依赖级联计划，显式确认后按依赖和所有权退役再切换；未授权不得自动停用。
+
+#### Scenario: 重复候选和级联切换
+- **WHEN** 候选集合含相同 ID/version 的不同 digest，或新版本破坏已启用反向依赖
+- **THEN** 发现报告双方来源，级联计划列出受影响 entry，只有显式确认后停用
+
+### Requirement: 可观察的运行恢复
+宿主 SHALL 持久记录当前外部 activation 的开始与结束；异常退出后恢复 SHALL 将未完成记录标记 interrupted 并公开查询，重新启用生成新身份。历史 SHALL 有界，不作为业务事务日志。
+
+#### Scenario: 宿主在激活运行中退出
+- **WHEN** 新宿主打开上次有未结束运行记录的存储
+- **THEN** 宿主能查询旧 activation 的 interrupted 状态，恢复不复用旧身份

@@ -1,0 +1,13 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+
+const base = import.meta.env.BASE_URL
+---
+
+<StarlightPage
+  frontmatter={{ title: '这一页不在这里', tableOfContents: false, prev: false, next: false, pagefind: false }}
+  hasSidebar={false}
+>
+  <p>可以从<a href={`${base}getting-started/`}>快速开始</a>继续，或使用顶部搜索查找需要的 API。</p>
+  <p><a href={base}>返回文档首页</a></p>
+</StarlightPage>

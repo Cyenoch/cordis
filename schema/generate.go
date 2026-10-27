@@ -174,7 +174,7 @@ func (g *generator) emitType(name string, n *node) {
 				underlying = "[]byte"
 			}
 		case "number":
-			underlying = "float64"
+			underlying = "json.Number"
 		case "integer":
 			underlying = "int64"
 		case "boolean":

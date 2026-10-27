@@ -16,3 +16,9 @@
 SDK 的 `Serve`/`ServeTransport` 管理作者侧初始化、服务注册、事件与资源清理。作者的普通处理器串行准入，控制/取消独立读取。自行创建的裸 goroutine 不是受管任务，不能依赖框架替作者回收。
 
 SDK 使用标准 Go goroutine 处理业务、响应和独立控制读取，不要求作者调用 Cooperative/Pump。WASI worker 保留原始 `*os.File` stdin，使 wazero 的非阻塞读取与 `poll_oneoff` 能推进等待中的 goroutine；业务请求等待宿主响应时仍可接收取消和 shutdown。
+
+## 取消与作者子实例
+
+发送准入是可取消的；一个慢写者不使后来的独立 deadline 失效。未响应取消保留到应答或宽限期到期，不能被新取消淘汰；有界历史满且无法安全回收时会话失败关闭。已取消请求的在途反向请求沿原 parent context 被取消，不因合法 parent 的迟到而误杀健康会话；业务 handler 不会在已取消 context 下新准入。
+
+通用 SDK 协商 `children`，通过 `child` 控制方法发送 create/status/wait/update/stop/retry。宿主只使用当前 Scope 身份解析局部 child ID，不信任 guest 自报 owner。子实例控制和服务调用共用等待环检测。专有 Options.HandleGuest 接管全部方法时，须自行明确是否提供该能力，不由框架在专有 ABI 外隐式加 envelope。

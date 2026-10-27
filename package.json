@@ -3,15 +3,25 @@
   "private": true,
   "packageManager": "bun@1.4.4",
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.23.4"
   },
   "scripts": {
+    "docs:dev": "astro dev --root site",
+    "docs:build": "astro build --root site && node scripts/check-docs.mjs",
+    "docs:preview": "astro preview --root site",
+    "docs:test": "node --test scripts/docs.test.mjs",
     "spec": "openspec",
     "spec:list": "openspec list",
     "spec:validate": "openspec validate --all --strict",
     "spec:doctor": "openspec doctor"
   },
   "devDependencies": {
-    "@fission-ai/openspec": "1.15.0"
+    "@fission-ai/openspec": "1.15.0",
+    "@astrojs/markdown-remark": "7.3.4",
+    "@astrojs/starlight": "0.42.7",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@fontsource-variable/manrope": "5.3.0",
+    "astro": "7.4.2",
+    "parse5": "8.0.1"
   }
 }

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cordis 课程：宿主与插件双侧</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+
+<p class="meta"><span class="tag">Cordis</span> 教学站 · 宿主 + 插件双侧</p>
+
+<h1>Cordis 课程</h1>
+
+<p class="lede">目标写在这里：把 Cordis 内嵌成自己产品的插件系统，同时能以作者身份交付插件。每节课只解决一个卡点，练习带即时反馈。</p>
+
+<h2>使命</h2>
+<p><a href="MISSION.md">MISSION.md</a> —— 为什么学、成功长什么样、哪些暂不碰。所有课程取舍都回到这份文件。</p>
+
+<h2>课程</h2>
+<table>
+<thead><tr><th>课</th><th>一个可验证的小胜</th><th>约</th></tr></thead>
+<tbody>
+<tr>
+<td><a href="lessons/0001-type-safety.html">0001 · 类型安全吗</a></td>
+<td>看到类型错误时，能说出它落在生成阶段、注册阶段、编解码期还是业务错误</td>
+<td>8 分钟</td>
+</tr>
+<tr>
+<td><a href="lessons/0002-plugin-dependencies.html">0002 · 插件依赖插件</a></td>
+<td>能把“装不上”“一直 waiting”“停用顺序错”分别归到包依赖、服务需求、父子所有权</td>
+<td>10 分钟</td>
+</tr>
+</tbody>
+</table>
+
+<h2>速查</h2>
+<table>
+<thead><tr><th>文档</th><th>什么时候翻</th></tr></thead>
+<tbody>
+<tr><td><a href="reference/type-boundary.html">类型边界速查</a></td><td>允许/禁止的 Go 类型、严格 JSON 规则、错误码、生成工作流</td></tr>
+<tr><td><a href="reference/dependency-model.html">依赖模型速查</a></td><td>三层依赖对照、minor 区间算术、Preflight 文案、症状排查顺序</td></tr>
+<tr><td><a href="reference/glossary.html">术语表</a></td><td>概念名和代码符号对不上时；课程间叫法以此为准</td></tr>
+</tbody>
+</table>
+
+<h2>怎么用这套材料</h2>
+<ul>
+<li><strong>先做练习再看答案</strong>：每题都是回忆/判断，先答再看解释，比顺着读一遍有效。</li>
+<li><strong>隔开复习</strong>：0001 与 0002 之间隔一天；下次先重做练习，再进入新内容。</li>
+<li><strong>回源</strong>：每节课顶部的主源是仓库文档与可执行样本；速查页只做压缩，冲突时以源码/文档为准。</li>
+<li><strong>问老师</strong>：报错、涉及的 struct、调用点贴出来即可——课程之外的问题同样可以问。</li>
+</ul>
+
+<h2>资源与笔记</h2>
+<p><a href="RESOURCES.md">RESOURCES.md</a>（可信来源与社区） · <a href="NOTES.md">NOTES.md</a>（教学偏好的工作记录） · <a href="learning-records/">learning-records/</a>（学习记录，决定下一课的区间）</p>
+
+<footer>
+<nav><a href="../README.md">仓库 README</a><a href="../docs/contracts.md">数据契约</a><a href="../docs/composition.md">组合与清理</a><a href="../docs/packages.md">包与信任</a></nav>
+<p>本目录为教学产物，可独立作为静态站点发布：所有页面只依赖 <code>assets/</code> 下的本地资源，无外部脚本与字体。</p>
+</footer>
+
+</main>
+</body>
+</html>

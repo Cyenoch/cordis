@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>类型边界速查 · Cordis 课程</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main>
+
+<p class="meta"><a href="../index.html">课程首页</a> · <a href="glossary.html">术语表</a> · <a href="dependency-model.html">依赖模型速查</a></p>
+
+<h1>类型边界速查</h1>
+<p class="lede">Cordis 跨进程只传 JSON。类型安全不是“两边类型相同”，而是“错配一定在某个可见的闸门失败”。</p>
+
+<h2>四道闸门</h2>
+<table>
+<thead><tr><th>闸门</th><th>何时触发</th><th>拦住什么</th><th>证据</th></tr></thead>
+<tbody>
+<tr>
+<td>生成期</td>
+<td><code>schema.Compile</code> / <code>cordis generate</code> / 安装时校验 <code>configSchema</code></td>
+<td>schema 自身错误（<code>$ref</code>、<code>allOf</code>、未声明 required、非法 pattern、重复 enum）、Go 名称冲突、超范围常量。生成代码内置严格 <code>Marshal/Unmarshal</code>，编解码两侧都校验。</td>
+<td><code>docs/contracts.md</code>、<code>schema/</code></td>
+</tr>
+<tr>
+<td>注册期</td>
+<td><code>sdk.Provide[In,Out]</code> 调 <code>contract.CheckDataType</code></td>
+<td>指针、interface、func、chan、unsafe.Pointer、递归类型；非 string 的 map key；裸 <code>int64</code>/<code>uint64</code>；字段 JSON tag 非法。</td>
+<td><code>contract/data.go</code>、<code>sdk/typed.go</code></td>
+</tr>
+<tr>
+<td>编解码期</td>
+<td><code>contract.Decode/DecodeData/Encode</code>，每次跨边界</td>
+<td>未知字段、重复 key、尾随数据、非法 UTF-8、深度 &gt; 32、数组 &gt; 10,000、非有限浮点。</td>
+<td><code>contract/json.go</code></td>
+</tr>
+<tr>
+<td>业务期</td>
+<td>Handler 返回错误</td>
+<td>显式错误码：<code>invalid_message</code>、<code>denied</code>、<code>timeout</code>、<code>canceled</code>、<code>reentrant_call</code>、<code>plugin_failed</code> 等；不把失败转成零值。</td>
+<td><code>contract/types.go</code>（<code>Code</code>）</td>
+</tr>
+</tbody>
+</table>
+
+<h2>注册期：允许与禁止</h2>
+<table>
+<thead><tr><th>Go 类型</th><th>结果</th><th>原因 / 替代</th></tr></thead>
+<tbody>
+<tr><td><code>string</code> <code>bool</code> <code>int</code> <code>int8/16/32</code> <code>uint…32</code> <code>float32/64</code></td><td>允许</td><td>JSON 原生可表示。</td></tr>
+<tr><td><code>int64</code> <code>uint64</code></td><td>拒绝</td><td>报错 <code>requires an explicit decimal-string codec</code>；用 <code>format:"int64"</code> 的字符串字段，避免 JSON number 的精度歧义。</td></tr>
+<tr><td><code>[]T</code>、<code>[N]T</code></td><td>允许</td><td>元素递归检查；<code>[]byte</code> 走 base64 codec。</td></tr>
+<tr><td><code>map[string]T</code></td><td>允许</td><td>key 必须是 string。</td></tr>
+<tr><td><code>map[int]T</code></td><td>拒绝</td><td><code>service map keys must be strings</code>。</td></tr>
+<tr><td><code>*T</code>、<code>interface{}</code>、<code>func</code>、<code>chan</code>、<code>unsafe.Pointer</code></td><td>拒绝</td><td><code>nonserializable service type</code>；可选值用 <code>schema.Optional[T]</code>，null 用 <code>schema.Nullable[T]</code>。</td></tr>
+<tr><td>递归结构（<code>A</code> 含 <code>A</code>）</td><td>拒绝</td><td><code>recursive service type</code>；改成 id 引用或分层类型。</td></tr>
+<tr><td>实现 <code>DataType</code> 或双向 <code>json.Marshaler/Unmarshaler</code></td><td>允许</td><td>自定义 codec 自己负责 wire 表示（如 <code>schema.Nullable</code>）。</td></tr>
+</tbody>
+</table>
+
+<h2>编解码期：严格 JSON 规则</h2>
+<table>
+<thead><tr><th>规则</th><th>行为</th></tr></thead>
+<tbody>
+<tr><td>未知字段</td><td>拒绝（<code>DisallowUnknownFields</code>）——拼错字段名不会静默变成零值。</td></tr>
+<tr><td>重复 key</td><td>拒绝——不会“后者覆盖前者”。</td></tr>
+<tr><td>尾随数据</td><td>拒绝（<code>trailing JSON data</code>）。</td></tr>
+<tr><td>UTF-8</td><td>非法字节直接拒绝。</td></tr>
+<tr><td>嵌套 / 数组规模</td><td>深度上限 32，单数组上限 10,000；持久化宿主 envelope 用 <code>DecodeWithLimits</code> 显式指定自己的上限，不用默认值兜底。</td></tr>
+<tr><td>数字</td><td>必须可表示为有限 float64；生成器里 <code>number</code> 换成 <code>json.Number</code> 保留词法值，避免重编码舍入。</td></tr>
+<tr><td>缺失 vs null</td><td>不等价；需要 null 必须在 schema 里显式 <code>nullable:true</code>。</td></tr>
+</tbody>
+</table>
+
+<h2>生成契约的工作流</h2>
+<ol class="steps">
+<li>写 <code>*.schema.json</code>（<code>schema: "cordis-go.contract/v1"</code>，服务名 + major/minor + 方法 + request/response 子 schema）。</li>
+<li><code>cordis generate -package echo echo.schema.json &gt; echo/echo.go</code>（或 <code>schema.Generate(w, "echo", def)</code>）。</li>
+<li>插件侧：<code>echo.RegisterExampleEchoServer(scope, impl)</code>；宿主/消费者侧：<code>echo.NewExampleEchoClient(scope).Echo(ctx, req)</code>。</li>
+<li>把生成文件当作两边共享的契约包：字段、可选性、int64、base64、union 都由它约束，而不是各自手写 struct 再靠人记。</li>
+</ol>
+
+<div class="callout">
+<span class="label">关键取舍</span>
+<p>手写 <code>struct</code> + <code>contract.Decode</code> 也能用，代价是契约只存在于两边的代码里：改名、加字段、改可选性都不会被任何闸门发现，只会在运行时以未知字段或零值出现。生成包把这份契约变成可编译、可校验的产物。</p>
+</div>
+
+<h2>错误码速查</h2>
+<table>
+<thead><tr><th>码</th><th>含义</th><th>典型触发</th></tr></thead>
+<tbody>
+<tr><td><code>invalid_message</code></td><td>输入不合法</td><td>未知操作、坏 JSON、越界值</td></tr>
+<tr><td><code>incompatible</code></td><td>协议/版本不兼容</td><td>major 不同、无共同 minor</td></tr>
+<tr><td><code>not_ready</code></td><td>尚未可用</td><td>启动未完成、实例已被替换</td></tr>
+<tr><td><code>denied</code></td><td>未授权</td><td>能力未声明/未授予、scope 校验失败</td></tr>
+<tr><td><code>timeout</code> / <code>canceled</code></td><td>期限/取消</td><td>调用等待超时、context 取消</td></tr>
+<tr><td><code>reentrant_call</code></td><td>重入</td><td>初始化里等自己的子实例、middleware 二次 next、依赖环</td></tr>
+<tr><td><code>plugin_failed</code> / <code>internal</code></td><td>插件/框架内部失败</td><td>Start 返回错误、协议错误</td></tr>
+</tbody>
+</table>
+
+<footer>
+<nav><a href="../index.html">首页</a><a href="glossary.html">术语表</a><a href="dependency-model.html">依赖模型速查</a><a href="../lessons/0001-type-safety.html">第 1 课：类型安全吗</a></nav>
+<p>来源：<code>docs/contracts.md</code>、<code>contract/data.go</code>、<code>contract/json.go</code>、<code>contract/types.go</code>。推断性说明已在上文标注；其余均可由源码或测试复核。</p>
+</footer>
+
+</main>
+</body>
+</html>

@@ -41,10 +41,25 @@ var (
 )
 
 func main() {
-	if err := sdk.ServeDefinitions(context.Background(), provider(), middle(), consumer()); err != nil {
+	if err := sdk.ServeDefinitions(context.Background(), provider(), middle(), consumer(), optionalParent()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func optionalParent() contract.Definition {
+	return contract.Definition{ID: "optional-parent", Start: func(ctx context.Context, scope contract.Scope) error {
+		child, err := contract.CreateChild(ctx, scope, contract.Child{ID: "optional", Definition: "middle", Config: scope.Config()})
+		if err != nil {
+			return err
+		}
+		return scope.On("chain.optional-ready", func(ctx context.Context, _ json.RawMessage) (contract.EventResult, error) {
+			if err := child.Wait(ctx); err != nil {
+				return contract.EventResult{}, err
+			}
+			return contract.EventResult{Handled: true, Value: json.RawMessage(`true`)}, nil
+		})
+	}}
 }
 
 func call(ctx context.Context, scope contract.Scope, required contract.Requirement, input request) (response, error) {

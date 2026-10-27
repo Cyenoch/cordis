@@ -90,3 +90,24 @@ WASM 插件 MUST 默认不能访问宿主文件、网络、进程、环境秘密
 #### Scenario: 外部作者完成加载闭环
 - **WHEN** 作者按文档在独立 Go module 构建、打包并安装示例插件
 - **THEN** 宿主可调用其服务、接收事件并停用插件，工具能定位 Manifest 或契约错误
+
+### Requirement: 取消监督和背压保持有界正确性
+未确认的取消 SHALL 保持受监督，不得因历史淘汰丢失超时终止资格。已取消父请求的合法在途子请求 SHALL 返回取消而非杀死健康会话；真正未知关联仍 MUST 拒绝。发送准入等待 SHALL 响应各自 deadline，且在取得准入后重查取消。
+
+#### Scenario: 取消洪泛与在途子请求
+- **WHEN** 未确认取消后发生多次已确认取消，或取消父请求时合法子请求正在传输
+- **THEN** 前者仍在宽限期内失败，后者不执行业务且不破坏健康会话
+
+### Requirement: 严格且可往返的数据契约
+typed 边界 SHALL 拒绝非 nullable 的 null、定长数组长度不符、非安全原始整数及 nullable 内未知字段。匿名嵌入字段 SHALL 遵循实际 JSON 有效字段规则。生成 number SHALL 保留合法输入的数值表示，使成功解码的值可按自身 schema 再编码。Parallel 事件 MUST 尝试全部监听者并汇总错误，实例内仍串行。
+
+#### Scenario: typed 无损往返
+- **WHEN** typed API 收到 null、长度不符数组、嵌入对象或高精度 number
+- **THEN** 非法值在业务执行前拒绝，合法值往返不丢失契约数据
+
+### Requirement: 统一作者工具版本与子实例协议
+CLI SHALL 可选择 definition、service major 与 minor 范围，并默认解析唯一已声明版本，不硬编码 1.0。作者子实例生命周期 SHALL 由统一会话原语表达，不另建控制协议。
+
+#### Scenario: 调用非零 minor 服务
+- **WHEN** 作者运行提供 1.1 服务的合法包
+- **THEN** 工具可正确解析并调用该服务，版本歧义给出可操作错误

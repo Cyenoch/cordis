@@ -103,7 +103,7 @@ func TestAnsweredCancellationDoesNotExpireHealthyEndpoint(t *testing.T) {
 		defer cancel()
 		before := &lifecycleGate{entered: make(chan struct{}), release: make(chan struct{})}
 		after := &lifecycleGate{entered: make(chan struct{}), release: make(chan struct{})}
-		ctx := &lifecycleContext{Context: base, gates: []*lifecycleGate{before, after}}
+		ctx := &lifecycleContext{Context: base, gates: []*lifecycleGate{nil, before, after}}
 		callDone := make(chan error, 1)
 		go func() {
 			_, err := endpoint.Call(ctx, "initialize", json.RawMessage(`{}`))
@@ -160,7 +160,7 @@ func TestInitializeReplyAdmitsImmediateGuestRequestBeforeCallerResumes(t *testin
 		base, cancel := context.WithTimeout(t.Context(), time.Minute)
 		defer cancel()
 		gate := &lifecycleGate{entered: make(chan struct{}), release: make(chan struct{})}
-		ctx := &lifecycleContext{Context: base, gates: []*lifecycleGate{nil, gate}}
+		ctx := &lifecycleContext{Context: base, gates: []*lifecycleGate{nil, nil, gate}}
 		callDone := make(chan error, 1)
 		go func() {
 			_, err := endpoint.Call(ctx, "initialize", json.RawMessage(`{}`))

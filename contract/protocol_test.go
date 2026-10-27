@@ -8,7 +8,7 @@ import (
 
 func TestProtocolSelectsHighestCommonMinorAndRejectsRequiredUnknownFeatures(t *testing.T) {
 	host := contract.Protocol{Major: 1, MinMinor: 1, MaxMinor: 4}
-	plugin := contract.Protocol{Major: 1, MinMinor: 2, MaxMinor: 3, RequiredFeatures: []string{"cancel", "parent"}}
+	plugin := contract.Protocol{Major: 1, MinMinor: 2, MaxMinor: 3, RequiredFeatures: []string{"cancel", "parent", "children"}}
 	if minor, err := host.Negotiate(plugin); err != nil || minor != 3 {
 		t.Fatalf("wrong negotiation: %d %v", minor, err)
 	}

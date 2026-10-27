@@ -1,0 +1,18 @@
+{
+  "surface": "Cordis 文档站",
+  "mode": "read",
+  "platform": "web",
+  "source": "site/src/styles/custom.css",
+  "typography": {
+    "ui": "Manrope Variable",
+    "chinese": "PingFang SC / Noto Sans CJK SC",
+    "code": "JetBrains Mono Variable",
+    "bodyRem": 1,
+    "lineHeight": 1.9
+  },
+  "layout": {"contentWidthRem": 47, "sidebarWidthRem": 17},
+  "light": {"background": "#ffffff", "text": "#182b37", "accent": "#0f766e", "sidebar": "#f8fafb"},
+  "dark": {"background": "#101820", "text": "#eef3f3", "accent": "#a0efde", "sidebar": "#121c26"},
+  "components": ["Starlight navigation", "Pagefind search", "Expressive Code"],
+  "requiredViewports": [1440, 390]
+}

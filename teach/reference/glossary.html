@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>术语表 · Cordis 课程</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main>
+
+<p class="meta"><a href="../index.html">课程首页</a> · <a href="../reference/type-boundary.html">类型边界速查</a> · <a href="../reference/dependency-model.html">依赖模型速查</a></p>
+
+<h1>术语表</h1>
+<p class="lede">课程里所有叫法以本页为准。每个词给出对应的代码符号，避免“概念名”和“API 名”各说一套。</p>
+
+<table>
+<thead><tr><th>术语</th><th>代码符号</th><th>一句话定义</th></tr></thead>
+<tbody>
+<tr><td>包 / Package</td><td><code>packagehost.Package</code>、<code>contract.Manifest</code></td><td>一份不可变的 ZIP：manifest + 本平台产物；身份是 ID + 严格 SemVer + digest。</td></tr>
+<tr><td>Manifest</td><td><code>plugin.json</code></td><td>声明定义、服务、版本、Runtime、依赖、能力、配置 schema 的 JSON；打包后参与摘要计算。</td></tr>
+<tr><td>Catalog</td><td><code>Options.Directory</code></td><td>宿主持久目录：装了哪些包、选中哪个版本、entry 配置、信任证明。安装不改变选择。</td></tr>
+<tr><td>选择 / Select</td><td><code>Host.Select</code></td><td>把某个已安装版本设为该包 ID 的当前版本；新装的版本不会自动生效。</td></tr>
+<tr><td>Entry</td><td><code>contract.Entry</code></td><td>宿主声明“我要跑这个包的这个定义，用这份配置”的记录，ID 在宿主内唯一。</td></tr>
+<tr><td>Activation</td><td><code>contract.Identity.Activation</code></td><td>一次真实启动；每次启动新 ID，旧 ID 的权限一律失效。一个 entry 可有多次激活。</td></tr>
+<tr><td>Scope</td><td><code>contract.Scope</code></td><td>一个 activation 的能力面：身份、配置、注册服务/订阅、调用、Defer 清理。插件只拿到它。</td></tr>
+<tr><td>Definition</td><td><code>contract.Definition</code></td><td>包内一个可独立实例化的启动单元（ID + Requires + Provides + Start）；一个产物可含多个。</td></tr>
+<tr><td>Service</td><td><code>contract.Service</code></td><td>provider 发布的服务声明：名字 + major（+ minor）。绑定键是 <code>name@major</code>。</td></tr>
+<tr><td>Requirement</td><td><code>contract.Requirement</code></td><td>consumer 的依赖声明：名字 + major + minor 闭区间 <code>[MinMinor, MaxMinor]</code>。</td></tr>
+<tr><td>Capability</td><td><code>contract.Capability</code></td><td>宿主能力（宿主实现、插件调用）；manifest 声明，宿主 <code>Authorize</code> 授权，<code>Broker</code> 处理。</td></tr>
+<tr><td>Realm</td><td><code>Host.ConfigureRealm</code></td><td>可见性作用域：服务沿 realm 向后代可见；隔离键不继承父 realm。</td></tr>
+<tr><td>WaitingFor</td><td><code>contract.Status.WaitingFor</code></td><td>实例没到 active 的原因列表，元素是 <code>name@major</code> 或 <code>parent:&lt;id&gt;</code>。</td></tr>
+<tr><td>Diagnostic</td><td><code>contract.Status.Diagnostics</code></td><td>非致命问题（可选包缺失、版本不兼容）；不阻止启动，但要能被看到。</td></tr>
+<tr><td>Preflight</td><td><code>Store.Preflight</code></td><td>启用前的包层检查：必需依赖是否已被选择、版本区间、依赖环；可选依赖只产诊断。</td></tr>
+<tr><td>Snapshot</td><td><code>Store.Snapshot</code></td><td>把选中包复制到本次执行私有目录，重新校验完整性与信任后才交给 Runtime。</td></tr>
+<tr><td>Digest</td><td><code>packagehost.Package.Ref.Digest</code></td><td>内容身份（路径+大小+SHA-256 的规范序），开发期授权与签名都签它。</td></tr>
+<tr><td>Child instance</td><td><code>contract.CreateChild</code> / <code>Entry.Parent</code></td><td>子实例：作者在 Start 内创建（随 activation 回收）或宿主用 Parent 持久编排。</td></tr>
+<tr><td>Subtree</td><td><code>Host.Disable</code></td><td>停用父 entry 会持久停用整棵子树；Restore 不会把它们悄悄拉起来。</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">用法约定</span>
+<p>课程里说「服务依赖」指 <code>Requires</code>/<code>Provides</code>；说「包依赖」指 manifest 的 <code>dependencies</code>；说「父子」指 entry 所有权。三者互不替代，混用会产生不同层级的错误。</p>
+</div>
+
+<footer>
+<nav><a href="../index.html">首页</a><a href="type-boundary.html">类型边界速查</a><a href="dependency-model.html">依赖模型速查</a><a href="../lessons/0001-type-safety.html">第 1 课</a><a href="../lessons/0002-plugin-dependencies.html">第 2 课</a></nav>
+<p>术语有歧义或与源码不一致时，以 <code>contract/types.go</code> 为准；本页只是压缩。</p>
+</footer>
+
+</main>
+</body>
+</html>

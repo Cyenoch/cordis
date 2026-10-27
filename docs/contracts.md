@@ -43,7 +43,7 @@ Cordis 跨进程只传 JSON 数据，不反射任意 Go interface。契约源文
 
 对象始终封闭：即使未写 `additionalProperties`，未知属性仍拒绝。字段缺失与 `null` 不等价；允许 null 必须显式写 `nullable:true`，不能使用 `type:["string","null"]` 或隐式指针。`required` 只控制字段是否必须出现。字符串长度按 Unicode 码点计算；pattern 不会自动加 `^` 或 `$`。
 
-数值必须可表示为有限 float64，溢出和非零下溢拒绝。整数的绝对值不得超过 `9007199254740991`，包括以指数或小数形式书写的数学整数。普通非整数遵循 float64 语义；如需十进制定点精度，应自行用受约束的字符串表达，而非 number。minimum/maximum 比较使用输入数字的精确有理数，避免校验阶段先舍入。
+数值必须可表示为有限 float64，溢出和非零下溢拒绝。整数的绝对值不得超过 `9007199254740991`，包括以指数或小数形式书写的数学整数。生成的 number 使用 `json.Number` 保留词法值，避免成功解码的 const/minimum 在重编码时因舍入失败；普通手写 float64 类型仍遵循 float64 语义；如需十进制定点精度，应自行用受约束的字符串表达，而非 number。minimum/maximum 比较使用输入数字的精确有理数，避免校验阶段先舍入。
 
 64 位整数必须是字符串：`{"type":"string","format":"int64"}` 或 `uint64`，使用完整类型范围内的规范十进制，不允许前导 `+`、前导零或 `-0`。字节用 `{"type":"string","contentEncoding":"base64"}`（也接受 `format:"byte"`），要求标准、带 padding 的规范 base64，拒绝换行和非规范尾位。
 
@@ -87,6 +87,7 @@ if err := schema.Generate(destinationWriter, "echo", definition); err != nil { r
 
 - 可选字段为 `schema.Optional[T]`，通过 `schema.Some(value)` 设置出现，`Present:false` 完全省略；因此 `false`、0、空串仍能是明确存在的值。
 - nullable 类型包装 `schema.Nullable[T]`，`Valid:false` 输出 null，`schema.NonNull(value)` 输出非 null；nullable 对象/数组同样适用，不暴露 Go 指针 ABI。
+- number 使用 `json.Number`（可用 `json.Number("0.1")` 构造）；integer 仍是安全范围整数。
 - int64/uint64 使用带字符串 JSON codec 的数值类型；字节使用 `[]byte`，数组使用 typed slice。
 - union 是拥有多个 `schema.Optional[VariantType]` 字段的具体结构。必须只设置一个分支，并给该分支的 const 字段设置正确 tag；`json.Unmarshal` 自动按 tag 设置对应分支。零个或多个分支都拒绝。
 - 非 nullable slice/字节的 nil 值不会自动变成空数组/空字节：它们编码为 null，因而被 schema 拒绝。需要空值时应显式构造非 nil 空 slice。
@@ -121,3 +122,9 @@ SDK 和宿主 Scope 都可以实现这两个接口。一个 service 注册一个
 ## 互操作向量
 
 `schema/{package,session,integrity,signature}.schema.json` 是独立 Draft 2020-12 envelope schema；受限契约生成器使用上文自己的数据方言。外部环境提供 Python `jsonschema` 后执行 `python3 conformance/validate-schemas.py`，验证四份 metaschema、58 个结构向量和固定签名字节/SHA-256。该脚本明确不执行 codeVectors 或 Ed25519；后者由 `go test ./packagehost -run '^TestIndependentSigningInteroperabilityVector$'` 校验固定 UTF-8 输入、公钥、签名、信任及篡改拒绝。协议方向、状态、比较式语义和 nullable/64 位 codec 由真实 Go 回归验证，不能由 envelope schema 通过推断。
+
+## 手写 typed 数据
+
+`cordis.Provide/Call`、`sdk.Provide/Call` 和 typed event 共用 `contract.Encode/DecodeData`。非 nullable 标量/struct 拒绝 null，固定数组长度必须精确；匿名嵌入字段遵守 JSON 字段优先级，重复/未知字段仍拒绝。slice/map 的 null 在 typed 数据中也拒绝；显式空值应构造非 nil 容器，显式 null 使用 Nullable。协议 envelope 继续使用 Decode，允许其已声明的可空集合。`schema.Nullable[T]` 的内部值也严格解码，不会吞掉未知字段。
+
+手写 int/uint 在 64 位宿主也不得超出安全整数范围；int64/uint64 应使用 schema 字符串 codec，而非裸 JSON number。

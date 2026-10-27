@@ -12,6 +12,8 @@ bash conformance/run.sh
 
 命令从独立作者 module 构建 native/WASI 产物，运行 race/集成测试、签名包安装和双实例生命周期。宿主构建时不导入插件代码，不需要 VortexGo 或相邻仓库。Windows 使用 `conformance/run.ps1`。
 
+本地开发调用可用 `go run ./cmd/cordis run -dev-unsigned -definition main -service echo -major 1 -min-minor 1 plugin.zip`；未指定 major 时要求声明唯一匹配版本，不假定 1.0。
+
 工具入口为 `go run ./cmd/cordis`，WASI worker 用 `go build -o bin/cordis-worker ./cmd/cordis-worker` 构建。现有 `cordis-go.*` v1 schema 标识与签名域保留原值，不随项目名称改变；参见[包格式](docs/packages.md)与[协议](docs/protocol.md)。
 
 ## 宿主入口
@@ -42,9 +44,15 @@ if err := instance.Wait(ctx); err != nil { return err }
 - `contract.Scope` 属于单次 activation；服务依赖由宿主绑定，资源使用 `Defer` 或 `contract.NewGroup(scope)`。
 - `sdk.Serve` / `ServeDefinitions` 运行外部作者代码；`sdk.Provide` / `sdk.Call` 提供类型化数据边界。多个定义可共享同一包产物，但每次 activation 仍独占进程。
 - `Instance.Update` 持久化期望配置并等待收敛；取消等待不撤销已接受更新。失败使用显式 `Retry`；`Host.Supervise` 是显式有限重启，不重放业务调用。
+- 作者通过 `contract.CreateChild` 创建同包可选子功能；builtin 用 `Host.RegisterDefinition` 注册定义。子实例等待不阻塞父启动，退役自动清理，不需要导入 internal。
+- `Store.Discover` 批量发现并返回冲突诊断；`Store.Runs` 查看中断记录；`Host.PlanCascade/ReplaceCascade/UninstallCascade` 明确规划并确认级联。
 - 原生进程不是权限沙箱；WASM 不接收宿主路径、环境或网络权限。资源清理不是业务回滚。
 
 ## 文档
+
+[在线文档站](https://cyenoch.github.io/cordis/) · [快速开始](docs/getting-started.md) · [插件作者指南](docs/plugin-author.md) · [宿主接入](docs/host-guide.md) · [CLI](docs/cli.md)
+
+文档站使用 Astro + Starlight；推送到 `main` 后由 GitHub Actions 自动发布至 GitHub Pages，PR 只构建校验。首次设置与本地运行见[文档站维护](docs/site-maintenance.md)。
 
 | 主题 | 入口 |
 |---|---|

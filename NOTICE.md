@@ -22,3 +22,5 @@ documentation-and-adrs 来自 addyosmani/agent-skills，许可证均为 MIT；�
 版本与校验值见各 SKILL.md 和 skills-lock.json。OpenSpec 生成 skills 来自固定 @fission-ai/openspec 1.15.0，
 MIT；Copyright (c) 2024 OpenSpec Contributors。完整上游许可见
 `licenses/skills-openspec.txt`；其他技能许可见 `licenses/skills-*.txt`。
+
+文档站自托管 Manrope Variable 与 JetBrains Mono Variable 字体（均为 SIL OFL 1.1），来自 Fontsource 固定依赖。完整许可随站点发布在 `site/public/licenses/`，不影响 Go module 的运行依赖或 MIT 许可。

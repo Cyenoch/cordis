@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
+
+	"github.com/Cyenoch/cordis/contract"
 )
 
 // Optional preserves absence independently from the zero value or explicit null.
@@ -26,11 +29,13 @@ type Nullable[T any] struct {
 
 func NonNull[T any](value T) Nullable[T] { return Nullable[T]{Valid: true, Value: value} }
 
+func (Nullable[T]) ContractDataType() reflect.Type { return reflect.TypeFor[T]() }
+
 func (n Nullable[T]) MarshalJSON() ([]byte, error) {
 	if !n.Valid {
 		return []byte("null"), nil
 	}
-	data, err := json.Marshal(n.Value)
+	data, err := contract.Encode(n.Value)
 	if err != nil {
 		return nil, fmt.Errorf("marshal nullable value: %w", err)
 	}
@@ -46,7 +51,7 @@ func (n *Nullable[T]) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	var value T
-	if err := json.Unmarshal(data, &value); err != nil {
+	if err := contract.DecodeData(data, &value); err != nil {
 		return fmt.Errorf("unmarshal nullable value: %w", err)
 	}
 	*n = NonNull(value)

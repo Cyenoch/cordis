@@ -85,3 +85,13 @@ chmod 700 "$cache"
 进程内 benchmark、真实 native/WASM 测量和集成/race 的命令、产物摘要、样本与平台记录统一见 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)。报告明确对应测量时的构建；Adapter 的后续修订不自动继承性能数字。不同版本或平台结果不得拼接成同一次基准，不设性能门禁，也不推导 p95/p99。实际执行目标与仿真方式以该证据记录为准，交叉编译不能替代运行。
 
 counter 负载仅包含一个小 JSON 请求、串行有状态加法和响应校验，不代表高并发、大 payload、反向宿主能力调用、事件扇出、真实磁盘或 UI 工作负载。不同机器、不同构建版本、后台负载及操作系统文件缓存都会影响结果；比较时应保留原始样本与环境，不引入缺少场景依据的数字门禁。
+
+## 公开 typed 边界基准
+
+`go test -run '^$' -bench BenchmarkPublicTypedCall -benchmem -count=3 .` 测量包含严格编码/解码的公开 typed 往返，分别使用 32/1024 字节字符串负载。它不再用 raw JSON 路径冒充 typed 性能；原始 IPC、磁盘增量写与 typed 序列化是不同测量对象，不互相推导吞吐或尾延迟。
+
+## namespace 日志回放
+
+`go test ./access -run '^$' -bench '^BenchmarkNamespaceReplay$' -benchmem -benchtime=3x -count=1` 测量 1,000/10,000 条不同 key 的写入回放，包含 map 和值复制，不含磁盘、JSON 解码及 checksum。回放对 write/delete 增量维护字节配额，仅 migrate 扫描替换值集；不能把每条小写入恢复退化为全量 key 扫描。
+
+2026-10-27，darwin/arm64、Apple M5 Pro、Go 1.27.3、GOMAXPROCS=18，每组 3 次迭代的同机均值：修正前 1,000/10,000 条约 2.78/313.60 ms，修正后约 0.071/0.740 ms；分配不变，分别 199,064/1,648,445 B。样本有限且非独占机器，只证明这条回放路径消除了重复扫描，不代表完整启动时间或通用存储吞吐。

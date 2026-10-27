@@ -3,6 +3,8 @@ package access_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Cyenoch/cordis/access"
@@ -149,5 +151,58 @@ func TestNamespaceMigrationRejectsConcurrentWrite(t *testing.T) {
 	got, readErr := store.Read(t.Context(), owner, "state", "key")
 	if readErr != nil || string(got) != "concurrent" {
 		t.Fatalf("concurrent value lost: %q %v", got, readErr)
+	}
+}
+
+func TestNamespaceIncrementalLogRejectsCorruption(t *testing.T) {
+	policy := access.NewPolicy()
+	owner := identity("log")
+	activate(t, policy, owner)
+	directory := t.TempDir()
+	s, err := access.OpenNamespaceStore(policy, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Configure(owner.Package, access.NamespaceConfig{Name: "state", QuotaBytes: 2 << 20}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Write(t.Context(), owner, "state", "large", make([]byte, 1<<20)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "namespaces.log")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Write(t.Context(), owner, "state", "small", []byte("1")); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Size()-before.Size() > 1024 {
+		t.Fatal("small write rewrote existing payload")
+	}
+	reopened, err := access.OpenNamespaceStore(policy, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := reopened.Read(t.Context(), owner, "state", "small")
+	if err != nil || string(value) != "1" {
+		t.Fatal(value, err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.WriteString("{broken\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = access.OpenNamespaceStore(policy, directory); err == nil {
+		t.Fatal("corrupt log silently recovered")
 	}
 }

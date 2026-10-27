@@ -1040,24 +1040,27 @@ func (s *Store) Snapshot(ctx context.Context, ref contract.PackageRef) (snapshot
 	return &Snapshot{Package: checked, Directory: dir}, nil
 }
 
-func (s *Store) Uninstall(ctx context.Context, ref contract.PackageRef, opt ChangeOptions) (result Removal, err error) {
+// CheckUninstall validates a removal without changing the catalog or files.
+func (s *Store) CheckUninstall(ref contract.PackageRef, opt ChangeOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result.DataRetained = !opt.DeleteData
-	if err = s.check(); err != nil {
-		return result, err
+	if err := s.check(); err != nil {
+		return err
 	}
-	if _, err = s.get(ref); err != nil {
-		return result, err
+	return s.checkUninstall(ref, opt)
+}
+
+func (s *Store) checkUninstall(ref contract.PackageRef, opt ChangeOptions) error {
+	if _, err := s.get(ref); err != nil {
+		return err
 	}
 	if inUse(ref, opt.InUse) {
-		return result, fmt.Errorf("package is still in use")
+		return fmt.Errorf("package is still in use")
 	}
-	selected := s.catalog.Selected[ref.ID] == ref
-	if selected {
-		candidate, cloneErr := s.cloneCatalog()
-		if cloneErr != nil {
-			return result, cloneErr
+	if s.catalog.Selected[ref.ID] == ref {
+		candidate, err := s.cloneCatalog()
+		if err != nil {
+			return err
 		}
 		delete(candidate.Selected, ref.ID)
 		var blocked []string
@@ -1067,22 +1070,36 @@ func (s *Store) Uninstall(ctx context.Context, ref contract.PackageRef, opt Chan
 				continue
 			}
 			if r, ok := candidate.Selected[id]; ok {
-				if _, e := preflight(candidate, r); e != nil {
-					blocked = append(blocked, id+": "+e.Error())
+				if _, err := preflight(candidate, r); err != nil {
+					blocked = append(blocked, id+": "+err.Error())
 				}
 			}
 		}
 		if len(blocked) > 0 {
-			return result, fmt.Errorf("enabled reverse dependencies block uninstall: %s", strings.Join(blocked, "; "))
+			return fmt.Errorf("enabled reverse dependencies block uninstall: %s", strings.Join(blocked, "; "))
 		}
 	}
 	if opt.DeleteData {
 		for _, p := range s.catalog.Installed {
 			if p.Ref.ID == ref.ID && p.Ref != ref {
-				return result, fmt.Errorf("cannot delete shared data while another version is installed")
+				return fmt.Errorf("cannot delete shared data while another version is installed")
 			}
 		}
 	}
+	return nil
+}
+
+func (s *Store) Uninstall(ctx context.Context, ref contract.PackageRef, opt ChangeOptions) (result Removal, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result.DataRetained = !opt.DeleteData
+	if err = s.check(); err != nil {
+		return result, err
+	}
+	if err = s.checkUninstall(ref, opt); err != nil {
+		return result, err
+	}
+	selected := s.catalog.Selected[ref.ID] == ref
 	c, err := s.cloneCatalog()
 	if err != nil {
 		return result, err

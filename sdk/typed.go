@@ -18,20 +18,20 @@ func Provide[In, Out any](scope contract.Scope, service contract.Service, handle
 	}
 	return scope.Provide(service, func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
 		var request In
-		if err := contract.Decode(input, &request); err != nil {
+		if err := contract.DecodeData(input, &request); err != nil {
 			return nil, err
 		}
 		response, err := handler(ctx, request)
 		if err != nil {
 			return nil, err
 		}
-		return json.Marshal(response)
+		return contract.Encode(response)
 	})
 }
 
 func Call[In, Out any](ctx context.Context, scope contract.Scope, required contract.Requirement, input In) (Out, error) {
 	var result Out
-	data, err := json.Marshal(input)
+	data, err := contract.Encode(input)
 	if err != nil {
 		return result, err
 	}
@@ -39,7 +39,7 @@ func Call[In, Out any](ctx context.Context, scope contract.Scope, required contr
 	if err != nil {
 		return result, err
 	}
-	if err := contract.Decode(output, &result); err != nil {
+	if err := contract.DecodeData(output, &result); err != nil {
 		return result, err
 	}
 	return result, nil
