@@ -195,7 +195,7 @@ darwin/arm64、Apple M5 Pro、Go 1.27.3、GOMAXPROCS=18；正常多任务负载�
 
 - [x] 11.1 迁移框架、唯一 change、固定上游参考及通用 skills；VortexGo 专属 Adapter/fixture/docs 留回宿主，保留许可证和 timeout 回归。
 - [x] 11.2 更改 module/import、工具名称与文档导航；独立运行测试、race、native/WASI 生命周期，复核依赖与公开内容。
-- [ ] 11.3 使用 gh 发布 public `Cyenoch/cordis`，从干净目录下载固定版本；VortexGo 消费公开版本并通过原始 ABI/签名作者回归，不提交宿主既有工作。
+- [x] 11.3 使用 gh 发布 public `Cyenoch/cordis`，从干净目录下载固定版本；VortexGo 消费公开版本并通过原始 ABI/签名作者回归，不提交宿主既有工作。
 
 ### 迁出后验证（2026-10-27）
 
@@ -221,3 +221,21 @@ Adapter 的 timeout 单次 `ctx.Err()` 回归以 race 运行 100 次通过。宿
 已从固定安装的 OpenSpec 1.15.0 补入 `licenses/skills-openspec.txt`，并在 NOTICE 保留版权。
 审查者另实际运行作者/签名包、timeout 与来源检查的 race 回归；
 此审查不包括并行 MVP 缓存/会话代码，也未声称其他平台或真实 GitHub 下载已验证。
+
+### 公开发布与外部消费（2026-10-27）
+
+`gh repo create Cyenoch/cordis --public --source=. --remote=origin --push` 实际成功。
+GitHub API 确认仓库公开、默认分支 main、MIT；首个代码提交为
+`e5e1f31da5f6a3097d850b28cf954a539a31c12c`，远端 main 与其一致。
+公开 Go 版本为 `v0.0.0-20261027032746-e5e1f31da5f6`，不是稳定版本标签。
+
+从 `/tmp` 的独立 module 和空 GOMODCACHE，清空 GOPRIVATE/GONOPROXY/GONOSUMDB，
+通过公开 Go proxy/sumdb 解析、下载上述版本。两个工具按 `go install ...@版本` 安装成功；
+独立消费者不使用 replace，真实 Open/Close 生命周期 race 测试成功。
+另以不带 credential helper 的 HTTPS fresh clone 取得相同提交，未初始化 submodule，
+`GOWORK=off go test -race -count=1 ./...` 实际通过。
+
+VortexGo 已固定上述版本并移除临时 sibling replace；其 module 解析目录位于 Go module cache。
+再次执行 `bash conformance/run.sh` 成功，涵盖迁回 Adapter/fixture/API/Host 的 integration/race、
+14 项原始 ABI checks 和真实签名 provider/service 链。插件 integration vet、mod verify/tidy-diff 成功。
+VortexGo 的既有工作未提交、未推送；并行 App 会话/缓存增量不计入此次公开版本验证。
