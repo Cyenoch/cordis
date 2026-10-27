@@ -1,6 +1,18 @@
+---
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - internal/core/benchmark_test.go
+  - wire/benchmark_test.go
+  - access/namespace_log_test.go
+  - access/namespace_log.go
+  - host_lifecycle_test.go
+  - conformance/cmd/measure
+  - runtime/wasm
+---
+
 # 性能测量与边界
 
-本目录的测量入口对应 Task 10.3，不设置吞吐、延迟或分配的数字门禁，也不为追求指标改变服务、取消或生命周期契约。以下命令须从独立的 Cordis module 目录执行，不是 VortexGo 根 module。本文提供可执行测量方法；没有把尚未运行的命令、交叉编译或示例数字记为性能证据。
+以下命令从 Cordis module 根目录执行，对应任务 10.3 的测量入口。测量不设吞吐、延迟或分配的数字门禁，也不为指标改变服务、取消或生命周期契约。本文给出复现方法，尚未运行的命令、交叉编译和示例数字不算性能证据。
 
 ## 进程内分发与内存 transport benchmark
 
@@ -88,7 +100,7 @@ counter 负载仅包含一个小 JSON 请求、串行有状态加法和响应校
 
 ## 公开 typed 边界基准
 
-`go test -run '^$' -bench BenchmarkPublicTypedCall -benchmem -count=3 .` 测量包含严格编码/解码的公开 typed 往返，分别使用 32/1024 字节字符串负载。它不再用 raw JSON 路径冒充 typed 性能；原始 IPC、磁盘增量写与 typed 序列化是不同测量对象，不互相推导吞吐或尾延迟。
+`go test -run '^$' -bench BenchmarkPublicTypedCall -benchmem -count=3 .` 测量包含严格编码/解码的公开 typed 往返，分别使用 32/1024 字节字符串负载。raw JSON 分发、IPC、磁盘增量写与 typed 序列化是不同测量对象，不能互相推导吞吐或尾延迟。
 
 ## namespace 日志回放
 

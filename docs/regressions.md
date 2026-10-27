@@ -1,6 +1,15 @@
+---
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - wire
+  - sdk
+  - host_test.go
+  - conformance/cmd/lifecycle-smoke
+---
+
 # 生命周期回归覆盖
 
-这些回归约束可观察的生命周期行为，不独自构成进程或 WASM smoke 证据：协议场景使用 `net.Pipe`，SDK 场景运行真实 SDK 协议循环，宿主场景使用公开 builtin 接口和包存储。真实外部执行证据由[生命周期验收](lifecycle-acceptance.md)补足。
+这些测试检查生命周期行为：协议场景使用 `net.Pipe`，SDK 场景运行真实协议循环，宿主场景使用公开 builtin 接口和包存储。它们不启动真实外部进程，Native/WASM 执行另由[生命周期验收](lifecycle-acceptance.md)覆盖。
 
 ## 会话响应竞态
 
@@ -11,7 +20,7 @@
 
 第一个场景只用包私有响应 channel 的调度强制原本不确定的 select 时序。两者都通过 `net.Pipe` 发送真实协议帧并断言可观察响应，不使用生产测试 hook 或源码文本断言。
 
-原始 VortexGo 会话还区分退役与清理确认：只有 pending ID、方法及 ABI 已匹配的 `plugin.shutdown` 响应可在退役后完成；未知/重复/错配响应及其他旧激活消息仍拒绝。这不扩大普通请求的授权。
+VortexGo 专有会话还区分退役与清理确认：只有 pending ID、方法及 ABI 已匹配的 `plugin.shutdown` 响应可在退役后完成；未知、重复、错配响应及其他旧激活消息仍拒绝。这部分由宿主仓库维护，不是通用 SDK 的方法名，也不扩大普通请求的授权。
 
 ## SDK 启动展开与清理
 

@@ -1,6 +1,16 @@
+---
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - packagehost
+  - access/namespace.go
+  - access/namespace_log.go
+---
+
 # Package Store 恢复指南
 
 ## 唯一提交依据
+
+需要操作步骤时先读[上线与维护](operations.md)。本页说明 Store 的提交点、中断行为和验证方式，不建议手工修改恢复文件。
 
 `catalog.json` 同时记录 installed、selected、entry、签名证明、外部父锚点和宿主确认的数据版本下界；原子替换此文件是包状态的提交点。`transaction.json` 是操作记录，`catalog.next` 是候选根，二者都不是恢复时的提交依据。不能因为日志中出现了 v2，或 `content/` 已经存在 v2，就将它推断为已安装或已选择。候选根在替换前必须经过与 Open 相同的严格解码及内容校验；catalog 单独预留三层封装深度，manifest 和配置仍分别保持深度 32 的限制，不能因嵌套合法叶文档而写入不可恢复根。
 
@@ -48,7 +58,7 @@
 
 `TestStoreNestedDocumentsRemainReopenable` 用真实签名包保存达到叶文档深度上限的 manifest 和 entry 配置，重开并取得 Snapshot，同时断言超限配置被拒绝。`TestStoreCandidateValidationPreservesCommittedRoot` 约束候选根校验失败不得损坏已提交根。`TestStoreCommittedMigrationSurvivesFailedSelection` 覆盖预先取消、选择提交前取消、信任拒绝、InUse、迁移版本不匹配和目标缺失：确认不改变旧选择，但立即及重开后的旧 Snapshot 均因数据版本被拒绝。`TestStoreConfirmDataVersionIsIndependentAndMonotonic` 覆盖无已安装代码时取消仍确认、同版本幂等和拒绝降低下界。`TestStoreConfirmDataVersionCommitErrorRetainsFact` 用确定性的日志清理失败约束 `CommitError`，确认错误不会丢失进程内或重开后的数据下界。
 
-集成者执行：
+复现命令：
 
 ```sh
 go test -tags=integration ./packagehost -run '^TestStoreRecovery' -count=1 -timeout=2m

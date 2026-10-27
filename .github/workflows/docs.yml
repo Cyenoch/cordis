@@ -19,14 +19,20 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
-          node-version: '24.22.1'
+          node-version-file: .node-version
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.4.4'
+          bun-version-file: package.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - run: bun install --frozen-lockfile
       - run: bun run docs:test
+      - run: bun run docs:sync
       - run: bun run docs:build
       - uses: actions/upload-pages-artifact@v5
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -39,12 +45,27 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Skip superseded builds
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$latest" = "$GITHUB_SHA" ]; then
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'deploy=false' >> "$GITHUB_OUTPUT"
+            echo "Skipping superseded documentation build $GITHUB_SHA (main is $latest)."
+          fi
       - uses: actions/configure-pages@v6
+        if: steps.current.outputs.deploy == 'true'
       - uses: actions/deploy-pages@v5
+        if: steps.current.outputs.deploy == 'true'
         id: deployment

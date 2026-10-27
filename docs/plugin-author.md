@@ -1,11 +1,18 @@
 ---
 title: 编写插件
 description: 使用公开 Go SDK 声明服务、处理依赖和资源清理，并构建独立插件包。
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - go.mod
+  - contract
+  - sdk
+  - schema
+  - examples/plugins
 ---
 
 # 编写插件
 
-一个 Cordis 外部插件是运行 `sdk.Serve` 的独立 Go 程序。你写服务和生命周期逻辑，SDK 处理会话、调用编码与取消；不需要导入 `internal` 或手写 NDJSON。
+Cordis 外部插件是以 `sdk.Serve` 运行的独立 Go 程序。SDK 处理会话、调用编码与取消，你只需写服务和生命周期逻辑，不必导入 `internal` 或手写 NDJSON。
 
 ## 创建独立 module
 
@@ -13,18 +20,20 @@ description: 使用公开 Go SDK 声明服务、处理依赖和资源清理，�
 mkdir my-counter
 cd my-counter
 go mod init example.com/my-counter
-go get github.com/Cyenoch/cordis@v0.0.0-20261027032746-e5e1f31da5f6
+go get github.com/Cyenoch/cordis@{{docs.packageVersion}}
 ```
 
-这里固定的是已公开的首个源码版本，不是稳定标签；本页完整 counter 程序可使用该版本。后文的 `contract.CreateChild` 等新 API 尚不包含在该版本中。
+这里固定的是本手册核对过的公开源码版本，不是稳定标签；它包含 `contract.CreateChild` 等文中使用的 API。升级依赖时，先核对目标版本的行为，再更新项目依赖。
 
-如果需要当前文档描述的新 API，先在另一目录检出 Cordis，再在你的插件 module 中显式指向该检出的**绝对路径**：
+<!-- GitHub 源码阅读：将版本占位符换成本页 front matter 的 codeCommit；Go 可直接用 commit 安装。文档站会在构建时填写精确版本。 -->
+
+如果要联调本地尚未发布的修改，先在另一目录检出 Cordis，再在你的插件 module 中显式指向该检出的**绝对路径**：
 
 ```sh
 go mod edit -replace=github.com/Cyenoch/cordis=/absolute/path/to/cordis
 ```
 
-将 `/absolute/path/to/cordis` 替换为实际目录；Windows 可使用 `C:/path/to/cordis`。这仅用于本地开发，打包产物不依赖该目录。新版本发布后，使用 `go mod edit -dropreplace=github.com/Cyenoch/cordis` 并 `go get github.com/Cyenoch/cordis@<包含所需API的固定版本>`，不要复制仓库示例的相对 `replace` 到外部项目。
+将 `/absolute/path/to/cordis` 替换为实际目录；Windows 可使用 `C:/path/to/cordis`。这仅用于本地开发，打包产物不依赖该目录。恢复使用公开版本时，运行 `go mod edit -dropreplace=github.com/Cyenoch/cordis`，再用 `go get` 固定目标版本；不要复制仓库示例的相对 `replace` 到外部项目。
 
 ## 提供一个服务
 
@@ -96,7 +105,7 @@ if err != nil {
 
 该片段中的 `LookupRequest`、`LookupResponse` 和 `request` 由你的服务契约定义。同步调用形成环时会返回 `reentrant_call`，不要靠新 goroutine 绕过生命周期与依赖约束。
 
-可选功能使用 [`contract.CreateChild`](composition.md)，让同包子实例单独等待。需要多个可启动定义时使用 `sdk.ServeDefinitions`；每次 activation 仍独占进程。
+可选功能使用 [`contract.CreateChild`](composition.md)，让同包子实例单独等待；完整顺序见[组合实操](composition-tutorial.md)。多个可启动定义使用 `sdk.ServeDefinitions`，每次 activation 仍独占进程。
 
 ## 登记资源清理
 
@@ -110,7 +119,7 @@ if err := scope.Defer(func(cleanupCtx context.Context) error {
 }
 ```
 
-资源有释放顺序时使用[显式资源组](resources.md)。清理使用框架提供的 cleanup context，不复用已经取消的业务 context。清理只负责释放资源，不回滚外部业务写入。
+资源有释放顺序时使用[显式资源组](resources.md)。使用框架传给清理函数的 context，不捕获已经取消的业务 context；清理只释放资源，不回滚外部写入。
 
 ## 构建与交付
 
@@ -135,3 +144,5 @@ GOOS=wasip1 GOARCH=wasm go build -o plugin.wasm .
 - [counter](https://github.com/Cyenoch/cordis/tree/main/examples/plugins/counter)：配置、服务、事件、宿主能力调用。
 - [chain](https://github.com/Cyenoch/cordis/tree/main/examples/plugins/chain)：跨插件依赖、资源清理与可选子功能。
 - [生命周期验收](lifecycle-acceptance.md)：真实 Native/WASM 的退出、取消和版本切换行为。
+- [生成服务实操](generated-service.md)：从一份契约生成可运行的 client/server。
+- [访问实操](access-tutorial.md)：宿主能力、贡献、任务与持久数据如何接线。

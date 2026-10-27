@@ -1,6 +1,17 @@
+---
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - conformance
+  - examples/plugins/chain
+  - examples/basic-host
+  - runtime
+  - host.go
+  - ownership.go
+---
+
 # 外部插件生命周期验收
 
-`examples/plugins/chain` 是独立作者 module，同一产物通过 `sdk.ServeDefinitions` 提供三个定义：provider A、依赖 A 的 middle B、依赖 B 的 consumer C。每个服务提供 major 1、minor 2，每个 requirement 接受 minor 闭区间 `[1,3]`，刻意验证非零 minor 的范围匹配，而不是只验证精确版本。
+`examples/plugins/chain` 是独立作者 module。主链包含 provider A、依赖 A 的 middle B、依赖 B 的 consumer C，同一产物还提供创建可选子功能的 optional-parent；入口为 `sdk.ServeDefinitions`。链上服务为 major 1、minor 2，requirement 接受 minor 闭区间 `[1,3]`，用于验证非零 minor 的范围匹配。
 
 验收使用真实签名 ZIP 和独立进程会话，不用 mock Runtime、宿主、guest 或 WASI worker 代替。native 是受信任可执行代码，不是操作系统权限沙箱。
 
@@ -19,7 +30,7 @@ go run ./conformance/cmd/lifecycle-smoke -runtime native -guest /tmp/cordis-life
 go run ./conformance/cmd/lifecycle-smoke -runtime wasm -guest /tmp/cordis-lifecycle-bin/chain.wasm -bad-guest /tmp/cordis-lifecycle-bin/chain-bad.wasm -worker /tmp/cordis-lifecycle-bin/cordis-worker
 ```
 
-这些是复现命令；集成负责人已经执行的 native/WASM 链、单测及 race 结果统一见 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)，按记录的源码修订和实际平台判断。POSIX 示例不代表 Windows 运行证据；Windows 使用本机 `.exe` 和对应路径。最终五目标矩阵完成前，不把旧修订、交叉编译或未执行目标标为通过。
+这些命令用于复现，不是新增通过记录。实际 Native/WASM、单测及 race 结果见 [OpenSpec 集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)，按对应源码修订和平台判断。Windows 使用本机 `.exe` 与路径；POSIX 示例、旧修订结果和交叉编译不算 Windows 运行证据。
 
 每次调用有三分钟总期限。命令创建临时 catalog、随机 Ed25519 密钥及 `example.chain` 的三个签名版本；1.2.0 使用独立构建且明确拒绝初始化的产物，trust 绑定精确 publisher/package ID。退出时清理临时包与 catalog。
 

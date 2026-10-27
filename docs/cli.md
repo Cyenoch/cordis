@@ -1,11 +1,17 @@
 ---
 title: CLI 命令
 description: Cordis 命令行工具的打包、签名、检查、代码生成与本地调试用法。
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - cmd/cordis
+  - cmd/cordis-worker
+  - packagehost
+  - schema
 ---
 
 # CLI 命令
 
-从当前仓库构建工具，保证文档与实现对应：
+从本文代码基线对应的检出构建工具：
 
 ```sh
 go build -o ./bin/cordis ./cmd/cordis
@@ -65,7 +71,7 @@ go build -o ./bin/cordis-worker ./cmd/cordis-worker
 gofmt -w ./api.gen.go
 ```
 
-输入是 Cordis 的[受限数据契约](contracts.md)，不是任意 JSON Schema。输出含客户端、服务端注册与严格编码边界，未知 schema 特性会报错。
+输入使用 Cordis 的[受限数据契约](contracts.md)，不接受任意 JSON Schema。输出含客户端、服务端注册与严格编码边界，未知 schema 特性会报错。完整项目见[生成服务实操](generated-service.md)。
 
 ## 退出码
 

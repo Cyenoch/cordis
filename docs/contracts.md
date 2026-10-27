@@ -1,6 +1,18 @@
+---
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - contract/data.go
+  - contract/json.go
+  - contract/event.go
+  - contract/middleware.go
+  - schema
+  - conformance/validate-schemas.py
+  - packagehost/interoperability_test.go
+---
+
 # 数据契约与 Go 代码生成
 
-Cordis 跨进程只传 JSON 数据，不反射任意 Go interface。契约源文件使用 `.schema.json`；`schema/testdata/echo.schema.json` 是包含两个真实方法、可选值、nullable、字节和 int64 的完整声明。生成器只依赖标准库和叶子包 `contract`、`schema`，不依赖宿主实现或 SDK。
+Cordis 跨进程只传 JSON 数据，不反射任意 Go interface。契约源文件使用 `.schema.json`。从[生成服务实操](generated-service.md)可以跑通生成、注册和调用；`schema/testdata/echo.schema.json` 则提供包含两个方法、可选值、nullable、字节和 int64 的完整声明。生成代码只依赖标准库和 `contract`、`schema`，不依赖宿主实现或 SDK。
 
 ## 声明格式
 
@@ -28,7 +40,7 @@ Cordis 跨进程只传 JSON 数据，不反射任意 Go interface。契约源文
 
 ## 受限 Schema
 
-这不是完整 JSON Schema 实现。省略的功能不作静默兼容：`$schema`、`$id`、`$ref`、`default`、`allOf`、`anyOf`、条件 schema、自定义扩展和未知 format 均拒绝。支持如下字段：
+这里使用受限数据方言，不是完整 JSON Schema。`$schema`、`$id`、`$ref`、`default`、`allOf`、`anyOf`、条件 schema、自定义扩展和未知 format 均拒绝，不会静默忽略。支持如下字段：
 
 | 数据 | 必需字段 | 可选约束 |
 | --- | --- | --- |

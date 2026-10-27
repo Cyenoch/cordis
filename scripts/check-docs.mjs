@@ -25,6 +25,9 @@ export async function checkDocs(directory) {
     const ids = new Set()
     const links = []
     function visit(node) {
+      if ((node.nodeName === '#text' && node.value.includes('{{docs.')) || node.attrs?.some(({ value }) => value.includes('{{docs.'))) {
+        failures.push(`${file}: unresolved documentation variable`)
+      }
       const attributes = Object.fromEntries((node.attrs ?? []).map(({ name, value }) => [name, value]))
       if (attributes.id) ids.add(attributes.id)
       const keys = attributes.rel === 'canonical' ? ['src'] : ['href', 'src']

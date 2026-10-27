@@ -39,4 +39,22 @@ test('production checker rejects missing anchors and project-base escapes', asyn
     assert.match(error.message, /link escapes \/cordis\//)
     return true
   })
+
+  await writeFile(join(directory, 'index.html'), '<pre>go get example.com/module@{{docs.packageVersion}}</pre>')
+  await assert.rejects(checkDocs(directory), /unresolved documentation variable/)
+})
+
+test('production checker rejects unresolved variables in rendered HTML attributes', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'cordis-doc-attributes-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const processor = await createMarkdownProcessor({ remarkPlugins: [documentationMarkdown] })
+  for (const source of [
+    '![{{docs.unknown}}](https://example.com/logo.png)',
+    '[Link](https://example.com/ "{{docs.unknown}}")',
+    '<span title="{{docs.unknown}}">Label</span>',
+  ]) {
+    const { code } = await processor.render(source)
+    await writeFile(join(directory, 'index.html'), code)
+    await assert.rejects(checkDocs(directory), /unresolved documentation variable/, source)
+  }
 })

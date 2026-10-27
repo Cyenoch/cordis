@@ -1,6 +1,15 @@
+---
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - packagehost
+  - contract/types.go
+  - host.go
+  - cascade.go
+---
+
 # 外部插件包
 
-`packagehost` 不依赖根 Facade 或 core；不执行插件，也不替宿主停止实例或运行数据迁移。包的安装、显式版本选择和 entry 配置分别保存在同一个 durable catalog 根中。安装新版本不会改变选择。
+`packagehost` 管理包和持久状态，不依赖根包或 core，不执行插件，也不替宿主停止实例、迁移数据。安装记录、显式版本选择和 entry 配置保存在同一 catalog 根中；安装新版本不会改变选择。发布步骤见[上线维护](operations.md)。
 
 ## 作者流程
 
@@ -82,7 +91,7 @@ if err != nil { return err }
 - `Entries` / `SaveEntry` / `DeleteEntry` 持久化配置。SaveEntry 和切换版本都先验证定义及配置 schema；未知字段/重复 JSON key 会在解码边界拒绝。
 - `RegisterParent(ctx context.Context, id string) error` / `UnregisterParent(ctx context.Context, id string) error` 是 Store 方法，只在 catalog 的 `externalParents` 保存宿主父 ID。锚点参与父图校验，不得与真实 entry 重名；任何子 entry（包括 disabled）仍引用时不能注销。重复注册/注销幂等。不会持久化 builtin 回调、配置或运行状态，Entries 不返回锚点；宿主必须先重建 builtin 再恢复外部子 entry，删除子 entry 后才能注销锚点。
 - `ChangeOptions.InUse` 必须完整列出当前活跃引用，旧 activation 未停止不能切换/卸载。`Enabled` 必须完整列出显式级联停用完成后的启用包 ID；反向依赖不兼容拒绝切换，不能静默卸载依赖者。
-- `ReverseDependencies(ref contract.PackageRef, enabled []string) ([]string, error)` 是只读 Store 方法：ref 等于当前选择时计算移除该选择的影响；其他已安装 ref 则计算选择该版本的影响。复用递归 Preflight，返回受阻 enabled 包 ID 的去重、排序传递闭包（不含 ref.ID），忽略 optional 依赖。与操作预检一致，既有必需依赖故障也会出现在结果中。它不授予级联权限、不决定运行实例的停止次序；宿主须明确授权、停止对应实例，再按实际剩余 Enabled 调用 Select/Uninstall。无效引用或已关闭 Store 返回错误，不伪报空计划；非选中版本的直接卸载本身不影响选择，无需此计划。
+- `ReverseDependencies(ref contract.PackageRef, enabled []string, action ChangeAction) ([]string, error)` 是只读 Store 方法。action 显式选择 `SelectPackage` 或 `RemovePackage`，同版本选择不等于卸载。它复用递归 Preflight，返回受阻 enabled 包 ID 的去重、排序传递闭包（不含 ref.ID），忽略 optional 依赖；既有必需依赖故障也会出现在结果中。它不授予级联权限、不决定实例停止顺序。宿主须明确授权、停止对应实例，再按实际剩余 Enabled 调用 Select/Uninstall。无效引用或已关闭 Store 返回错误；非选中版本的直接卸载不影响当前选择。
 - 替换流程在停止旧 activation **之前**调用 `CheckSelect(ref, options)`：检查新内容完整性与当前信任、正反向依赖、schema 和数据版本，不提交且忽略 InUse。停旧实例后再调用 Select（重新检查并提交），避免不兼容请求先造成停机。若迁移已经发生，必须先完成下面的独立确认，再调用 CheckSelect 或其他版本操作。
 - 宿主每次提交业务数据迁移后，必须**立即**调用 `ConfirmDataVersion(ctx, id, version)`，成功记录事实之后才能进行版本预检、选择或执行。此 API 不要求新包已安装或受信任，不改变代码选择，数据版本只能递增（同版本重复确认无副作用），有意忽略 context 取消：取消不能撤销已发生的宿主数据变化。确认失败时宿主必须停止相关版本操作并修复持久化问题；不得恢复旧代码。为兼容原有调用，`Select` 收到 `MigrationCommitted: true` 时会先独立确认 `DataVersion`，然后才检查目标、信任、依赖、配置、InUse 与取消；即使后续选择失败，确认事实仍保留。该选项仍要求目标 manifest 的 DataVersion 匹配，但匹配失败不能撤回确认。`CheckSelect` 本身只读，不替代确认 API。
 - 已确认的数据版本立即阻止旧版本 `Snapshot` 与选择，并在重开后继续生效。选择失败不自动回滚选择，原引用可能仍是 selected 但已不可执行；宿主需显式选择兼容代码或执行授权的数据恢复，Store 不运行迁移、不猜测 rollback。未改变数据格式时旧包仍保留，可显式选择恢复。

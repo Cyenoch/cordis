@@ -1,10 +1,25 @@
+---
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - host.go
+  - children.go
+  - instance.go
+  - service.go
+  - cascade.go
+  - ownership.go
+  - contract
+  - internal/core
+  - sdk/client.go
+  - sdk/child.go
+---
+
 # 组合、实例与清理
 
-`internal/core` 是宿主 Facade 的生命周期引擎，不是插件作者直接导入的公共模块。普通插件只接收 `contract.Scope`；本地强类型服务由公开 Facade 包装为原始 JSON Handler。
+插件通过 `contract.Scope` 发布服务和登记资源，宿主使用公开 `cordis.Host` 管理实例。`internal/core` 是 Host 内部的生命周期引擎，外部项目不能导入。本地类型化服务由根包包装成 JSON Handler。完整程序见[组合实操](composition-tutorial.md)。
 
 ## 宿主入口
 
-公开入口是根包 `cordis.Host`，不是 `internal/core`：
+常用操作如下：
 
 - `cordis.Open(Options)` 打开独占包存储；`AddBuiltin(ctx, entry, definition)` 注册进程内定义，`Enable(ctx, entry)` 启用已选择的外部包。
 - `ConfigureRealm(name, parent, isolatedKeys)` 配置作用域。局部 provider 优先；隔离 key 不继承父服务。key 为 `Service.Key()`，同 realm 同 key 不允许重复发布。
@@ -19,7 +34,7 @@ Entry ID 在同 Host 内唯一。相同 Definition 可用不同 Entry/Config 多
 
 Start 内调用公开 `contract.CreateChild(ctx, scope, contract.Child{ID:"optional", Definition:"feature", Config: config})`，SDK 与 builtin 使用同一 API。外部子定义必须来自父 activation 的同一包版本；builtin 先由宿主 `RegisterDefinition(ctx, packageID, definition)` 注册。每个 activation 最多拥有 256 个直接子实例。
 
-CreateChild 只登记，不等待启动。父实例发布后子实例才可启动，因此子功能缺依赖或失败不会阻止父实例 Active。初始化中不能 Wait 自己的子实例；框架返回 `reentrant_call`，不要等待超时。初始化返回后可用返回的 `ChildInstance.Wait/Update/Retry/Stop` 管理；`Refresh(ctx)` 读取最新状态，跨进程 `Status()` 为上次确认的快照。
+CreateChild 只登记，不等待启动。父实例发布后子实例才可启动，子功能缺依赖或失败不会阻止父实例 Active。初始化中 Wait 自己的子树会立即返回 `reentrant_call`。初始化返回后可用 `ChildInstance.Wait/Update/Retry/Stop` 管理；`Refresh(ctx)` 读取最新状态，跨进程 `Status()` 为上次确认的快照。
 
 作者子实例 ID 为 `parentEntry.localID`，绑定当前 activation，不持久保存为独立启用 entry。父退役会停止并移除子树，重启父时由新的 Start 重新创建。旧 Scope/远程 handle 不能操作新 activation 的子实例。独立持久子实例由宿主设置 `Entry.Parent` 后 Enable/AddBuiltin；builtin 父锚点持久保存，但应用必须在 Restore 前重建 builtin 回调和配置。
 
@@ -33,7 +48,7 @@ Facade 的 `Status.Diagnostics` 保留包预检中可选依赖缺失/不兼容�
 
 ## 所有权与停止顺序
 
-一个 Scope 对应一个 activation，拥有服务、订阅、固定 bindings 以及一个逆序串行资源组。`Defer` 的 context 独立于普通工作取消；初始化失败也会执行已经登记的 disposer。disposer 逐一尝试，异常与返回错误均聚合到等待者和状态，不会因首个失败跳过其余清理。
+一个 Scope 对应一个 activation，拥有服务、订阅、固定 binding 和逆序串行资源组。`Defer` 的 context 不受普通工作取消影响，初始化失败也会执行已登记的清理。builtin Scope 和显式 `contract.Group` 会聚合清理函数的返回错误与 panic，并继续执行其余清理。外部 SDK 的直接 `scope.Defer` 不捕获 panic；需要这个保证时，把清理登记到 Group，再将 Group 的关闭操作交给 Scope。
 
 退役先在协调锁内撤销普通准入并取消完整传递依赖闭包的普通工作；之后锁外等待消费者和子实例清理，最后释放 provider 自身资源。消费者 disposer 只能用它已经拥有的 Scope binding 调用退役中的 provider，不可通过 Engine.Call 查找退役服务或临时获取新 binding。此清理资格会沿已有绑定的同步调用链传递。没有跨实例全局 LIFO；服务依赖与父子所有权优先于登记时间。
 
@@ -45,13 +60,15 @@ Facade 跟踪 external 与 builtin 的同一父子所有权树。`Host.Disable(p
 
 ## 事件与 middleware
 
-事件默认在声明 Scope 所在 realm 及后代可见，不向兄弟或祖先泄漏。Sequential 按登记顺序执行并首错停止；Parallel 最多同时调度八个监听者，仍保持同一实例回调串行，等待全部后返回可归属监听者的聚合错误；First 只用明确的 Handled 标志短路，`0`、`false`、空字符串都是有效值。停用拒绝新回调并等待已经准入的回调结束。
+订阅接收同 realm 及其后代发出的事件：从子 realm 发射会通知子 realm 与祖先的监听者，从根发射不会通知子 realm，也不会横向通知兄弟 realm。Sequential 按登记顺序执行并首错停止；Parallel 最多同时调度八个监听者，仍保持同一实例回调串行，等待全部后返回可归属监听者的聚合错误；First 只用明确的 Handled 标志短路，`0`、`false`、空字符串都是有效值。停用拒绝新回调并等待已经准入的回调结束。
 
 公共类型化入口为 `contract.EventKey[T]{Name, Mode, Validate}`、`contract.Subscribe(scope, event, handler)` 和 `contract.Publish(ctx, emitter, event, input)`。事件声明显式选择 Sequential、Parallel 或 First；Subscribe 在调用监听者前严格解码数据并执行可选 Validate，Publish 在编码前执行 Validate。监听者返回的 `contract.EventResult.Handled` 与 Value 分开表达，不能根据 Value 的真假判断是否处理。Scope/SDK 使用相同窄接口，类型化 API 不改变 realm、串行准入或停用等待语义。
 
 `contract.Chain(final, middlewares...)` 是公共 middleware 入口，按传入顺序包裹 Handler；每个 middleware 在一次调用中只能执行一次 next，第二次返回 `reentrant_call`，下游不重复执行。插件作者不需要导入 `internal/core`。
 
 ## 外部贡献与发布门控
+
+普通宿主通过 `Host.Contributions()` 注册 validator，Host 已经连接下面的内部发布机制，无需导入 Hooks 或 Engine。此节解释实现边界；公开用法见[访问实操](access-tutorial.md)。
 
 `Hooks.BeforePublish(identity)` 在锁外准备与 activation 关联的外部记录；失败会阻止发布并进入统一清理。`OnRetire(identity)` 在锁外撤销记录，且此时 `IsActive(identity)` 必为 false。每个 activation 的两个 hook 互斥串行：退役若先发生，迟到初始化会跳过 BeforePublish；若预备已开始，撤销等待它返回，避免迟到预备记录重新出现。普通取消不被 hook 阻塞。
 

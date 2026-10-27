@@ -8,13 +8,20 @@ tableOfContents: false
 lastUpdated: false
 prev: false
 next: false
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - go.mod
+  - host.go
+  - contract
+  - examples/basic-host
+  - examples/plugins
 ---
 
 # Cordis
 
 ## 从一段代码，到一个插件系统
 
-Cordis 是独立的 Go 插件框架。插件以 WASM 或原生进程运行，用签名 ZIP 包独立交付。宿主管理安装、版本和权限；插件声明服务与依赖，资源随每次激活一起清理。
+Cordis 是独立的 Go 插件框架。插件以 WASM 或原生进程运行，用签名 ZIP 包交付。宿主管理安装、版本和权限；插件声明服务与依赖，资源随每次激活一起清理。
 
 从[快速开始](getting-started.md)运行 counter：独立构建、打包、调用，观察返回值从 10 变成 12。无需先理解协议，也不需要重编译宿主。
 
@@ -26,8 +33,12 @@ Cordis 是独立的 Go 插件框架。插件以 WASM 或原生进程运行，用
 | 用 Go 写插件、处理请求和清理资源 | [插件作者指南](plugin-author.md) |
 | 在现有 Go 应用中加载外部插件 | [宿主接入指南](host-guide.md) |
 | 打包、签名、调试与生成代码 | [CLI 命令](cli.md) |
-| 控制插件权限、任务与持久数据 | [授权、任务与存储](access.md) |
-| 排查启动、退出与版本切换 | [组合与实例](composition.md)、[恢复指南](recovery.md) |
+| 动手组合子实例、事件和中间件 | [组合实操](composition-tutorial.md) |
+| 配置权限、接管任务、持久化和迁移数据 | [访问实操](access-tutorial.md) |
+| 从 JSON 契约生成 Go 服务 | [生成服务实操](generated-service.md) |
+| 查公开类型、方法与使用顺序 | [Go API 导航](api.md) |
+| 排查启动、退出与版本切换 | [故障排查](troubleshooting.md)、[恢复指南](recovery.md) |
+| 发布、轮换密钥、升级和备份 | [上线与维护](operations.md) |
 
 ## 三条边界
 
@@ -37,6 +48,6 @@ Cordis 是独立的 Go 插件框架。插件以 WASM 或原生进程运行，用
 
 ## 代码与证据
 
-[GitHub 源码](https://github.com/Cyenoch/cordis) · [Go API](https://pkg.go.dev/github.com/Cyenoch/cordis) · [示例宿主](https://github.com/Cyenoch/cordis/tree/main/examples/basic-host) · [验收记录](https://github.com/Cyenoch/cordis/blob/main/openspec/changes/build-go-plugin-framework/tasks.md)
+[GitHub 源码](https://github.com/Cyenoch/cordis) · [Go API 导航](api.md) · [示例宿主](https://github.com/Cyenoch/cordis/tree/main/examples/basic-host) · [验收记录](https://github.com/Cyenoch/cordis/blob/main/openspec/changes/build-go-plugin-framework/tasks.md)
 
-MIT 许可。本文档描述当前仓库；公开源码与历史验收不等同于首个稳定版本认证，具体修订与平台范围以验收记录为准。
+MIT 许可。每页代码基线标明所述 API 对应的修订；使用其他版本时，先核对差异。实际平台验证范围见验收记录。

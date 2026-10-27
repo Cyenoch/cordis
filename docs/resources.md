@@ -1,6 +1,16 @@
+---
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - contract/group.go
+  - contract/group_test.go
+  - internal/core/cleanup.go
+  - sdk/client.go
+  - conformance/cmd/lifecycle-smoke
+---
+
 # 显式资源组
 
-`contract.Group` 把若干 `contract.Cleanup` 组合为一个有所有权的清理单元。它只依赖公共 `contract` 包，本地插件与 SDK 插件作者都不需要导入宿主 `internal`。
+`contract.Group` 将一组清理函数交给同一个 owner，按登记逆序释放。它只依赖公共 `contract` 包，本地插件和外部 SDK 均可使用；完整运行示例见[组合实操](composition-tutorial.md)。
 
 ## API 与所有权
 
@@ -9,7 +19,7 @@
 - `group.Defer(cleanup)` 只在成功时接管该清理。nil cleanup 返回 `invalid_message`；开始关闭后拒绝新登记，返回 `not_ready`。登记失败时，刚取得的资源仍由调用者负责释放。
 - `group.Close(ctx)` 开始一次共享释放并等待结束。第一次 Close 立即封闭登记；同时或以后调用 Close 不会再次释放，也不会重试失败的清理。完成的等待者取得同一个缓存的聚合错误；全部成功时为 nil。
 
-Scope 在初始化失败、停用或退役时执行已拥有的清理，所以应先创建受 Scope 管理的组，再逐个取得资源并登记。嵌套组把自己的 Close 登记在父组中，不引入第二套 activation 或服务绑定。
+Scope 在初始化失败、停用或退役时执行已登记的清理。先创建受 Scope 管理的组，再逐个取得资源并登记；嵌套组把 Close 登记在父组中，不另建 activation 或服务绑定。
 
 ```go
 package plugin

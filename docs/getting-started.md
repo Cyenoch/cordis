@@ -1,21 +1,31 @@
 ---
 title: 快速开始
 description: 构建独立 counter 插件，打包后通过 Cordis CLI 调用，再切换到 WASM。
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - go.mod
+  - cmd
+  - examples/plugins/counter
+  - packagehost
+  - runtime
 ---
 
 # 快速开始
 
-先运行仓库里的 counter，再把它换成你自己的插件。整个过程使用公开 SDK、独立插件 module 和真实进程，不需要宿主专属代码。
+先运行仓库里的 counter，再换成自己的插件。本页使用公开 SDK、独立插件 module 和真实进程，不需要宿主专属代码。
 
 ## 准备环境
 
-- Go **1.27.3**，与仓库 `go.mod` 一致。
+- Go **{{docs.goVersion}}**，版本取自本页代码基线的 `go.mod`。
 - Git。克隆后不必初始化 `third_party/cordis` submodule。
 - 本页默认在 macOS / Linux 的 shell 操作；Windows 构建命令见各节折叠项。
+
+以下检出本页对应的代码修订，避免后续 main 分支变化影响示例：
 
 ```sh
 git clone https://github.com/Cyenoch/cordis.git
 cd cordis
+git checkout {{docs.codeCommit}}
 mkdir -p bin
 go build -o ./bin/cordis ./cmd/cordis
 ```
@@ -26,6 +36,7 @@ go build -o ./bin/cordis ./cmd/cordis
 ```powershell
 git clone https://github.com/Cyenoch/cordis.git
 Set-Location cordis
+git checkout {{docs.codeCommit}}
 New-Item -ItemType Directory -Force bin | Out-Null
 go build -o ./bin/cordis.exe ./cmd/cordis
 ```
@@ -161,4 +172,6 @@ try {
 - [核心概念](concepts.md)：分清包、定义、实例、激活与作用域。
 - [编写插件](plugin-author.md)：服务、依赖、清理与独立交付。
 - [接入宿主](host-guide.md)：签名信任、加载、调用和可靠关闭。
+- [实操教程](composition-tutorial.md)：子实例、服务依赖、realm、事件和中间件；[访问实操](access-tutorial.md)涵盖权限、任务与存储。
+- 遇到错误先查[故障排查](troubleshooting.md)，发布前看[上线维护](operations.md)。
 - 完整仓库验收：macOS / Linux 执行 `bash conformance/run.sh`；Windows 执行 `./conformance/run.ps1`。命令包含 race、真实 Native/WASM 和生命周期检查，不只是快速开始。

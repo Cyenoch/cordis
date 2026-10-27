@@ -7,7 +7,7 @@
 提交前运行 `go vet ./...`、`go mod verify` 和 `bash conformance/run.sh`；
 规格修改使用 `bun install --frozen-lockfile` 后运行 `bun run spec:validate`。
 
-文档正文直接维护 `docs/*.md`，站点使用 Astro + Starlight。`bun run docs:dev` 本地开发；提交前执行 `bun run docs:test` 和 `bun run docs:build`，后者包含 Pages 子路径、链接与锚点检查。构建结果不提交，主分支由 Actions 自动发布；详见[文档站维护](docs/site-maintenance.md)。
+`docs/*.md` 只放插件作者和 Host 开发者需要的手册。站点本地开发、部署、基线同步和构建期变量的维护方法见[文档站维护](.github/DOCUMENTATION.md)，不进入发布站点。中文正文按 humanizer-zh 校订，保留技术条件。
 
 作者示例是独立 module，其 replace 只指向当前检出，确保验收运行当前 SDK。
 外部消费使用已发布的固定版本，不复制示例 module 的开发 replace。

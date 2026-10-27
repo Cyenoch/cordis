@@ -2,7 +2,7 @@
 
 ## Context
 
-动机与兼容边界见 [proposal.md](proposal.md)，行为契约见 `specs/` 的五项 capability。本文件记录已评审并落地的设计；实际执行记录、平台限制和任务状态见 [tasks.md](tasks.md)。
+动机与兼容边界见 [proposal.md](proposal.md)，行为契约见 `specs/` 的五项 capability。本文件同时记录既有设计与新增待实现决策，不以文档存在表示功能已落地；实际执行记录、平台限制和任务状态见 [tasks.md](tasks.md)。第 15 节为本轮开发体验规划。
 
 现有事实：
 
@@ -46,7 +46,7 @@
 
 Integrator 独占 `go.mod`、公开契约、schema 与 OpenSpec。共享 Go/OpenSpec skills 复制并保留来源与许可证，数据库、MyGo 和游戏材料留在宿主。VortexGo 消费固定公开版本；本地联调可显式使用临时 workspace，不将相邻目录写成发布依赖。独立作者示例保留指向当前 checkout 的局部 replace，以验证正在修改的 SDK；这不是库发布依赖，根 module 没有 replace。
 
-项目和工具名称更改不改变既有 `cordis-go.*` v1 schema 标识及 `cordis-go-package/v1` 签名域；修改这些字节会使现有包、签名和会话不兼容，本次明确不做。
+项目和工具名称更改不改变既有 `cordis-go.*` schema 标识及 `cordis-go-package/v1` 签名域。本轮按用户最新决定直接修订未稳定发布的契约，不为旧 v1 字段语义保留兼容路径，具体范围见第 15 节；签名算法及输入布局无需改变。
 
 否决：嵌入 `vortexgo/internal/` 后再抽取，或用多个 module 共享 VortexGo 内部类型。两者会把领域依赖和发布节奏带入框架。
 
@@ -105,11 +105,11 @@ Scope.Defer 将清理归属当前激活；公开 `contract.Group` / `NewGroup` �
 - 会话协议 `{major,minMinor,maxMinor,requiredFeatures}`，协商最高共同 minor，注册确认 minor/features。
 - 必需/可选包依赖使用互斥的 `[Min,Max)` 区间或严格比较器交集 `Range`（`>=`、`>`、`<=`、`<`、`=`、`^`、`~`）；拒绝 OR、通配符和缩写，不做网络解析、自动版本求解或模糊 latest。
 - `runtime.kind` 为 `wasm` 或 `native`；WASM entry 唯一，原生产物按 GOOS/GOARCH 显式列出且仅选择精确目标。
-- 请求能力、贡献文件引用、配置 schema、数据版本和保留偏好；宿主定义的值放在受 schema 验证的扩展文档，不混入通用字段。
+- 请求能力、贡献文件引用、definition 级配置 schema、数据版本和保留偏好；宿主定义的值放在受 schema 验证的扩展文档，不混入通用字段。
 
 服务/requirement 是逻辑标识，上限 512；贡献 ID 上限 200，允许宿主合法的连续点。二者不参与文件路径拼接。包/publisher/definition/slot 名保留原 200 上限和连续点拒绝，归档文件继续使用独立路径规范化；避免把 VortexGo 精确服务键（最长约 303 字符）错误套入包路径限制。
 
-JSON 严格解码、重复 key 与未知通用字段拒绝；版本扩展需新 schema 或明确能力协商。未知宿主扩展不会自动信任。
+JSON 严格解码、重复 key 与未知通用字段拒绝。当前契约在稳定发布前直接同步修订，不增加旧字段别名、探测式降级或并行解码器；稳定发布后的版本演进不属于本轮。未知宿主扩展不会自动信任。
 
 包内路径为规范化相对 POSIX 路径，拒绝绝对/父路径、反斜杠、控制字符、非 NFC、驱动器/设备/UNC、Windows 保留名、尾点空格、链接、加密 ZIP、重复/大小写折叠冲突。安装限制由宿主给定并报告，默认 archive 64 MiB、单文件 64 MiB、总展开 256 MiB、10,000 条目；读取过程中按实际字节计数，不信任 ZIP 头。
 
@@ -135,7 +135,7 @@ JSON 严格解码、重复 key 与未知通用字段拒绝；版本扩展需新 
 
 帧分为 request、response、cancel；包含 schema、activation、request ID、method、payload/error、剩余 deadline 和调用关联。request/response 必须匹配会话、方向、方法和请求 ID；request ID 在方向内不复用并包含方向前缀，避免双向同时生成的碰撞。已取消请求保留有界终态记录，其迟到响应只记诊断；重复有效响应、未知关联或协议破坏关闭对应会话。旧 activation 永不提交状态，旧连接直接关闭。cancel 仅针对当前已知请求，重复取消幂等。
 
-控制方法为 initialize、health、shutdown；业务原语为 call、event、register 和 host.invoke。初始化协商协议、必需特性和限额，不接受来宾自报身份替换宿主身份。错误使用稳定 code（incompatible、invalid_message、not_ready、denied、timeout、canceled、reentrant_call、plugin_failed、internal）与脱敏 details，handler 的业务错误由契约定义。
+控制方法为 initialize、health、shutdown；业务原语为 call、event、register 和 host.invoke。初始化协商协议与必需特性，不接受来宾自报身份替换宿主身份。当前 SDK 与宿主限额尚未通过握手统一，此项由 `negotiate-session-frame-budgets` 修订，不把原设计意图写成已实现。错误使用稳定 code（incompatible、invalid_message、not_ready、denied、timeout、canceled、reentrant_call、plugin_failed、internal）与脱敏 details，handler 的业务错误由契约定义。
 
 注册使用契约 ID、major/minor、方法和可序列化 schema。Integrator 拥有受限 JSON Schema 数据模型及生成器输入：对象、数组、字符串、布尔、有限数值、显式 nullable 和标记联合；字节用 base64，64 位整数用十进制字符串，防止 JSON 数值丢失。拒绝任意 interface、函数、指针和循环类型。生成 Go 客户端/服务端及 schema 校验代码；进程内同契约可直调，跨运行时走代理。
 
@@ -249,3 +249,106 @@ namespace 使用带序号/hash的有界增量日志，Compact 显式原子替换
 独立复核补充：任务 begin/finish/cancel 绑定每次创建的 token，不以可复用逻辑 ID 识别一次任务，避免 Release 后串写。配额持久字段用十进制字符串，namespace/package/key 的 UTF-8 在信任边界校验；维护操作取得存储锁后重新检查取消。typed DecodeData 与协议 Decode 分离：前者容器必须显式 nullable，后者保留 envelope 已声明的 null。注册与 codec 共用 JSON 有效字段，Nullable 递归检查内部类型；原始浮点目标也拒绝超安全整数。已确认取消立即释放监督 timer/goroutine，实例级等待边跨 activation 替换保持直到 revision 完成。
 
 静态与作者子实例共用 entry ID 预留，覆盖预检、持久意图到 engine 登记；失败后释放，不在磁盘等待期间持 Host mutex，也不占用整个清理锁。已 disabled 且非 live 的历史子 entry 无需再次保存，包已卸载时仍能清理父树。namespace 恢复沿用热写路径的增量字节计数，只有 migrate 扫描替换值集，避免每次恢复小写入都重扫全库。
+
+### 14. 使用手册与代码基线（2026-10-27）
+
+保留既有站点设计与 `docs/*.md` 单源。增加组合实操、访问实操、生成服务实操、API 导航、排障及上线维护；已有机制参考保留精确边界，用链接连接到操作步骤。完整 Go 程序直接从教程代码块提取到临时独立 module 编译运行，比较文中的预期输出，不维护第二份示例。生成实操由当前 CLI 生成代码后执行。通用 conformance 复用这个入口，外部 Native/WASM 仍由既有独立作者 module 和真实 Runtime 验证。
+
+中文校订使用 humanizer-zh：只去掉重复、空泛或生硬的表达，不删除关键限制，不改写代码、命令与数据。新增内容先对照实现，再校订正文。
+
+每篇文章的 front matter 添加 `codeCommit`（40 位 SHA）和 `codePaths`（仓库相对文件或目录）。站点在页尾显示“代码基线”及 GitHub commit 链接，明确它不是文档更新时间。`docs:sync` 对每页执行 git 历史及路径检查，并以基线对当前工作树做路径限定 diff，另计未跟踪文件；目录包含新增及删除，历史不存在与非法元数据是错误。没有差异不等于行为已验证，变化只说明需要复核。CI 使用完整历史并输出逐页警告，不因有源码差异阻塞文档发布，也不自动改 SHA。选择非阻塞报告是因为源码变化未必改变文档契约，不能用机械差异替代人工判断。
+
+关联路径采用实际目录/文件，不引入 glob、中央注册表、生成 API 镜像或自动盖章。单页核对后手动更新基线；工作区包含尚未提交的相关变化时，保留原 SHA 和差异，等代码提交并复核后再更新，避免引用不存在的未来提交。网站自身本轮变更也按此规则处理。
+
+构建期变量只在现有 Markdown processor 中替换显式标记的正文、行内代码与代码块，不改写原始 docs，不增加客户端请求或动态渲染。按页 codeCommit 读取对应 go.mod，并通过隔离目录中的 `go list -m -json module@commit` 解析可获取的精确版本；同一构建按 commit 缓存查询，失败显式终止，不回退 latest。CI 的 Node 使用 `.node-version`，Bun 使用 package.json 的 packageManager，先配置 Go 再构建；历史证据、保留 v1 schema 和示例业务版本仍是字面量。原始 Markdown 说明如何以代码 commit 运行安装命令。
+
+站点只服务插件和 Host 开发者。网站构建、部署、文档贡献、代码基线同步与变量维护说明移到 `.github/DOCUMENTATION.md`，只从 CONTRIBUTING 引用，不被 docs loader、导航或 Pagefind 收录。移除 site-maintenance 路由及页尾同步维护入口，保留对开发者有用的代码 commit 链接。
+
+### 15. 单源声明与完整开发体验（待实现）
+
+#### 15.1 契约直接修订，不新增兼容版本
+
+用户已明确本项目未上线，本轮可以直接改。沿用当前 `cordis-go.package/v1`、`cordis-go.contract/v1` 标识，直接修改其 schema、严格 codec、生成器、向量和所有仓内调用者；不提升兼容版本，不保留旧字段、别名、缺字段猜测、双版本读取或迁移 shim。依赖固定旧公开版本的外部宿主须同步更新，不承诺旧二进制或旧 catalog 降级；不静默读取再重写旧签名包。实际数据变化仍须宿主显式迁移和确认，不能借“无兼容”删除用户数据。
+
+签名算法、`cordis-go-package/v1\0` 域及路径/大小/hash 输入布局没有变化理由，继续使用。新的 Manifest 字节产生新的摘要和签名；保留独立签名算法向量，更新被契约变化影响的结构向量，不篡改历史执行记录。此处的 v1 不是稳定发布兼容承诺。
+
+共享 wire 写集另有两个 owner：[isolate-oversized-responses](../isolate-oversized-responses/proposal.md) 拥有本地普通响应超限隔离，[negotiate-session-frame-budgets](../negotiate-session-frame-budgets/proposal.md) 拥有双方有效帧预算。已向其 owner 同步“不提升兼容 major、不保留旧握手回退”的用户决定。本 change 不定义预算字段、响应替换或第二套协商；实施先确定单一公共契约及串行合并顺序，仍保留宿主专有 Session 完整替换。
+
+#### 15.2 一份作者声明，复用当前 schema 编译器
+
+采用 schema-first，不是因为 Go struct-first 不可行，而是现有 `schema.Compile/Generate` 已拥有约束、严格 codec 与服务生成。扩展现有作者声明模型支持具名数据类型、配置根和 definition，以及对服务/Requirement 的明确引用；配置-only 合法，不要求伪造服务。不再让作者在 schema、Go 定义、Manifest 三处重写 ID、版本、requires/provides。普通业务仍写 Go；不把业务函数或宿主策略写成一门新 DSL。
+
+作者包源为 `plugin.toml`、`plugin.yaml`/`plugin.yml` 或 `plugin.json`，默认扫描只允许一个候选；显式指定源不意味着忽略同目录冲突。包源声明发行身份、运行目标和本地契约引用，契约可内联或引用包内普通文件；引用只用于显式编译输入，受路径及循环检查，不提供配置 include、网络 `$ref` 或运行时执行。空列表、无数据迁移的初始 0 和唯一 default definition 由编译器补齐。共享一个解析后的声明图，同时生成：
+
+- 严格 Go Config、声明描述与类型化 Start 包装；包装实现既有 Definition seam，按 definition 使用同一 validator，作者业务函数接收 Config 而非再次手写 Decode。
+- 服务类型、client/server、provider 和 consumer 描述，供 builtin、SDK 与打包复用；生成的 Requirement 是调用与登记的同一值，不从 provider 版本猜范围。
+- 配置的受限宿主 schema 和标准编辑器 schema；校验源不是多个 struct tag 或手工注册表。
+- staging 中完整、显式的机器 `plugin.json`。包内运行时只读机器 Manifest，不新增 TOML/YAML wire；源文件不被回写，完整性在生成完成后计算，实际归档文件均受现有摘要覆盖。
+
+`cordis build` 作为现有 CLI 的薄构建流程：使用同一声明图先生成、再调用明确的 Go 构建目标，记录声明指纹、实际 SDK module 版本/能力、目标和产物 hash 的机器构建描述；不执行产物。打包验证描述和精确产物 hash，不凭最新 CLI 声称旧 SDK 支持新协议。任意外部构建须显式提供同样描述，无法验证时失败。描述由工具生成，不成为作者手工维护的第三份 Manifest；它防止标准流程意外漂移，不证明恶意二进制行为真实。现有 pack/sign/inspect 与 MetadataDecoder 继续复用校验、私有 staging 和完整性，不另建包安装器。
+
+#### 15.3 版本与配置职责
+
+| 值 | 唯一来源与规则 |
+|---|---|
+| 包发行版本 | 作者包源中的严格 `"x.y.z"` SemVer，可有既有允许的 prerelease/build；不复制进业务 Go |
+| 服务 provider | 作者声明的整数 `1` 表示 1.0，或字符串 `"1.2"`；不是浮点，不接受补丁位 |
+| 服务 consumer | 显式 service/major 和闭合 minor 范围；不套用包 SemVer 区间，不自动扩大 |
+| 包依赖 | 复用当前 comparator Range 或半开 Min/Max，诊断显示实际采用的约束 |
+| schema / 协议 | 工具格式固定于当前修订；协议能力来自实际构建 SDK 描述，不由作者重复填 |
+| 数据版本 | 初次未迁移可省略为 0；迁移后显式保留当前值，只有数据格式变更才推进，不随发行版本重置 |
+| desired / applied revision | 框架内部维护，不要求作者配置或同步 |
+
+Manifest 移除包级 ConfigSchema，改为每个 DefinitionSpec 唯一携带配置契约；builtin Definition 引用同一生成描述。Host 在 Enable、Update、Replace 和子实例登记的共同预检边界按 definition 解析和验证，完成后才提交持久意图或停止旧激活。缺省输入统一转为 `{}`，仅针对真正省略，显式 null 保留；必填字段不会因缺省而绕过。schema/数据失败不改变旧状态；通过预检后的业务初始化仍可能失败，不宣称能前置执行所有业务检查或自动回滚副作用。
+
+#### 15.4 统一文件解析与编辑器投影
+
+增加单一 `config/` 文件边界，仅拥有格式选择、受限语法树到 JSON 数据模型的转换、位置映射与错误；依赖 `contract`，不依赖 Host、Runtime 或 schema 生成器。`schema/` 及 CLI 复用它，再交现有 schema 校验；Host/core 继续消费规范数据，不在生命周期锁内读文件。依赖选择和许可证在实施时依据当前主文档审查，优先已有解析器；不能以 YAML `map[any]any` 或 float64 中间值丢失结构及数值。
+
+格式由显式参数或已知扩展名确定，不探测失败后轮流 fallback。对源字节、深度、集合和引用设有界限制，解析时拒绝重复键、无效 UTF-8、尾随 JSON/YAML 文档、非字符串键、YAML alias/merge/自定义 tag。保留数值词法与精确值；TOML 数字分隔符及进制到 JSON 的转换采用精确整数/十进制规则，不经 float64。共享数据 codec 特判 json.Number 的数字 token、有限性及安全整数限制，拒绝引号字符串和非法词法；合法高精度小数保持可往返。
+
+推荐顺序按可表达能力而不是“一种格式包办”：对象型、人手维护优先 TOML；需要 null、非对象根或更深层结构时推荐 YAML；自动化交换用 JSON。TOML 无 null，不把省略、空串或 `"null"` 当 null；三种格式只接受 JSON 模型内的值，TOML/YAML 原生日期时间要求改为引号字符串，非有限数拒绝。实例配置不填业务默认、不隐式环境合并、include/watch 或回写注释。错误包含用户提供的来源名、JSON Pointer 和可获得的行列；可信本地路径与对外安全投影分离。
+
+编辑器导出为 JSON Schema 2020-12：nullable 转成 null 分支，闭合对象显式 additionalProperties:false，tagged union 转 oneOf + required const，不输出私有 discriminator/nullable 假装标准。int64/uint64 十进制及 byte/base64 约束尽量转换成标准 pattern/边界，保守处理 Go RE2 与标准 regex 的差异；不等价项输出说明而非错误映射或假通过承诺。提供 JSON 编辑器文件关联、YAML language-server modeline 和 Taplo `#:schema` 示例；不往闭合业务对象插入 `$schema` 再特殊剥离，注释仅由文件语法处理。对编辑器无法验证的完整字节/数值/正则约束，运行时仍是权威。
+
+#### 15.5 生成器、共用能力与作者测试
+
+共用 Caller/Registrar 等窄接口归 `contract`，生成文件引用而非逐文件定义；生成入口可一次接收多个契约输入，完整检查输出包符号再写文件。普通叶子用 string/bool/共享数字与 bytes 类型，不因 request/response 路径不同生造命名类型；约束放在父 codec，显式具名约束根保留独立 codec。Optional/Nullable 复用共享类型，联合构造器填 tag；不以少写转换为由放松缺失/null/零值和边界校验。
+
+client 构造接受生成的消费者描述，其中包含同一 Requirement 与方法契约的本地引用/确定指纹；生成描述和 Manifest 引用同一声明身份，client 比对自己的生成契约与该身份，并验证服务名、major 和范围。当前纯 Requirement 没有方法信息，不能单独用来声称校验数据契约。指纹复用规范化声明描述，不把 provider 新 minor 的整体指纹强制等同于 consumer，也不自动证明跨 minor 语义兼容；数据仍在各自 codec 边界验证。默认精确版本可供简单场景，但不得覆盖实例选定范围。Host 提供 realm-bound Caller/Emitter 视图，沿用原路由/可见性/授权/等待图，不建立第二个 engine。宿主调用、贡献、任务和子实例提供小结构接口及 helper，按真实能力准入，不要求 `scope.(*sdk.Client)`，也不把 Scope 扩张为无所不包的 Context。
+
+公开业务测试 harness 复用真实 definition/codec 和受管生命周期，可显式注册假业务 port 并观察配置、服务、宿主调用和清理，不要求作者手写 initialize/net.Pipe。它不假装验证 wire 或 native/WASI 隔离；真实协议、超时、两种运行时及独立 module 的 conformance 保留。SDK 提供标准 main/信号/退出处理与可返回错误的 Serve 低层入口；stdout 始终留给协议，业务错误不自动重试。
+
+#### 15.6 生命周期、管理与恢复
+
+修复 SDK 清理为每项单独 recover、LIFO、至多一次和错误聚合，复用 `contract.Group` 的已有机制与独立清理 context，保留清理期间绑定能力。启动 ctx 在 Start 返回后结束，activation ctx 继续有效，builtin/SDK 一致。显式受管工作是作者主动选择的并发，使用独立工作执行位置，不占服务/事件串行位；共享业务状态由作者同步。工作由 activation 取消并等待，错误/panic 进入现有失败路径；不是持久 Task。资源接管 helper 在登记失败时关闭资源并合并错误，不把每次创建后手写 Defer 变成作者义务；裸 goroutine 和不合作 builtin 不受强杀承诺。
+
+外部 SDK 的 Start 成功不等于 Host 最终发布。直接扩展当前 `PluginSession` 与 core lifecycle hook 的发布/退役操作，通用 Session 用绑定 activation 的 `activation.publish`、`activation.retire` 控制请求/确认；这些通知不进入业务串行位，不增加兼容版本。Host 完成所有贡献/provider/环校验并提交发布后才发送 publish；SDK 单调经过 initialized、published、retiring、closed，publish 确认才启动受管工作，重复同状态通知幂等，retiring 后任何迟到 publish 不启动工作。通知或确认失败使激活进入明确失败/退役，不留下假成功。Host 关闭普通准入后，在等待消费者清理前通知 retire；SDK 先取消普通及工作 context 并确认通知，再于自身 shutdown/资源清理前等待受管工作退出。清理继续使用独立绑定 context，不能用取消通知提前释放 provider 资源。完整自定义 Session 必须映射相同生命周期操作；未支持受管工作的适配在接纳该能力前明确拒绝，不注入 generic envelope 或暗中改 ABI。
+
+管理准入只覆盖校验、预留和控制意图提交，Resume、Replace、Stop 等不在全局准入内等待依赖或用户清理。关联 entry/包及树使用已有预留、登记代次和过期结果检查；控制顺序、Close 取消及不同时发布旧新 activation 仍保持。阻塞在某个条目的操作不妨碍注册它等待的 provider 或管理无关实例。
+
+最小公共查询包括按 entry ID 取当前句柄和只读清单；旧句柄不转向新登记。状态区分持久 Enabled、当前 runtime 状态和临时停止，等待原因结构化包含要求范围、可见 provider 与不兼容原因，不暴露不可见 realm 的具体数据。Stop 是当前宿主临时操作，Disable 是持久停用，Remove 是移除登记/记录；不靠 API 文档一句含糊“停止”掩盖重启差异。
+
+Restore 返回逐条报告及可检查的聚合错误，按父顺序尝试登记；某父失败只阻塞该子树。重复调用只补齐缺失登记，匹配 immutable identity、realm、parent、definition 与选定 PackageRef；已匹配目标不重启，Failed 不隐式 Retry，当前宿主内临时 Stop 不被 Restore 撤销。冲突需显式管理操作，不悄悄覆盖；真正重开宿主按持久 enabled 意图建立新 activation。配置更新与恢复预检仍遵守原提交错误语义。
+
+#### 15.7 access 与宿主分发由原机制直接完成
+
+当前 Grant 句柄留在 Policy；增加受信任 owner + capability 的撤权入口，以当前 grant/token 线性化撤销并通知在途调用，不让 Authorize 回调创建随后被覆盖的第二个 Grant。TaskManager 的 Release 扩展至所有终态任务，宿主显式决定保留/释放，活跃不可删，不静默淘汰结果；旧句柄保留独立终态 snapshot，释放回收计数及结果预算，复用 ID 仍须新 token，旧 begin/finish/cancel 不能串写。
+
+类型化宿主能力/贡献 helper 和标准 namespace broker/client 复用 `contract.EncodeData/DecodeData`，统一 bytes codec，owner/namespace 从受信任会话绑定取得，插件不能选任意 namespace。业务 quota、授权 scope、迁移/删除确认依旧宿主提供。收到有效存储应答时以 tagged outcome 表达 missing、denied、quota、未提交、committed 和 recovery-required；本地 errors.Is/As 与跨会话投影保持对应，不把 CommittedError 或 RecoveryError 丢成可盲重试的 internal。若请求发出后因取消、撤权或断链没有确定应答，typed 客户端返回带原原因的 submission-unknown，而非伪造未提交或 storage recovery-required；只有能证明未发送/未提交时才可使用相应结果，迟到应答仍拒绝，不自动重试或补建持久操作查询系统。直接修订当前未稳定载荷及向量，不新增兼容版本或旧结果 fallback，也不以结果 envelope 绕过授权和提交点。
+
+根 Host 公开可显式委托的标准 guest dispatcher，自定义方法按 method 精确分派；处理器失败不表示“未处理”，不 catch-all 尝试下一个。保留完整 Session/HandleGuest 替换给宿主专有 ABI，不能隐式套第二层 envelope。受信任诊断出口直接复用 `access.Sink`，在 PublicError 投影前记录可用本地 cause、身份、调用和 stage；Runtime 仅显式启用有界脱敏 stderr。来自对端的安全 code 不会凭空变回原 guest error。Sink 失败同步合并返回；异步失败进入宿主持有的有界状态/查询，保留首因，不递归调用已失败 Sink，不改变 wire 的关闭规则。
+
+#### 15.8 CLI、交付顺序与取舍
+
+所有命令采用一致帮助及退出码，version 使用真实 build/module 信息。增加原子 `generate -output`（先解析、冲突检查、生成及 gofmt，成功后替换），stdout 只作为显式输出模式；不声称能保护用户事先执行的 shell 截断。`run` 默认使用有限、可配置且独立于业务调用的 startup timeout，状态变化时在 stderr 输出有界等待诊断，调用结果仍为纯 stdout；config/input 文件共用 loader，仅一个输入可占 stdin，显式格式与 flags 冲突报错。`init` 只生成最小作者声明、业务入口与测试，不造构建系统、默认信任或自动 native 许可；`build` 复用上述单源生成流程。
+
+实施按任务第 15 组推进：先冻结本轮单一契约和失败语义，经非作者审查，再改公共模型/codec；随后文件解析与生成、Host/core、SDK/access 分离写集实施，最后同步 CLI/示例/文档并走真实端到端。共享契约和两个消息 change 由 Integrator 串行合并。每组自带当前行为测试；最终 conformance、互操作和平台报告不能用本轮调查复现或历史通过替代。
+
+风险与取舍：
+
+- 单源生成会增大工具职责，但删除 Go/Manifest/输入间重复；复用现有 compiler，而不并行维护 struct-first。仅为三种文件格式审查解析依赖，不引入配置管理框架。
+- 去掉全局长等待后竞态边界更清楚但实现更细；用同 entry/树的预留与代次保护，不用全局锁掩盖顺序，也不另建任务队列系统。
+- editor schema 不是运行时 schema 的简单拷贝；保守投影无法表达约束，保持运行时权威，不承诺编辑器等价验证所有输入。
+- 直接修订将使旧输入和固定旧版本的消费者不兼容；同步源码和 fixture，不加兼容版本或 shim。旧持久存储无法读取须明确失败，处理真实数据前由宿主确认，不自动清库。
+- 标准流程能防止意外声明漂移，不能鉴定恶意二进制、强杀不合作 builtin 或回滚业务事务；便利入口不改变这些信任边界。

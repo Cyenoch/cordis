@@ -1,6 +1,16 @@
+---
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - runtime
+  - cmd/cordis-worker
+  - contract/plugin.go
+  - contract/types.go
+  - go.mod
+---
+
 # 外部执行运行时
 
-`runtime/native` 与 `runtime/wasm` 实现同一个 `contract.Runtime`。每次 `Start` 创建独立进程，不存在静态插件兜底，也不重试任何业务请求。包目录必须来自宿主已经验证的不可变包快照；运行时仍拒绝越过包根目录或不是常规文件的 artifact。
+`runtime/native` 与 `runtime/wasm` 实现同一个 `contract.Runtime`，每次 `Start` 创建独立进程，不退回静态插件，也不重试业务请求。包目录须来自宿主已验证的不可变快照；运行时仍拒绝越过包根目录或不是常规文件的 artifact。
 
 ```go
 nativeRuntime := native.New(native.Options{
@@ -49,7 +59,7 @@ GOOS=wasip1 GOARCH=wasm go build -o plugin.wasm ./your-plugin
 
 `wasm.New` 的 worker 必须是绝对常规文件路径；`Launch.Worker` 可以明确覆盖它。worker 和 guest 不继承宿主环境。worker 每次只加载一个 WASI preview 1 command（必须有无参数、无结果的 `_start`），不是 reactor ABI。stdout 原样用于插件会话，stderr 仅用于日志。
 
-wazero 固定 v1.12.0，启用 `WithCloseOnContextDone(true)`。默认模块文件最大 64 MiB、每实例线性内存最多 4096 pages（256 MiB），编译与到首次读取会话 stdin 的启动阶段各 30 秒。编译的进程内硬 watchdog 覆盖编译器不及时响应 ctx 的情况。启动达到首次 stdin 读取之后，command 是持续运行的消息泵，而不是把整个激活生存期误当成一次有期限的调用。
+wazero 固定 {{docs.wazeroVersion}}，启用 `WithCloseOnContextDone(true)`。默认模块文件最大 64 MiB、每实例线性内存最多 4096 pages（256 MiB），编译与到首次读取会话 stdin 的启动阶段各 30 秒。编译的进程内硬 watchdog 覆盖编译器不及时响应 ctx 的情况。启动达到首次 stdin 读取之后，command 是持续运行的消息泵，而不是把整个激活生存期误当成一次有期限的调用。
 
 初始化/业务调用的 deadline、最多在途数和帧大小由 `Options.Limits` 传给 wire；默认 30 秒 / 64 / 1 MiB。忽略取消且宽限期内无有效响应会关闭 endpoint；Runtime 接到 Done 后终止独立 worker。CPU 无限循环和阻塞 stdin 都不依赖 guest 合作：worker 关闭 stdio 解除 WASI host I/O，外层强杀兜底。专用 OpenSession 须自行提供同等调用限制。
 
@@ -71,4 +81,4 @@ Windows worker 修正 wazero v1.12.0 的 pipe EOF poll：仅在原 `poll_oneoff`
 go test -tags=integration -race ./runtime/... -timeout 5m
 ```
 
-集成负责人已在 macOS arm64/amd64、Linux arm64/amd64 和 Windows amd64 实际执行完整验收；命令、来源摘要、输出及仿真限制统一见 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)。不能把旧修订、交叉编译或 skip 当作当前目标通过。macOS amd64 使用 Rosetta，Linux amd64 使用容器仿真，Windows amd64 在用户的 Win11 ARM64 VM 中使用 x64 仿真；这些是对应 OS/目标的执行证据，不是物理 amd64 硬件认证。
+历史验收包含 macOS arm64/amd64、Linux arm64/amd64 和 Windows amd64 执行，具体命令、源码修订及输出见 [OpenSpec 集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)。其中 macOS amd64 使用 Rosetta，Linux amd64 使用容器仿真，Windows amd64 使用 Win11 ARM64 VM 的 x64 仿真，不是物理 amd64 硬件认证。每次改动只继承对应修订的证据；旧结果、交叉编译或 skip 不能算作当前目标通过。

@@ -1,8 +1,20 @@
+---
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - access
+  - host.go
+  - contract/task.go
+  - sdk/task.go
+  - internal/core/engine.go
+---
+
 # 宿主访问、贡献、任务与命名空间
 
-`access` 只管理宿主身份、准入、所有权和取消，不实现通用文件/网络权限沙箱。真实 I/O、范围匹配、凭据代理和裁剪结果由宿主提供；尤其 native 插件本身不因此获得 OS 隔离。
+`access` 管理宿主身份、调用准入、所有权和取消，不提供文件或网络权限沙箱。真实 I/O、范围检查、凭据代理与结果裁剪由宿主实现，Native 也不会因此获得 OS 隔离。先跑代码可从[访问实操](access-tutorial.md)开始。
 
 ## 激活与授权
+
+使用 `cordis.Host` 时，Host 已负责激活与撤销；应用配置 Authorize、Broker 和 validator。下面的 Policy 方法供宿主访问层及协议适配作者使用，不应给同一 Host 另建身份来源。
 
 宿主为每次启动生成全新 `contract.Identity`，用经过验证的 manifest 声明调用 `Policy.Activate(identity, manifest.Capabilities)`。同一 `(Package, Entry)` 的新激活原子撤销旧激活；已用过的 activation ID 不能再次使用。guest 请求中的身份不能代替会话绑定身份。
 
@@ -39,7 +51,7 @@
 - 每个 manager 为每次激活保留至多 `MaxTasksPerActivation`（256）条记录，包含 queued、running、终态和显式接管任务；单个结果至多 `MaxTaskResultBytes`（1 MiB），累计保留结果至多 `MaxTaskResultBytesPerActivation`（8 MiB），均按原始 JSON 字节计算。超过限制返回 `ErrTaskQuota`，不新建记录、不复制结果、不提交终态；累计结果额度耗尽后仍允许无结果完成。此固定有界历史避免 guest 通过顺序完成任务耗尽宿主内存。
 - 激活撤销时 manager 删除该 owner 所有未接管记录和结果，`Snapshot()` 不再显示它们；仅显式接管记录继续保留。宿主已经持有的 `Task` handle 仍可读取终态、结果与原始 `Err()`；删除 ledger 不会破坏 handle，也不表示外部操作已回滚。终态接管任务由宿主调用 `Task.Release()` 从 manager ledger 和结果额度中移除；运行中拒绝释放，重复释放幂等。已有 handle 的 Status/Err 仍可读；宿主也应释放自己的引用。
 
-checkpoint、持久任务 journal、业务恢复和补偿由宿主负责。框架不会伪造事务成功，也不宣称 cleanup 能回滚数据库或网络效果。
+checkpoint、持久任务 journal、业务恢复和补偿由宿主负责。任务完成不表示外部事务已持久化，cleanup 也不会回滚数据库或网络副作用。
 
 ## 命名空间与配额
 

@@ -5,6 +5,7 @@ import { glob, type Loader } from 'astro/loaders'
 import { docsSchema } from '@astrojs/starlight/schema'
 import { i18nLoader } from '@astrojs/starlight/loaders'
 import { i18nSchema } from '@astrojs/starlight/schema'
+import { z } from 'astro/zod'
 
 const docsDirectory = new URL('../../docs/', import.meta.url)
 const source = glob({ base: fileURLToPath(docsDirectory), pattern: '*.md' })
@@ -12,6 +13,8 @@ const source = glob({ base: fileURLToPath(docsDirectory), pattern: '*.md' })
 const loader: Loader = {
   name: 'cordis-docs',
   async load(context) {
+    // Version queries are build inputs too, even when article text has not changed.
+    context.store.clear()
     await source.load({
       ...context,
       async parseData(entry) {
@@ -31,6 +34,13 @@ const loader: Loader = {
 }
 
 export const collections = {
-  docs: defineCollection({ loader, schema: docsSchema() }),
+  docs: defineCollection({ loader, schema: docsSchema({
+    extend: z.object({
+      // StarlightPage also uses this schema for the non-document 404 page.
+      // docs:sync requires both fields on every source article.
+      codeCommit: z.string().regex(/^[a-f0-9]{40}$/).optional(),
+      codePaths: z.array(z.string()).min(1).optional(),
+    }),
+  }) }),
   i18n: defineCollection({ loader: i18nLoader(), schema: i18nSchema() }),
 }

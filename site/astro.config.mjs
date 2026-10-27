@@ -21,7 +21,7 @@ export default defineConfig({
         '@fontsource-variable/jetbrains-mono',
         './src/styles/custom.css',
       ],
-      components: { Hero: './src/components/Hero.astro' },
+      components: { Hero: './src/components/Hero.astro', Footer: './src/components/Footer.astro' },
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/Cyenoch/cordis' },
       ],
@@ -54,6 +54,14 @@ export default defineConfig({
           ],
         },
         {
+          label: '实操教程',
+          items: [
+            { label: '组合实操', slug: 'composition-tutorial' },
+            { label: '授权、任务与存储', slug: 'access-tutorial' },
+            { label: '生成服务', slug: 'generated-service' },
+          ],
+        },
+        {
           label: '框架指南',
           items: [
             { label: '组合、实例与清理', slug: 'composition' },
@@ -66,14 +74,15 @@ export default defineConfig({
           ],
         },
         {
-          label: '参考与维护',
+          label: '参考与运维',
           items: [
+            { label: 'Go API 导航', slug: 'api' },
+            { label: '故障排查', slug: 'troubleshooting' },
+            { label: '上线与维护', slug: 'operations' },
             { label: '会话协议', slug: 'protocol' },
             { label: '生命周期验收', slug: 'lifecycle-acceptance' },
             { label: '回归覆盖', slug: 'regressions' },
             { label: '性能测量', slug: 'performance' },
-            { label: '维护文档站', slug: 'site-maintenance' },
-            { label: 'Go API', link: 'https://pkg.go.dev/github.com/Cyenoch/cordis' },
           ],
         },
       ],

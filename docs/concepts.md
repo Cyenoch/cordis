@@ -1,11 +1,20 @@
 ---
 title: 核心概念
 description: 理解 Cordis 的 Package、Definition、Entry、Activation、Scope、服务与运行时边界。
+codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codePaths:
+  - host.go
+  - instance.go
+  - children.go
+  - ownership.go
+  - contract
+  - internal/core
+  - packagehost
 ---
 
 # 核心概念
 
-Cordis 把“交付什么”“启用哪一份”和“这次运行拥有什么”分开管理。先记住这条关系：
+Cordis 分开管理交付代码、实例配置和每次运行的资源：
 
 ```text
 Package（已安装的代码与版本）
@@ -30,9 +39,9 @@ Package（已安装的代码与版本）
 
 ## 包依赖与服务依赖
 
-**包依赖**回答“需要安装并选择哪些包版本”。它用包 ID 和 SemVer 范围描述，由包存储在执行前预检。
+**包依赖**指定需要安装并选择的包 ID 和 SemVer 范围，由包存储在执行前预检。
 
-**服务依赖**回答“启动前需要哪些服务就绪”。它用 `name + major + minor 范围` 描述，由组合内核管理。服务未出现时，实例处于 `waiting`，不会先执行 `Start` 猜测依赖。
+**服务依赖**指定启动前需要就绪的 `name + major + minor 范围`，由组合内核管理。服务未出现时，实例处于 `waiting`，不会执行 `Start`。
 
 ```go
 contract.Requirement{
@@ -79,4 +88,4 @@ Install → Select → Enable → Wait → Call / Update → Disable
 | Native | 信任作者，需要完整 Go / 系统能力 | 受管独立进程，但拥有当前用户权限 |
 | Builtin | 编译进宿主的可信模块 | 共享进程，无法强杀不合作的 Go 回调；不替代外部包交付 |
 
-继续阅读[插件作者指南](plugin-author.md)、[宿主接入](host-guide.md)或[组合与生命周期细节](composition.md)。
+可运行的例子见[组合实操](composition-tutorial.md)。作者和宿主分别从[插件作者指南](plugin-author.md)、[宿主接入](host-guide.md)继续；状态与清理细节见[组合参考](composition.md)。

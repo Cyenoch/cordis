@@ -4,7 +4,7 @@
 
 ## 实际运行
 
-需要 Go 1.27.3。首次检出可用 `git clone https://github.com/Cyenoch/cordis.git`。以下命令从本目录执行：
+Go 版本要求见 `go.mod`。首次检出可用 `git clone https://github.com/Cyenoch/cordis.git`。以下命令从本目录执行：
 
 ```sh
 bash conformance/run.sh
@@ -52,10 +52,13 @@ if err := instance.Wait(ctx); err != nil { return err }
 
 [在线文档站](https://cyenoch.github.io/cordis/) · [快速开始](docs/getting-started.md) · [插件作者指南](docs/plugin-author.md) · [宿主接入](docs/host-guide.md) · [CLI](docs/cli.md)
 
-文档站使用 Astro + Starlight；推送到 `main` 后由 GitHub Actions 自动发布至 GitHub Pages，PR 只构建校验。首次设置与本地运行见[文档站维护](docs/site-maintenance.md)。
+文档面向插件作者和 Host 开发者，包含完整程序、参考及运维指南；页尾标明所述 API 对应的代码修订。
 
 | 主题 | 入口 |
 |---|---|
+| 动手组合与访问策略 | [组合实操](docs/composition-tutorial.md)、[访问实操](docs/access-tutorial.md) |
+| 契约生成实操 | [生成服务](docs/generated-service.md) |
+| API、排障与上线维护 | [API 导航](docs/api.md)、[排障](docs/troubleshooting.md)、[上线维护](docs/operations.md) |
 | 作者与受限类型生成 | [contracts](docs/contracts.md)、[counter](examples/plugins/counter/) |
 | 作用域、依赖和更新 | [composition](docs/composition.md)、[resources](docs/resources.md) |
 | 外部包、签名、恢复 | [packages](docs/packages.md)、[recovery](docs/recovery.md) |
@@ -65,3 +68,5 @@ if err := instance.Wait(ctx); err != nil { return err }
 | 真实外部生命周期与回归 | [lifecycle acceptance](docs/lifecycle-acceptance.md)、[regressions](docs/regressions.md) |
 
 规划与行为规范唯一来源：[OpenSpec change](openspec/changes/build-go-plugin-framework/)。验证结果以 change 的任务证据为准；迁出前的平台记录不代表本次重命名后已重新验证。宿主专属 ABI、Adapter 和游戏验收由宿主项目维护。
+
+参与仓库或文档开发见[贡献指南](CONTRIBUTING.md)。
