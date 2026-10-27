@@ -1,0 +1,17 @@
+{
+  "name": "cordis",
+  "private": true,
+  "packageManager": "bun@1.4.4",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "spec": "openspec",
+    "spec:list": "openspec list",
+    "spec:validate": "openspec validate --all --strict",
+    "spec:doctor": "openspec doctor"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "1.15.0"
+  }
+}

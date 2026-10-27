@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Go
+/bin/
+/build/
+/dist/
+*.test
+*.out
+coverage/
+
+# Frontend tooling
+node_modules/
+.bun/
+
+# Local configuration and runtime data
+.env
+.env.*
+!.env.example
+/.local/
+/data/
+/logs/
+/tmp/
+
+# OpenSpec local state
+.openspec/

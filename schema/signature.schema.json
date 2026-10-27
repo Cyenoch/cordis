@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cordis-go.dev/signature.schema.json",
+  "type": "object",
+  "properties": {
+    "keyId": {
+      "type": "string"
+    },
+    "signature": {
+      "type": "string",
+      "contentEncoding": "base64"
+    }
+  },
+  "required": [
+    "keyId",
+    "signature"
+  ],
+  "additionalProperties": false
+}

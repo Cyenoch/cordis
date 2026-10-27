@@ -1,0 +1,23 @@
+schema: spec-driven
+
+context: |
+  Language: zh-CN. Keep OpenSpec structural headings and SHALL/MUST in English.
+  Project: Cordis, an independent MIT Go plugin framework, module github.com/Cyenoch/cordis.
+  Public libraries, SDK, tools and generic conformance must not depend on host repositories.
+  Host-specific protocol adapters and domain acceptance belong to their host projects.
+  OpenSpec changes are the single source of behavior, design and task status.
+  ROADMAP.md defines phase order; README.md is navigation. Historical platform evidence
+  does not imply that a renamed or modified revision has been executed on that platform.
+
+rules:
+  proposal:
+    - State compatibility boundaries and non-goals.
+    - Distinguish upstream source observations from framework decisions.
+  specs:
+    - Every requirement MUST have a concrete observable scenario.
+    - Cover failures, cancellation, ownership and recovery where relevant.
+  design:
+    - Name module ownership, dependency direction, risks and rejected alternatives.
+  tasks:
+    - Group by non-overlapping write sets and mark complete only after actual verification.
+    - Include behavior tests and documentation in the same write set.

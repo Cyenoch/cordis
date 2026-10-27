@@ -1,0 +1,3 @@
+[submodule "third_party/cordis"]
+	path = third_party/cordis
+	url = https://github.com/cordiverse/cordis.git

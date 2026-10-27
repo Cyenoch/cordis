@@ -1,0 +1,86 @@
+package echo
+
+import (
+    "context"
+    "encoding/json"
+    "strings"
+    "testing"
+
+    "github.com/Cyenoch/cordis/contract"
+    "github.com/Cyenoch/cordis/schema"
+)
+
+type localScope struct { handler contract.Handler }
+func (s *localScope) Provide(service contract.Service,handler contract.Handler) error {
+    if service.Name != "example.echo" || service.Major != 1 { return contract.Fail(contract.Invalid,"wrong service registration") }
+    s.handler = handler
+    return nil
+}
+func (s *localScope) Call(ctx context.Context,requirement contract.Requirement,input json.RawMessage) (json.RawMessage,error) {
+    if requirement.Name != "example.echo" || requirement.Major != 1 { return nil,contract.Fail(contract.Invalid,"wrong requirement") }
+    return s.handler(ctx,input)
+}
+
+type implementation struct{}
+func (implementation) Echo(ctx context.Context,input ExampleEchoEchoRequest) (ExampleEchoEchoResponse,error) {
+    repeat := 1
+    if input.Repeat.Present { repeat = int(input.Repeat.Value) }
+    return ExampleEchoEchoResponse{Text:ExampleEchoEchoResponseText(strings.Repeat(string(input.Text),repeat)),Sequence:ExampleEchoEchoResponseSequence(input.Sequence)},nil
+}
+func (implementation) Choose(ctx context.Context,input ExampleEchoChooseRequest) (ExampleEchoChooseResponse,error) {
+    if input.VariantText.Present { return ExampleEchoChooseResponse{ExampleEchoChooseResponseItem(input.VariantText.Value.Text)},nil }
+    return ExampleEchoChooseResponse{},nil
+}
+
+func TestGeneratedTypedRoundTrip(t *testing.T) {
+    scope := &localScope{}
+    if err := RegisterExampleEchoServer(scope,implementation{}); err != nil { t.Fatal(err) }
+    client := NewExampleEchoClient(scope)
+    input := ExampleEchoEchoRequest{
+        Text: "hi",
+        Sequence: ExampleEchoEchoRequestSequence(9223372036854775807),
+        Payload: ExampleEchoEchoRequestPayload([]byte("bytes")),
+        Note: ExampleEchoEchoRequestNote{Nullable:schema.Nullable[ExampleEchoEchoRequestNoteValue]{}},
+        Repeat:schema.Some(ExampleEchoEchoRequestRepeat(2)),
+    }
+    response,err := client.Echo(context.Background(),input)
+    if err != nil { t.Fatal(err) }
+    if response.Text != "hihi" || response.Sequence != 9223372036854775807 { t.Fatalf("wrong response: %+v",response) }
+    encoded,err := json.Marshal(input)
+    if err != nil { t.Fatal(err) }
+    var wire map[string]json.RawMessage
+    if err := json.Unmarshal(encoded,&wire); err != nil { t.Fatal(err) }
+    if string(wire["sequence"]) != `"9223372036854775807"` || string(wire["note"]) != "null" || string(wire["payload"]) != `"Ynl0ZXM="` { t.Fatalf("wrong wire data: %s",encoded) }
+    var decoded ExampleEchoEchoRequest
+    if err := json.Unmarshal(encoded,&decoded); err != nil { t.Fatal(err) }
+    if !decoded.Repeat.Present || decoded.Repeat.Value != 2 || decoded.Note.Valid { t.Fatalf("presence/null lost: %+v",decoded) }
+    input.Repeat = schema.Optional[ExampleEchoEchoRequestRepeat]{}
+    encoded,err = json.Marshal(input)
+    if err != nil { t.Fatal(err) }
+    wire = nil
+    if err := json.Unmarshal(encoded,&wire); err != nil { t.Fatal(err) }
+    if _,exists := wire["repeat"]; exists { t.Fatal("absent optional field was serialized") }
+    input.Repeat = schema.Some(ExampleEchoEchoRequestRepeat(0))
+    if _,err := client.Echo(context.Background(),input); err == nil { t.Fatal("client sent invalid range") }
+}
+
+func TestGeneratedUnionAndStrictServer(t *testing.T) {
+    scope := &localScope{}
+    if err := RegisterExampleEchoServer(scope,implementation{}); err != nil { t.Fatal(err) }
+    client := NewExampleEchoClient(scope)
+    var input ExampleEchoChooseRequest
+    if err := json.Unmarshal([]byte(`{"kind":"text","text":"chosen"}`),&input); err != nil { t.Fatal(err) }
+    response,err := client.Choose(context.Background(),input)
+    if err != nil { t.Fatal(err) }
+    if len(response) != 1 || response[0] != "chosen" { t.Fatalf("wrong union response: %v",response) }
+    if _,err := json.Marshal(ExampleEchoChooseRequest{}); err == nil { t.Fatal("empty union encoded") }
+    for _,raw := range []string{
+        `{"method":"choose","input":{"kind":"text","text":"x"},"extra":true}`,
+        `{"method":"choose","input":{"kind":"other"}}`,
+        `{"method":"choose","input":{"kind":"text","text":"x","extra":true}}`,
+        `{"method":"unknown","input":{}}`,
+        `{"method":"echo"}`,
+    } {
+        if _,err := scope.handler(context.Background(),json.RawMessage(raw)); err == nil { t.Fatalf("invalid envelope accepted: %s",raw) }
+    }
+}

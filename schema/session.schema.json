@@ -1,0 +1,513 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cordis-go.dev/session.schema.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "cordis-go.session/v1"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "activation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[hg]:[1-9][0-9]*$",
+          "maxLength": 128
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "payload": {},
+        "deadlineMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120000
+        },
+        "parent": {
+          "type": "string",
+          "pattern": "^[hg]:[1-9][0-9]*$",
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "schema",
+        "kind",
+        "activation",
+        "id",
+        "method",
+        "payload",
+        "deadlineMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "cordis-go.session/v1"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "activation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[hg]:[1-9][0-9]*$",
+          "maxLength": 128
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "payload": {}
+      },
+      "required": [
+        "schema",
+        "kind",
+        "activation",
+        "id",
+        "method",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "cordis-go.session/v1"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "activation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[hg]:[1-9][0-9]*$",
+          "maxLength": 128
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "enum": [
+                "invalid_message",
+                "incompatible",
+                "not_ready",
+                "denied",
+                "timeout",
+                "canceled",
+                "reentrant_call",
+                "plugin_failed",
+                "internal",
+                "conflict",
+                "superseded"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "kind",
+        "activation",
+        "id",
+        "method",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "cordis-go.session/v1"
+        },
+        "kind": {
+          "const": "cancel"
+        },
+        "activation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[hg]:[1-9][0-9]*$",
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "schema",
+        "kind",
+        "activation",
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "initialize": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "object",
+          "properties": {
+            "package": {
+              "type": "string"
+            },
+            "entry": {
+              "type": "string"
+            },
+            "activation": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "package",
+            "entry",
+            "activation",
+            "digest"
+          ],
+          "additionalProperties": false
+        },
+        "protocol": {
+          "type": "object",
+          "properties": {
+            "major": {
+              "const": 1
+            },
+            "minMinor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "maxMinor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "requiredFeatures": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "enum": [
+                  "cancel",
+                  "parent",
+                  "tasks",
+                  "events"
+                ]
+              },
+              "maxItems": 10000
+            }
+          },
+          "required": [
+            "major",
+            "minMinor",
+            "maxMinor"
+          ],
+          "additionalProperties": false
+        },
+        "definition": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^(?!/)(?!.*(?:\\.\\.|//))[A-Za-z0-9._/-]+(?<!/)$"
+        },
+        "config": {}
+      },
+      "required": [
+        "identity",
+        "protocol",
+        "definition",
+        "config"
+      ],
+      "additionalProperties": false
+    },
+    "registration": {
+      "type": "object",
+      "properties": {
+        "minor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "features": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10000
+        },
+        "services": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^(?!/)(?!.*//)[A-Za-z0-9._/-]+(?<!/)$"
+              },
+              "major": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "minor": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              }
+            },
+            "required": [
+              "name",
+              "major",
+              "minor"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 10000
+        },
+        "subscriptions": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10000
+        },
+        "contributions": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "slot": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "data": {}
+            },
+            "required": [
+              "slot",
+              "id",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "minor",
+        "features",
+        "services",
+        "subscriptions",
+        "contributions"
+      ],
+      "additionalProperties": false
+    },
+    "callToGuest": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^(?!/)(?!.*//)[A-Za-z0-9._/-]+(?<!/)$"
+            },
+            "major": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "minor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          },
+          "required": [
+            "name",
+            "major",
+            "minor"
+          ],
+          "additionalProperties": false
+        },
+        "input": {}
+      },
+      "required": [
+        "service",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "callToHost": {
+      "type": "object",
+      "properties": {
+        "required": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^(?!/)(?!.*//)[A-Za-z0-9._/-]+(?<!/)$"
+            },
+            "major": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "minMinor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "maxMinor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          },
+          "required": [
+            "name",
+            "major",
+            "minMinor",
+            "maxMinor"
+          ],
+          "additionalProperties": false
+        },
+        "input": {}
+      },
+      "required": [
+        "required",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "input": {},
+        "mode": {
+          "enum": [
+            "sequential",
+            "parallel",
+            "first"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "input",
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "hostInvoke": {
+      "type": "object",
+      "properties": {
+        "capability": {
+          "type": "string"
+        },
+        "input": {}
+      },
+      "required": [
+        "capability",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "queued",
+            "running",
+            "completed",
+            "failed",
+            "canceled",
+            "interrupted"
+          ]
+        },
+        "result": {},
+        "failure": {
+          "enum": [
+            "invalid_message",
+            "incompatible",
+            "not_ready",
+            "denied",
+            "timeout",
+            "canceled",
+            "reentrant_call",
+            "plugin_failed",
+            "internal",
+            "conflict",
+            "superseded"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
