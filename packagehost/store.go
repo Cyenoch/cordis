@@ -18,6 +18,10 @@ import (
 	"github.com/Cyenoch/cordis/contract"
 )
 
+// ErrNotSelected means Selected found no explicit selection for the package ID.
+// It does not indicate whether the package is installed.
+var ErrNotSelected = errors.New("package has no explicit selection")
+
 type catalog struct {
 	Revision        uint64                         `json:"revision"`
 	Transaction     string                         `json:"transaction"`
@@ -653,6 +657,10 @@ func (s *Store) Get(ref contract.PackageRef) (Package, error) {
 	}
 	return s.get(ref)
 }
+
+// Selected returns the package explicitly selected for id from the current catalog.
+// It wraps ErrNotSelected only when no selection exists; it never selects a default
+// or revalidates on-disk content. Other errors are returned unchanged.
 func (s *Store) Selected(id string) (Package, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -661,7 +669,7 @@ func (s *Store) Selected(id string) (Package, error) {
 	}
 	ref, ok := s.catalog.Selected[id]
 	if !ok {
-		return Package{}, fmt.Errorf("package %s has no explicit selection", id)
+		return Package{}, fmt.Errorf("package %s: %w", id, ErrNotSelected)
 	}
 	return s.get(ref)
 }

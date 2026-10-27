@@ -112,6 +112,8 @@ func (s *Store) Discover(ctx context.Context, sources []Source) ([]Candidate, er
 
 ## Store 使用约束
 
+`store.Selected(id)` 读取当前内存 catalog 中的显式选择；仅当没有该 ID 的 selection 映射时，返回可由 `errors.Is(err, packagehost.ErrNotSelected)` 匹配的错误（无论该包是否已安装）。其他错误必须继续处理，不能当作首次启动；查询不会重新读取磁盘、自动选择版本或改变 entry 的启用状态。Install 成功后、Select 前中断的存储，重开后仍保留安装记录和未选择状态，宿主可显式决定是否恢复 Select。Open 的 catalog/内容恢复错误和 Snapshot 的执行前校验错误保持各自原有分类。
+
 ```go
 store, err := packagehost.Open(root, trust)
 if err != nil { return err }

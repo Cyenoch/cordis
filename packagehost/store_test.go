@@ -78,8 +78,8 @@ func TestStoreInstallRecoverySelectionAndData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Selected("demo"); err == nil {
-		t.Fatal("install implicitly selected code")
+	if _, err = s.Selected("demo"); !errors.Is(err, ErrNotSelected) {
+		t.Fatalf("installed without selection: %v", err)
 	}
 	if err = s.Select(ctx, p1.Ref, ChangeOptions{}); err != nil {
 		t.Fatal(err)
@@ -132,6 +132,105 @@ func TestStoreInstallRecoverySelectionAndData(t *testing.T) {
 	}
 	if _, err = os.Stat(marker); err != nil {
 		t.Fatal("deleted retained data", err)
+	}
+}
+
+func TestStoreSelectedAbsenceAndExplicitRecovery(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	key, trust := signingFixture(t)
+	root := t.TempDir()
+	s := openFixture(t, root, trust)
+	if _, err := s.Selected("demo"); !errors.Is(err, ErrNotSelected) {
+		t.Fatalf("empty store selection: %v", err)
+	}
+	archive, _ := archiveFixture(t, manifestFixture("demo", "1.0.0"), key)
+	p, err := s.Install(ctx, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = openFixture(t, root, trust)
+	if _, err = s.Selected("demo"); !errors.Is(err, ErrNotSelected) || !strings.Contains(err.Error(), "demo") {
+		t.Fatalf("reopened without selection: %v", err)
+	}
+	if installed, err := s.Get(p.Ref); err != nil || installed.Ref != p.Ref {
+		t.Fatalf("lost installed package before selection: %+v %v", installed, err)
+	}
+	if err = s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	entry := contract.Entry{ID: "entry", Package: "demo", Definition: "main", Realm: "root", Config: []byte(`{}`), Enabled: false}
+	if err = s.SaveEntry(ctx, entry); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = openFixture(t, root, trust)
+	selected, err := s.Selected("demo")
+	if err != nil || selected.Ref != p.Ref {
+		t.Fatalf("explicit selection not preserved: %+v %v", selected, err)
+	}
+	entries, err := s.Entries()
+	if err != nil || !reflect.DeepEqual(entries, []contract.Entry{entry}) {
+		t.Fatalf("selection query changed disabled entry: %+v %v", entries, err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"demo", "unknown"} {
+		if _, err = s.Selected(id); !errors.Is(err, os.ErrClosed) || errors.Is(err, ErrNotSelected) {
+			t.Fatalf("closed store selection %q: %v", id, err)
+		}
+	}
+}
+
+func TestStoreOpenReadFailuresAreNotUnselected(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"catalog unreadable", "committed content missing"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			key, trust := signingFixture(t)
+			root := t.TempDir()
+			s := openFixture(t, root, trust)
+			archive, _ := archiveFixture(t, manifestFixture("demo", "1.0.0"), key)
+			p, err := s.Install(ctx, archive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err = s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if name == "catalog unreadable" {
+				file := filepath.Join(root, "catalog.json")
+				if err = os.Remove(file); err != nil {
+					t.Fatal(err)
+				}
+				if err = os.Mkdir(file, 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else if err = os.RemoveAll(p.Directory); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := Open(root, trust)
+			if reopened != nil {
+				if closeErr := reopened.Close(); closeErr != nil {
+					t.Error(closeErr)
+				}
+				t.Fatal("opened store despite unreadable committed state")
+			}
+			var pathErr *os.PathError
+			if !errors.As(err, &pathErr) || errors.Is(err, ErrNotSelected) {
+				t.Fatalf("read error misclassified as absent selection: %v", err)
+			}
+		})
 	}
 }
 
