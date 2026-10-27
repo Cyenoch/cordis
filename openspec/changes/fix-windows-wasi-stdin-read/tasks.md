@@ -5,7 +5,7 @@
 - [x] 1.1 核对消费者 trap、固定依赖及官方上游版本，记录根因和最小边界，保留并行工作。
 - [x] 1.2 独立审查方案，补充有界读取/无数据/EOF/非法内存/关闭语义回归，并实现 Windows stdin 修复。
 - [x] 1.3 执行本机 unit/race/vet、真实 worker/guest 回归和 Windows amd64/arm64 交叉构建；准备准确 Windows 命令与产物摘要。
-- [ ] 1.4 非作者独立 Review 修复，只提交本写集并公开发布，交消费者固定 commit 和变更记录。
+- [x] 1.4 非作者独立 Review 修复，只提交本写集并公开发布，交消费者固定 commit 和变更记录。
 
 ## 2. Consumer owner：Windows 串行实测
 
@@ -61,3 +61,22 @@
 - 自定义 fd_read 出口显式映射 experimental/sys 错误域到 WASI preview 1 errno，避免把 EAGAIN 误报权限错误。
 - 增加真实 guest 内存、ABI errno、Windows pipe/flags/close 和真实 worker 流读回归；Wazero 版本、公开契约、协议及依赖清单不变。
 - 发布仅包含本 worker 与独立 change，不包含并行未提交开发。消费者仍需按固定发布 commit 升级 module 并回归。
+
+## Public Publication
+
+修复提交 `9eec44ae8628f22936c6789caba4e98fa2c8c8ac` 已推送公开 main，Go 固定版本为
+`v0.0.0-20261027111235-9eec44ae8628`。提交只包含本 worker 与本 change 的 11 个文件；共享依赖、消费者与其他未提交开发未纳入提交。
+
+使用公开 `https://proxy.golang.org,direct` 和 `sum.golang.org` 实际下载、验证并执行该版本的 worker `go install` 成功。当前机器默认的 goproxy.cn 对首次新版本 sumdb lookup 曾返回临时 404；没有关闭校验或修改全局设置。
+
+- Module sum：`h1:rGlDcJZOO8AK/kk2iY4wMQS3YStlZiIiOnQ7pyvhzJs=`
+- go.mod sum：`h1:u0eONvN7OoZfKBwUs38LMF5Uo+ISas143TMBj4eYB4U=`
+
+从下载 module 重建 Windows amd64/arm64 worker 成功，生产源与已测试修复逐字节一致。下载 module 的构建元数据包含发布版本，二进制摘要与本地工作树构建不同，不能将它们冒充已传入 VM 的相同二进制：
+
+| 公开 module 重建产物 | SHA-256（仅交叉构建，未实跑） |
+|---|---|
+| amd64 worker | `3be4271bf7a325cb6e67959bac06ee642d4c0f9f11720eb36f3aff5bce8fb768` |
+| arm64 worker | `6e2bb51e2c718ca231d9b26380e438f48f9f67a685929c9b3ad1b8aba27e0605` |
+
+已通知消费者 owner 准确 commit、版本、changelog 与校验值；其两个 module 升级和版本化再回归由 owner 独立执行，不在此预填成功。
