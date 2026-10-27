@@ -1,7 +1,7 @@
 ---
 title: 快速开始
 description: 从 TOML 声明生成独立插件，完成 init、build、test、pack、run，再切换到 WASM。
-codeCommit: e6e5f172b7e6dd1099edf8e5f0016432548383a9
+codeCommit: 727f8f4e2c8df9429ec47b3ba0e04ec287ca276a
 codePaths:
   - go.mod
   - cmd

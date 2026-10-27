@@ -1,7 +1,7 @@
 ---
 title: CLI 命令
 description: Cordis 命令行工具的初始化、生成、构建、打包、签名与本地调试用法。
-codeCommit: e6e5f172b7e6dd1099edf8e5f0016432548383a9
+codeCommit: 727f8f4e2c8df9429ec47b3ba0e04ec287ca276a
 codePaths:
   - cmd/cordis
   - cmd/cordis-worker
