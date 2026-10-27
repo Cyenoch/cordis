@@ -12,7 +12,7 @@
 
 - [x] 2.1 以回调首次失败与回调永不返回两项真实 native/WASM 回归确认旧实现挂起，修复为失败后停止转发但持续 drain、拆除对未返回回调有界放弃并记录。
 - [x] 2.2 同步规格、设计与运行时文档，重跑本机全量门禁并由非作者 Review 增量。
-- [ ] 2.3 推送后核对五个远程平台的 Conformance 结果。
+- [x] 2.3 推送后核对五个远程平台的 Conformance 结果。
 
 ## 实际验证记录
 
@@ -50,3 +50,7 @@ Conformance run 40518161692：ubuntu-24.04、ubuntu-24.04-arm、macos-15、macos
 - 新回归 `stderr-sink-failure-keeps-draining` 在旧实现上 native/WASM 均以 `calls=1 err=timeout: peer ignored cancellation` 失败（guest 阻塞在满管道，只因取消超时结束，回调错误丢失）；`stuck-stderr-callback-bounded` 以 `process did not terminate and reap within bound` 失败。修复后 `TestExternalRuntimeIsolation` 连续 5 次、host DX failing-sink 契约 3 次通过。
 - `go vet -tags=integration ./...`、`go mod verify`、`go mod tidy -diff` 通过；`go test -tags=integration -race -count=1 ./... -timeout 10m` 全部通过；`bash conformance/run.sh` 输出 `Full platform acceptance passed.`；`openspec validate --all --strict` 通过。
 - 非作者只读审查未发现阻塞项：确认计时器重置、`stderrDone` 单次发送不泄漏、放弃后仅剩那一次在途回调且读端已关闭不再回调、`calls` 读取经 Done 建立先后关系；在临时副本恢复旧 `process.go` 后两项新回归 4/4 失败；Host 仍经 `keepDiagnosticError` 记录 sink 错误一次。其文档措辞（放弃前先关闭读端再等一个 grace）与错误文本中性化建议已采纳。
+
+### 远程 CI（第 2 组，提交 6c39f46）
+
+Conformance run 40520231043：ubuntu-24.04、ubuntu-24.04-arm、macos-15、macos-15-intel、windows-2025 runtime job 与 contracts 全部成功；Documentation run 40520231130 成功。
