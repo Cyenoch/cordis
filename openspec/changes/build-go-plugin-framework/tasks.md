@@ -327,7 +327,7 @@ namespace 回放另发现每次 write/delete 扫描全部 key 的平方级成本
 
 收尾时并行 owner 已创建上述两个 change、尚未补完 delta，全仓 `spec:validate --all --strict` 因这两个在写规划报错；本组单独执行 `openspec validate build-go-plugin-framework --type change --strict` 通过，67/67 任务完成。未为使全仓暂时转绿而修改、跳过或删除并行 change；需由其 owner 完成规划后再验全仓。
 
-## 15. 单源配置、生成与宿主/作者体验（待实施）
+## 15. 单源配置、生成与宿主/作者体验
 
 本组为用户本轮要求新增的实施任务，全部从未完成开始；前文完成勾选、复现调查和其他线程执行结果均不代表本组已验收。仅本组直接修订当前未稳定契约，不提升 package/session/contract 兼容 major，不保留旧字段、旧默认回退、双轨读取或迁移 shim。签名算法与输入布局无需求变化，继续复用；原始结构向量按新契约更新，历史证据不改写。
 
@@ -335,44 +335,44 @@ namespace 回放另发现每次 write/delete 扫描全部 key 的平方级成本
 
 ### 15.A Integrator：公共契约和所有权，其他写集的前置依赖
 
-- [ ] 15.1 对五项规格和 design 15 的公开接口、提交/取消、缺省/null、版本及无兼容策略做非作者审查；把全部问题映射至下表，确定共享 wire 工作与两个消息 change 的串行合并顺序，不另定义预算或响应替换。
-- [ ] 15.2 直接修订 `contract/`、`schema/` 公共模型、机器 schema 和结构向量：移除包级配置、每 definition 唯一配置、配置-only 作者声明、具名类型/本地引用、生成描述及构建指纹；沿用既有 schema 标识，严格拒绝旧未知字段，同步核心调用者，不保留 v1/v2 分派。验证两种定义独立配置、篡改摘要拒绝及原签名算法独立向量。
-- [ ] 15.3 在共享 EncodeData/DecodeData 修复 json.Number 词法/token、安全整数和有限性；验证引号字符串、不安全整数及非有限值拒绝，精确合法小数往返，生成/手写 typed、namespace 和业务测试共用同一规则。
-- [ ] 15.4 定义并同步小能力接口、realm-bound caller、结构化等待/实例清单/逐条 Restore 结果、当前授权撤销和 namespace outcome；同步当前 PluginSession/core 的 activation 发布确认与退役通知、通用控制帧及自定义适配 seam，明确迟到/重复/竞争。更新 codec/向量并检查依赖方向，不引入大 Context、新引擎、兼容 major 或旧载荷 fallback。
+- [x] 15.1 对五项规格和 design 15 的公开接口、提交/取消、缺省/null、版本及无兼容策略做非作者审查；把全部问题映射至下表，确定共享 wire 工作与两个消息 change 的串行合并顺序，不另定义预算或响应替换。
+- [x] 15.2 直接修订 `contract/`、`schema/` 公共模型、机器 schema 和结构向量：移除包级配置、每 definition 唯一配置、配置-only 作者声明、具名类型/本地引用、生成描述及构建指纹；沿用既有 schema 标识，严格拒绝旧未知字段，同步核心调用者，不保留 v1/v2 分派。验证两种定义独立配置、篡改摘要拒绝及原签名算法独立向量。
+- [x] 15.3 在共享 EncodeData/DecodeData 修复 json.Number 词法/token、安全整数和有限性；验证引号字符串、不安全整数及非有限值拒绝，精确合法小数往返，生成/手写 typed、namespace 和业务测试共用同一规则。
+- [x] 15.4 定义并同步小能力接口、realm-bound caller、结构化等待/实例清单/逐条 Restore 结果、当前授权撤销和 namespace outcome；同步当前 PluginSession/core 的 activation 发布确认与退役通知、通用控制帧及自定义适配 seam，明确迟到/重复/竞争。更新 codec/向量并检查依赖方向，不引入大 Context、新引擎、兼容 major 或旧载荷 fallback。
 
 ### 15.B 文件与生成器：`config/`、`schema/`，依赖 15.2–15.4
 
-- [ ] 15.5 实现唯一严格文件 loader 与来源位置映射，审查 TOML/YAML 依赖及许可证；统一显式格式/扩展名、数值精度、输入/深度/集合限额和原生值映射。聚焦回归重复/未知键、非法 UTF-8、尾随文档、YAML alias/merge/tag/非字符串键、TOML 日期/进制、非有限数及 null/非对象根；不轮流试解析或隐式补值。
-- [ ] 15.6 扩展现有 schema compiler/generator，单源生成 Config、严格 codec、typed Start、definition/service/Requirement 描述和包元数据；无服务配置合法，不增加并行 Go tag/反射 schema 路径。用独立 module 验证两配置定义和只注册贡献的插件，无手写重复 schema/Manifest 描述。
-- [ ] 15.7 消除独立生成文件 Caller/Registrar 重定义，支持多输入统一符号检查；普通叶子用内建/共享类型，复用 Optional/Nullable，提供填 tag 的联合构造器。独立编译两个服务同包互调，验证真实碰撞在覆盖前拒绝，缺失/null/零值及根约束保留。
-- [ ] 15.8 生成客户端接受含 Requirement 与本地方法契约引用/指纹的消费者描述，复用实例范围；验证 1.1 客户端、1.1–1.3 消费者与 1.2 provider 成功，超范围、错服务及同名同 major 错方法身份拒绝。身份来自同一规范描述，不强制不同 minor provider 指纹相等，不自动放宽版本或证明语义兼容。
-- [ ] 15.9 从同一受限契约导出标准 JSON Schema 2020-12，转换 nullable/闭合对象/union，并标注不能等价投影的数值、base64、RE2 约束；用独立标准 validator 检查导出和代表性向量，提供 JSON/YAML/Taplo 关联示例，不安装自制编辑器插件。
+- [x] 15.5 实现唯一严格文件 loader 与来源位置映射，审查 TOML/YAML 依赖及许可证；统一显式格式/扩展名、数值精度、输入/深度/集合限额和原生值映射。聚焦回归重复/未知键、非法 UTF-8、尾随文档、YAML alias/merge/tag/非字符串键、TOML 日期/进制、非有限数及 null/非对象根；不轮流试解析或隐式补值。
+- [x] 15.6 扩展现有 schema compiler/generator，单源生成 Config、严格 codec、typed Start、definition/service/Requirement 描述和包元数据；无服务配置合法，不增加并行 Go tag/反射 schema 路径。用独立 module 验证两配置定义和只注册贡献的插件，无手写重复 schema/Manifest 描述。
+- [x] 15.7 消除独立生成文件 Caller/Registrar 重定义，支持多输入统一符号检查；普通叶子用内建/共享类型，复用 Optional/Nullable，提供填 tag 的联合构造器。独立编译两个服务同包互调，验证真实碰撞在覆盖前拒绝，缺失/null/零值及根约束保留。
+- [x] 15.8 生成客户端接受含 Requirement 与本地方法契约引用/指纹的消费者描述，复用实例范围；验证 1.1 客户端、1.1–1.3 消费者与 1.2 provider 成功，超范围、错服务及同名同 major 错方法身份拒绝。身份来自同一规范描述，不强制不同 minor provider 指纹相等，不自动放宽版本或证明语义兼容。
+- [x] 15.9 从同一受限契约导出标准 JSON Schema 2020-12，转换 nullable/闭合对象/union，并标注不能等价投影的数值、base64、RE2 约束；用独立标准 validator 检查导出和代表性向量，提供 JSON/YAML/Taplo 关联示例，不安装自制编辑器插件。
 
 ### 15.C Host/core：根 Host 与 `internal/core/`，依赖 15.2–15.4
 
-- [ ] 15.10 在统一预检边界按 definition 校验 Enable/Update/Replace/child 的配置；规范省略为 `{}`、保留 null，空对象必须满足完整根契约。验证 builtin/native/WASM 一致、必填/非对象根省略拒绝、多定义错配及非法更新/替换在 durable commit 与旧激活退役前失败；业务初始化失败仍遵守独立恢复语义。
-- [ ] 15.11 将 Resume、Replace、Stop/Disable/Close 等的意图提交与完成等待分离，复用条目/树预留及登记代次；在 race/可控调度下验证等待者不阻塞 provider/无关登记、同条目冲突、Close 取消、迟到结果和旧新不同时发布，不另建全局管理队列。
-- [ ] 15.12 提供当前实例查询与只读清单，结构化依赖诊断含 minor 范围、可见 provider 与失败原因；验证 Restore/Replace 后可继续管理，旧句柄明确失效、不泄露不可见 realm 内容，包 Range 错误显示实际约束。
-- [ ] 15.13 实现逐条可重复 Restore，匹配已有登记身份/realm/parent/definition/PackageRef，只补缺失，不自动 Retry Failed 或撤销本次临时 Stop；验证部分失败修复后续跑、无关树继续、父失败子等待、目标冲突不覆盖。
-- [ ] 15.14 明确 Stop/Resume 的临时状态、Disable 的 durable enabled 与 Remove 的记录语义，状态和返回结果一致；验证本进程重复 Restore 与真正重开宿主的不同结果、等待取消不回滚已提交意图、提交后错误仍同步内存。
-- [ ] 15.15 统一 builtin 与 SDK 的 startup/activation context，提供显式并发的受管工作和资源接管 seam；验证最终发布拒绝时工作从未运行、重复/迟到 publish 不复活、通知失败可见、消费者清理前 retire 已通知取消、常驻工作不占服务执行位、自身清理先等工作退出、登记失败关闭资源。覆盖真实外部与自定义 Session 适配，不假报强杀不合作 Go。
+- [x] 15.10 在统一预检边界按 definition 校验 Enable/Update/Replace/child 的配置；规范省略为 `{}`、保留 null，空对象必须满足完整根契约。验证 builtin/native/WASM 一致、必填/非对象根省略拒绝、多定义错配及非法更新/替换在 durable commit 与旧激活退役前失败；业务初始化失败仍遵守独立恢复语义。
+- [x] 15.11 将 Resume、Replace、Stop/Disable/Close 等的意图提交与完成等待分离，复用条目/树预留及登记代次；在 race/可控调度下验证等待者不阻塞 provider/无关登记、同条目冲突、Close 取消、迟到结果和旧新不同时发布，不另建全局管理队列。
+- [x] 15.12 提供当前实例查询与只读清单，结构化依赖诊断含 minor 范围、可见 provider 与失败原因；验证 Restore/Replace 后可继续管理，旧句柄明确失效、不泄露不可见 realm 内容，包 Range 错误显示实际约束。
+- [x] 15.13 实现逐条可重复 Restore，匹配已有登记身份/realm/parent/definition/PackageRef，只补缺失，不自动 Retry Failed 或撤销本次临时 Stop；验证部分失败修复后续跑、无关树继续、父失败子等待、目标冲突不覆盖。
+- [x] 15.14 明确 Stop/Resume 的临时状态、Disable 的 durable enabled 与 Remove 的记录语义，状态和返回结果一致；验证本进程重复 Restore 与真正重开宿主的不同结果、等待取消不回滚已提交意图、提交后错误仍同步内存。
+- [x] 15.15 统一 builtin 与 SDK 的 startup/activation context，提供显式并发的受管工作和资源接管 seam；验证暂停 publish 确认时 Active/applied/等待者不得提前成功、最终发布拒绝时工作从未运行、重复/迟到 publish 不复活、通知失败可见、消费者清理前 retire 已通知取消、常驻工作不占服务执行位、自身清理先等工作退出、登记失败关闭资源。覆盖真实外部与自定义 Session 适配，不假报强杀不合作 Go。
 
 ### 15.D SDK/access/runtime：契约完成后可按不重叠文件集推进
 
-- [ ] 15.16 在 `sdk/` 复用逐项 panic 安全 LIFO 清理、一次关闭与聚合错误；提供标准进程入口和能力 helper，删除示例具体 Client 断言。验证初始化失败/取消、cleanup panic 后其他资源仍释放、信号/退出与 stdout 纯协议，保留可返回错误的 Serve。
-- [ ] 15.17 在 `access/` 增加受信任 owner + capability 当前授权撤销、所有终态任务显式释放；验证在途取消/其他 grant 不受影响、旧 activation 拒绝、普通任务反复创建超过旧保留限额、活跃不可删、旧句柄和 token 防重放不变，不隐式淘汰。
-- [ ] 15.18 在 `access/` 和 SDK 能力 helper 实现标准 typed broker/contribution 与 namespace CRUD/bytes 客户端；有效应答的 missing/denied/quota/未提交/committed/recovery 保真，可控复现提交后应答前取消、撤权、断链，客户端均返回 submission-unknown 并保留原原因、拒绝迟到结果和自动重试。验证受信任 owner、显式迁移/删除；与 15.16 SDK 写集由 Integrator 切分。
-- [ ] 15.19 在根 Host 接入显式可委托的默认 guest dispatcher，保留完整替换；验证自定义一个方法时能力/任务/子实例仍可用、业务错误不 fallback/不执行两次，宿主自有 ABI 不出现双 envelope。
-- [ ] 15.20 复用 `access.Sink` 接通 Host 与 Runtime 本地 cause/stage、opt-in 限额脱敏 stderr 和可观察 Sink 失败；验证默认秘密不回显、原错误与回调失败均可查、异步失败有界不递归，不改两个消息 change 的 wire 失败策略。
-- [ ] 15.21 提供公开轻量业务测试 harness，复用真实 definition/codec/生命周期，覆盖配置/服务/host-call/cleanup，无 internal、net.Pipe 或手写 initialize；明确测试 port 与真实授权、wire、native/WASI 的验证边界，不用 harness 替换既有协议回归。
+- [x] 15.16 在 `sdk/` 复用逐项 panic 安全 LIFO 清理、一次关闭与聚合错误；提供标准进程入口和能力 helper，删除示例具体 Client 断言。验证初始化失败/取消、cleanup panic 后其他资源仍释放、信号/退出与 stdout 纯协议，保留可返回错误的 Serve。
+- [x] 15.17 在 `access/` 增加受信任 owner + capability 当前授权撤销、所有终态任务显式释放；验证在途取消/其他 grant 不受影响、旧 activation 拒绝、普通任务反复创建超过旧保留限额、活跃不可删、旧句柄和 token 防重放不变，不隐式淘汰。
+- [x] 15.18 在 `access/` 和 SDK 能力 helper 实现标准 typed broker/contribution 与 namespace CRUD/bytes 客户端；有效应答的 missing/denied/quota/未提交/committed/recovery 保真，可控复现提交后应答前取消、撤权、断链，客户端均返回 submission-unknown 并保留原原因、拒绝迟到结果和自动重试。验证受信任 owner、显式迁移/删除；与 15.16 SDK 写集由 Integrator 切分。
+- [x] 15.19 在根 Host 接入显式可委托的默认 guest dispatcher，保留完整替换；验证自定义一个方法时能力/任务/子实例仍可用、业务错误不 fallback/不执行两次，宿主自有 ABI 不出现双 envelope。
+- [x] 15.20 复用 `access.Sink` 接通 Host 与 Runtime 本地 cause/stage、opt-in 限额脱敏 stderr 和可观察 Sink 失败；验证默认秘密不回显、原错误与回调失败均可查、异步失败有界不递归，不改两个消息 change 的 wire 失败策略。
+- [x] 15.21 提供公开轻量业务测试 harness，复用真实 definition/codec/生命周期，覆盖配置/服务/host-call/cleanup，无 internal、net.Pipe 或手写 initialize；明确测试 port 与真实授权、wire、native/WASI 的验证边界，不用 harness 替换既有协议回归。
 
 ### 15.E Package/CLI 与公开交付：依赖 15.B–15.D，相同文件不并行写
 
-- [ ] 15.22 `packagehost/` 复用现有 staging 接受三种作者包源及契约引用，生成显式机器 plugin.json 后计算完整性，原源文件不修改；检查候选歧义、默认/空列表、单份发行版本、provider 简写、consumer 显式范围、初始/已迁移 dataVersion，拒绝 float/patch 服务版本及旧字段 fallback。
-- [ ] 15.23 CLI 提供薄 `init/build` 闭环及机器构建描述，复用同一声明图生成/构建并记录实际 SDK 能力、目标及产物 hash；pack 检查声明漂移/旧生成代码/不匹配产物，外部构建须显式描述，不能执行插件探测或以 CLI 版本替代 SDK 能力。
-- [ ] 15.24 CLI 统一 help/version/退出码，增加原子格式化 `generate -output`、config/input 文件与唯一 stdin、默认有限且可配置的 startup timeout 和 stderr 等待诊断。实际子进程验证 help 成功、非法参数失败、旧文件不被失败生成/写入损坏、默认缺 provider 有限退出、取消及时、不混 stdout，不隐式授予 dev/native 信任。
-- [ ] 15.25 同步独立作者/宿主 module、Native/WASM 示例及完整教程，默认 TOML 并说明 YAML/null、JSON/工具路径；展示无需具体 Client 断言、realm 手工适配、重复版本/Manifest 或协议测试样板。保留人工代码基线与并行 docs 增量，未提交的实现不提前伪造 codeCommit。
-- [ ] 15.26 由非作者审查新公开契约、配置/生成/提交与生命周期安全，运行聚焦回归、独立标准 schema/签名向量、race/integration、通用 conformance、vet/mod 验证及 OpenSpec strict；按真实运行平台记录结果，其他 OS/Arch 与远端 CI 未运行明确说明。与两个消息 change 联合验收时分别报告，不重复勾选或借历史通过替代。
+- [x] 15.22 `packagehost/` 复用现有 staging 接受三种作者包源及契约引用，生成显式机器 plugin.json 后计算完整性，原源文件不修改；检查候选歧义、默认/空列表、单份发行版本、provider 简写、consumer 显式范围、初始/已迁移 dataVersion，拒绝 float/patch 服务版本及旧字段 fallback。
+- [x] 15.23 CLI 提供薄 `init/build` 闭环及机器构建描述，复用同一声明图生成/构建并记录实际 SDK 能力、目标及产物 hash；pack 检查声明漂移/旧生成代码/不匹配产物，外部构建须显式描述，不能执行插件探测或以 CLI 版本替代 SDK 能力。
+- [x] 15.24 CLI 统一 help/version/退出码，增加原子格式化 `generate -output`、config/input 文件与唯一 stdin、默认有限且可配置的 startup timeout 和 stderr 等待诊断。实际子进程验证 help 成功、非法参数失败、旧文件不被失败生成/写入损坏、默认缺 provider 有限退出、取消及时、不混 stdout，不隐式授予 dev/native 信任。
+- [x] 15.25 同步独立作者/宿主 module、Native/WASM 示例及完整教程，默认 TOML 并说明 YAML/null、JSON/工具路径；展示无需具体 Client 断言、realm 手工适配、重复版本/Manifest 或协议测试样板。保留人工代码基线与并行 docs 增量，未提交的实现不提前伪造 codeCommit。
+- [x] 15.26 由非作者审查新公开契约、配置/生成/提交与生命周期安全，运行聚焦回归、独立标准 schema/签名向量、race/integration、通用 conformance、vet/mod 验证及 OpenSpec strict；按真实运行平台记录结果，其他 OS/Arch 与远端 CI 未运行明确说明。与两个消息 change 联合验收时分别报告，不重复勾选或借历史通过替代。
 
 ### 问题与验收归属
 
@@ -406,3 +406,41 @@ namespace 回放另发现每次 write/delete 扫描全部 key 的平方级成本
 实际执行 `bun run spec:validate`：三个 change 严格校验均通过（3 passed / 0 failed）；`git diff --check -- openspec/changes/build-go-plugin-framework` 通过。另检查本 change 的 91 个 requirement 名称唯一、描述长度及 135 个场景 WHEN/THEN 结构、26 项新任务编号/未完成状态和本地规划链接均有效。两个并行 change 的 MODIFIED delta 仍有 archive 提示：须先将本 change 的 capability 建立为主规格，再应用其增量；本轮不自动同步或归档。
 
 本轮未运行实现测试、conformance、性能、其他平台或新的部署；这些属于待实施任务，不借此前复现、历史通过或其他线程结果代替。
+
+### 第 15 组实施记录（2026-10-27，持续更新）
+
+- 15.1 非作者审查发现 1 项 P2：本地发布提交与远端确认的完成门槛不明确；已同步 composition scenario、design 15.6 和 15.15，要求确认后才 Active/applied/完成等待者。归属 15.4、15.11、15.15、15.26。其余公开边界未发现新增规划缺陷，不代表实现已验收。
+- 共享写集合并顺序：消息 owner 完成 wire 隔离、预算及 Host/SDK/runtime 接缝后交接；Integrator 增量接 publish/retire，不重定义预算。config、schema、core、SDK、access、package 与 CLI 各在隔离 worktree；公共模型/schema/OpenSpec 由 Integrator 统一。
+- 15.3 `contract` 数值 codec 已对 json.Number 词法、数字 token、有限性、安全整数及精确小数加入聚焦回归；包含 encoding/json 将空 Number 隐式变为 0 的输入检查。实际 Darwin/arm64：`go test -race ./contract ./access` 通过。
+- 15.17 独立 worktree 实现及回归经 Integrator 读 diff 合入：受信 owner+capability 撤权、所有终态 task 释放、旧句柄和 token 防重放。实际 Darwin/arm64：`go test -race ./contract ./access` 通过。尚未代表全仓或其他平台验收。
+
+
+### 第 15 组整合验收（2026-10-27，当前源码）
+
+本节只记录本轮实现及实际执行，不改写第 1–14 组历史。直接修订 current v1；未加入 v2、旧字段别名、缺字段兼容默认或双轨 codec，签名域和输入布局未变。独立 worktree 交付已按最新磁盘内容增量合入；共享预算和响应隔离分别归其两个 change。
+
+- 15.2–15.4：definition 唯一配置契约、Consumer 方法身份、显式 cleanup 分类、Publish/Retire 和窄能力接口同步到 API、codec、schema 及向量。`TestDefinitionSchemasRemainCoveredByPackageIntegrity` 对两个 definition 分别篡改配置 schema，Snapshot 均拒绝；独立固定 Ed25519 向量仍由 Go 实现签验，不用 Python hash 代替。
+- 15.5–15.9：严格 TOML/YAML/JSON、精确数字与来源位置、单源 typed Config/Start/描述和可组合生成、显式 consumer 范围及标准编辑器 schema 已实现。非作者发现的引用放大、空 Number→0、CLI 分次指纹冲突、合法 TOML 隐式父表已修；回归包括跨 definition 共享展开预算和 CLI 两次 generate 后独立 module 编译。参考 `config/*_test.go`、`schema/references_test.go`、`schema/generate_integration_test.go`、`cmd/cordis/cli_integration_test.go`。
+- 15.10–15.15：共同预检、管理提交/等待、结构化状态、Restore、Stop/Disable/Remove 与发布/退役已整合。非作者发现 cascade 未锁目标树、Update 等待锁住后续配置/Stop、取消 Close 提交、Disable 丢 CommitError、持久停用可 Resume 均修复；`management_test.go`、`cascade_test.go` 覆盖可控清理与更新竞争、真实提交后 journal 清理失败。正常 managed cancellation 不当成失败，真实 custom PluginSession 验证 ack 前 Starting/applied=0、无关操作可继续、retire 先于 consumer cleanup，typed cleanup 不包第二层 generic envelope。
+- 15.16–15.21：标准 Main/Run、每项 panic-safe LIFO、受管工作、typed host/contribution/namespace、终态任务释放、显式 dispatcher、Sink 及公开 harness 已合入。`TestExternalDefinitionPreflightAndManagedLifecycle` 构建并实际执行独立 Native/WASI：两 definition 配置错配/省略/null/无效 child、Update 和 Replace 都在持久提交及旧激活退役前拒绝；常驻工作不占业务位，正常退役等工作退出后清理；真实 stderr 经过 redactor，回调失败进入可查本地状态。默认秘密保护另由 Sink 回归覆盖。custom dispatcher 回归同时保留能力、任务和 child，业务失败仅执行一次。
+- 15.22–15.25：单一作者源、机器构建描述、实际 SDK 能力与产物 hash、薄 CLI init/build、原子 generate、多格式文件/stdin/有限启动、单源 counter/chain 及两种 runtime 教程已合入。自动 Go overlay 构建证明明确拒绝，外部流水线必须提供真实描述；失败不改原生成文件或 build.json。`examples/pluginmeta` 从相同 TOML 生成插件源码与宿主元数据，删除手抄版本/依赖和全零方法身份，重生成一致；docs API/作者/宿主/入门/生成/包/CLI 逐组更新。
+
+实际平台 darwin/arm64，Go 1.27.3：
+
+1. `bash conformance/run.sh` 于 2026-10-27T11:06:51Z–11:08:22Z 完整 exit 0，日志 `/tmp/cordis-dx-final-conformance.log`。全仓 integration/race、独立 Native/WASI 构建、签名双实例 basic-host、两条 lifecycle-smoke 均通过（各 19 项断言），包含新的真实外部 DX 回归。此前中断的预算 owner 执行不算本轮通过。
+2. `go test -race . ./internal/core ./sdk -count=3 -timeout=2m`、config/schema/root 定向 race、custom/cascade/取消/配置更新定向 race 重复 3 次通过；配置/生成/包/CLI/教程组合 integration/race 通过。日志 `/tmp/cordis-dx-lifecycle-repeat.log`、`/tmp/cordis-dx-review-fixes.log`、`/tmp/cordis-dx-host-review.log`。
+3. `CORDIS_SCHEMA_STANDARD_VALIDATOR=1 go test -race ./schema -run TestExportIndependentValidator -v -count=1` 使用临时 Python jsonschema 环境，5 个导出 schema、25 个数据向量、作者声明 schema/向量通过。`python conformance/validate-schemas.py` 的 4 metaschema/70 structural/1 signing bytes+SHA256 通过；其中明确未执行的 code vectors/Ed25519 由完整 Go conformance 覆盖，不能混称 Python 已验证。
+4. `go mod verify`、`go vet ./...`、`git diff --check` 通过；`bun run docs:test` 6/6、`bun run docs:build` 24 页/89 文件链接和锚点、`bun run spec:validate` 4 passed/0 failed 通过。两消息 delta 的主 spec 缺失 archive INFO 保留，不自动归档或同步。
+
+最后非作者整合复核提出的 3 项确定问题已由 Integrator 修复并通过下述最新门禁，15.26 现已完成。真实源码提交后的文档 codeCommit 刷新仍单独记录，不提前伪造 SHA。本轮未实际运行 Windows/Linux 的完整交付树或远端 CI；独立 Windows stdin change 的既有消费者证据不冒充本组全平台认证。用户已明确授权 Integrator 在全部完成后提交推送；文档基线只能指向实际包含新 API 的提交。
+
+
+### 最终非作者复核修复及再次验收
+
+最终 DX 复核复现 3 项：Restore 绕过 package/tree 预留会在替换等待期间启动旧代码；counter/chain 虽生成 execute 契约却仍注册手写原载荷协议；counter 使用 Atoi 拒绝 schema 合法的 `10.0` / `1e1`。Integrator 已直接修复：Restore 对缺失条目复用同一准入检查并逐条报告 conflict；示例仅注册生成 server、内部使用生成 client 和显式 consumer，移除重复 Request/Response，宿主/SDK/CLI/测量与 cleanup 观察载荷同步为 execute envelope，不保留原载荷 fallback；integer 按已验证的数学值读取，三种词法形态在真实 harness 中经生成 client 调用成功。
+
+`TestRestoreCannotStartOldPackageDuringReplacement` 控制真实 Host shutdown 等待，确认 Restore 不启动旧代码，释放后 Replace 成功，重复 Restore 使用新 digest；race 重复 3 次通过。counter 独立 module race（含三个 integer 形态）、SDK/WASI、CLI 子进程、三篇教程与快速开始、pluginmeta 的 integration/race 均通过。复核者没有代替 Integrator 修改文件；上述修复及执行不冒称已另获非作者复审通过。
+
+最新冻结实现于 2026-10-27T11:18:22Z–11:19:48Z 再次执行 `bash conformance/run.sh`，完整 exit 0；日志 `/tmp/cordis-dx-final-conformance-r2.log`。这次包含真正单源服务协议、Restore 预留回归、全部 integration/race、basic-host Native/WASI 和各 19 项的两条外部生命周期链，取代上一轮作为最终源码门禁。独立测量 smoke `iterations=1,calls=2` 的 Native/WASM 共 6 个样本通过，日志 `/tmp/cordis-dx-final-measure.log`；不以其数值设性能承诺。
+
+最新 `go vet -tags=integration ./...`、`go mod tidy -diff`（无变化）、`go mod verify`、diff 检查及 docs:test 6/6、docs:build 24 页/89 文件通过。Windows/amd64、Linux/amd64 的 root integration/SDK/CLI 测试二进制仅交叉编译通过，产物在临时目录，不代表本组完整 Windows/Linux 执行。Windows worker 的另一非作者只读复核未发现阻塞发布的生产 bug，已提交的独立修复继续由其 change 保存实际平台和消费者证据。

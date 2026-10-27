@@ -21,10 +21,7 @@ const maxNamespaceRecordBytes = 64 << 20
 
 // RecoveryError means neither rollback nor durable completion could be proven.
 // This store refuses subsequent work; reopening validates the on-disk records.
-type RecoveryError struct{ Cause error }
-
-func (e *RecoveryError) Error() string { return "namespace requires recovery: " + e.Cause.Error() }
-func (e *RecoveryError) Unwrap() error { return e.Cause }
+type RecoveryError = contract.NamespaceRecoveryError
 
 type namespaceRecord struct {
 	Sequence  uint64            `json:"sequence"`
@@ -47,7 +44,7 @@ func (s *NamespaceStore) appendLog(record namespaceRecord) error {
 		return nil
 	}
 	if s.failure != nil {
-		return fmt.Errorf("namespace log needs recovery: %w", s.failure)
+		return &RecoveryError{Cause: s.failure}
 	}
 	record.Sequence = s.sequence + 1
 	raw, err := json.Marshal(record)

@@ -18,3 +18,12 @@ func TestProtocolSelectsHighestCommonMinorAndRejectsRequiredUnknownFeatures(t *t
 		}
 	}
 }
+
+func TestInvocationRequiresExplicitTrustedCleanupClassification(t *testing.T) {
+	for _, raw := range []string{`{"service":{"name":"x","major":1,"minor":0},"input":{}}`, `{"service":{"name":"x","major":1,"minor":0},"input":{},"cleanup":null}`} {
+		var value contract.Invocation
+		if err := contract.Decode([]byte(raw), &value); err == nil {
+			t.Fatalf("ambiguous cleanup classification accepted: %s", raw)
+		}
+	}
+}

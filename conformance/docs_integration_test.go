@@ -67,7 +67,8 @@ func TestDocumentationTutorials(t *testing.T) {
 				if err := os.Mkdir(filepath.Join(directory, "echo"), 0700); err != nil {
 					t.Fatal(err)
 				}
-				write("echo/api.gen.go", runCommand(t, directory, cli, "generate", "-package", "echo", "echo.schema.json"))
+				write("generate.go", block("go", "generate.go"))
+				runCommand(t, directory, "go", "run", "generate.go")
 			}
 			runCommand(t, directory, "go", "mod", "tidy")
 			output := runCommand(t, directory, "go", "run", "-race", ".")

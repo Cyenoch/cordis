@@ -5,6 +5,10 @@ codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
 codePaths:
   - host.go
   - instance.go
+  - management.go
+  - diagnostics.go
+  - config
+  - plugintest
   - children.go
   - cascade.go
   - service.go
@@ -35,6 +39,8 @@ codePaths:
 | `github.com/Cyenoch/cordis/runtime/native` | 宿主 | 受信任原生进程运行时 |
 | `github.com/Cyenoch/cordis/runtime/wasm` | 宿主 | 独立 WASI worker 运行时 |
 | `github.com/Cyenoch/cordis/schema` | 双方、生成工具 | 受限数据 schema、代码生成、Optional / Nullable 与整数 codec |
+| `github.com/Cyenoch/cordis/config` | 文件入口 | 严格 TOML/YAML/JSON、精确数值与位置映射 |
+| `github.com/Cyenoch/cordis/plugintest` | 插件业务测试 | 真实 definition/codec/lifecycle 和显式业务 port |
 | `github.com/Cyenoch/cordis/wire` | Runtime / 协议适配作者 | 有界 NDJSON Endpoint、Frame、Limits、请求关联 |
 
 ## Host：管理与调用
@@ -46,6 +52,7 @@ codePaths:
 | `Directory` | 宿主管理的持久包目录，不与其他 Host 同时打开 |
 | `Trust` | 可信公钥、publisher 与精确包 ID 授权 |
 | `Runtimes` | 按 `native` / `wasm` 显式启用；未注册的运行形式不可执行 |
+| `FrameBytes` | 通用外部会话必需，4096–1048576；双向完整帧预算，无零值默认 |
 | `Authorize` | 对 Manifest 的能力声明决定授予范围；nil grant 不授权 |
 | `Grace` | 停止及控制调用的宽限期，默认 1 秒 |
 | `DecodePackage` | 可信宿主元数据 decoder，不改变原始签名字节 |
@@ -73,7 +80,7 @@ Install → Select → Enable → Instance.Wait → Call / Emit
 | `Resume(ctx, id)` | 恢复被 Stop 的实例，不重新注册一个同名 entry |
 | `Disable(ctx, id)` | 停用并移除该树；与只停止实例不同 |
 | `Replace(ctx, ref, options)` | 预检后替换所选包并重建目标实例；不回滚业务数据 |
-| `Restore(ctx)` | 在应用重建 realm、builtin 与访问策略后恢复外部启用意图 |
+| `Restore(ctx)` | 返回逐条 RestoreReport 与聚合错误；只补缺失登记，不隐式 Retry 或撤销临时 Stop |
 | `Supervise(ctx, id, budget, delay)` | 有限失败重试；不重放业务请求 |
 | `Close(ctx)` | 停止实例并关闭 Store；超时不代表不合作的 Go callback 已终止 |
 
@@ -93,9 +100,11 @@ Install → Select → Enable → Instance.Wait → Call / Emit
 | `Scope` | 当前身份/配置/取消、资源登记、服务调用与发布、事件订阅与发送 |
 | `Service` / `Requirement` | name + major；provider minor 必须落在 requirement 的闭区间内 |
 | `Instance` | `Status`、`Wait`、`Update`、`Stop`、`Retry` |
-| `Status` | State、Desired、Applied、WaitingFor、Error 与 Diagnostics |
+| `Status` | Enabled、TemporaryStopped、State、Desired、Applied、结构化 Waiting、Error 与 Diagnostics |
 | `Child` / `CreateChild` | 在父初始化期间登记同包子定义，不等待子树启动 |
 | `ChildInstance.Refresh` | 获取新远程状态；`Status` 仅返回快照 |
+
+`Caller/Registrar/HostInvoker/Contributor` 是共用小接口；`Consumer` 绑定完整 Requirement 与方法契约身份。`contract.Go` 只在 Start 登记受管工作，`Own` 在登记资源失败时立即关闭。
 
 Scope 的 `Context()` 表示 activation 生存期，handler 的 `ctx` 表示本次调用。调用其他服务时继续传入当前调用的 ctx；清理时使用 `Defer` 给出的 context，不能用已取消的业务 ctx 代替。
 
@@ -112,7 +121,7 @@ Scope 的 `Context()` 表示 activation 生存期，handler 的 `ctx` 表示本�
 
 ## sdk：外部插件
 
-程序入口选择 `sdk.Serve(ctx, definition)` 或 `sdk.ServeDefinitions(ctx, definitions...)`。单定义需要自有 transport 时使用 `ServeTransport`。stdout 只能用于协议，日志写 stderr。
+程序优先用 `sdk.Main(definitions...)` 统一信号和退出码；需自行返回错误时用 `sdk.Run`。`Serve`、`ServeDefinitions` 和单定义自有 transport 的 `ServeTransport` 保留为低层入口。stdout 只能用于协议，日志写 stderr。
 
 Start 收到的 `*sdk.Client` 实现 Scope 和 ChildScope，另提供：
 
@@ -123,11 +132,11 @@ Start 收到的 `*sdk.Client` 实现 Scope 和 ChildScope，另提供：
 | `BeginTask(ctx, id)` | 建立 activation 任务并生成唯一 token |
 | `CreateChild(ctx, child)` | 返回远程子实例 handle，父发布后才可能启动 |
 
-`sdk.Task` 提供 `Context` 和 `Finish`，没有宿主的 Transfer / Release 权限。任务、贡献和 namespace 接线见[访问实操](access-tutorial.md)。
+`BeginTask` 返回共用 `contract.Task`，提供 `Context`、`Finish` 和所有终态的显式 `Release`；没有宿主 `Transfer` 权限。任务、贡献和 namespace 接线见[访问实操](access-tutorial.md)。
 
 ## packagehost：包与持久状态
 
-打包入口为 `Pack`、`Sign`、`Inspect`；需要已有宿主 Manifest 时使用 `WithDecoder` 版本。Inspect 只校验格式和完整性，不授信。`Discover` 对显式来源集合返回候选及逐项错误，不下载、不自动求解版本、不执行。
+作者入口 `LoadAuthor` 读取唯一 TOML/YAML/JSON 源，`Author.Generate` 生成类型和元数据；`Build` 生成、构建并记录实际 SDK 与产物摘要，`PrepareBuild/WriteBuildDescriptor` 供显式外部流水线。打包入口为 `Pack`、`Sign`、`Inspect`；需要已有宿主 Manifest 时使用 `WithDecoder` 版本。Inspect 只校验格式和完整性，不授信。`Discover` 对显式来源集合返回候选及逐项错误，不下载、不自动求解版本、不执行。
 
 `Open`、`OpenWithLimits`、`OpenWithOptions` 创建 Store。主要方法按用途分组：
 
@@ -147,20 +156,21 @@ Start 收到的 `*sdk.Client` 实现 Scope 和 ChildScope，另提供：
 
 ## access：宿主策略
 
-- `Policy.Activate/Grant/Check/Revoke` 管理当前身份与授权，`Calls` 观察取消但尚未结束的 handler；真实 Host 已接管激活/撤销，不接受 guest 自报身份。
+- `Policy.Activate/Grant/Check/Revoke/RevokeCapability` 管理当前身份与授权，`Calls` 观察取消但尚未结束的 handler；真实 Host 已接管激活/撤销，不接受 guest 自报身份。
 - `Broker.Register/Call` 组合声明范围、grant 范围和输入检查，再调用宿主 handler。
 - `ContributionStore.Register/Stage/Snapshot`、`Batch.Commit/Abort` 管理整批发布；连接 Host 时服从 activation gate。
-- `TaskManager.Create/Finish/Snapshot` 与可信 `Task.Start/Transfer/Finish/Release` 管理取消权和有界结果，不持久化业务事务。
+- `TaskManager.Create/Finish/Release/Snapshot` 与可信 `Task.Start/Transfer/Finish/Release` 管理取消权和有界结果，不持久化业务事务。
 - `NewNamespaceStore` 明确使用内存；`OpenNamespaceStore` 使用持久日志。`Configure/Read/Write/Delete/Migrate/DeleteNamespace/Compact` 由宿主调用。
+- `access.Register[I,O]` 复用同一 broker；`RegisterNamespace` 绑定可信 package namespace，SDK 的 `NewNamespaceClient` 保留确定 outcome 和 submission-unknown，不自动重试。
 - `Sink.Emit/PublicError` 将宿主诊断与 guest 可见错误分开；默认不复制原始错误、载荷或路径。
 
 ## Runtime、schema 与 wire
 
 `native.New(Options)` 和 `wasm.New(absoluteWorkerPath, Options)` 都实现 `contract.Runtime.Start(ctx, Launch)`，返回 `contract.Session`。Start ctx 只约束启动；使用 Options.Lifetime 管理会话父生存期。运行时限制、环境白名单和缓存见[运行时参考](runtimes.md)。自定义 Runtime 必须保持会话取消、停止与回收契约。
 
-`schema.Parse/Generate` 处理服务声明；`Compile` 返回可并发复用的不可变 schema，`Validate` 校验数据。`FieldError` 提供 JSON Pointer、Keyword 与 Message。可选值用 `Optional` / `Some`，可空值用 `Nullable` / `NonNull`，64 位整数用 `Int64` / `Uint64` 字符串 codec。见[生成实操](generated-service.md)。
+`schema.Parse/Generate/GenerateMany` 处理单源配置、服务和 definition 声明；`Specs/Fingerprint` 提供确定描述，`Export` 输出编辑器用标准 JSON Schema 2020-12；`Compile` 返回可并发复用的不可变 schema，`Validate` 校验数据。`FieldError` 提供 JSON Pointer、Keyword 与 Message。可选值用 `Optional` / `Some`，可空值用 `Nullable` / `NonNull`，64 位整数用 `Int64` / `Uint64` 字符串 codec。见[生成实操](generated-service.md)。
 
-`wire.New(Options)` 返回 Endpoint，提供 `Call`、`Done`、`Err`、`Close`。`DefaultLimits` 为每帧 1 MiB、64 个在途、默认 30 秒、取消宽限 1 秒。Endpoint 不负责领域授权。已有宿主协议通过 SessionFactory / PluginSession 适配，不要求外部插件作者手写 Frame；详见[协议](protocol.md)。
+`wire.New(Options)` 返回 Endpoint，提供 `Call`、`Done`、`Err`、`Close`。Host 必须显式提供 `Options.FrameBytes`，Guest 从必需 initialize 绑定；`DefaultLimits` 仅含 64 个在途、默认 30 秒、取消宽限 1 秒，不含帧默认值。Endpoint 不负责领域授权。已有宿主协议通过 SessionFactory / PluginSession 适配，不要求外部插件作者手写 Frame；详见[协议](protocol.md)。
 
 ## 错误与本地查询
 

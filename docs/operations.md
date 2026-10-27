@@ -93,7 +93,7 @@ Store 的 catalog、内容、证明和运行记录不是可任意拆开的备份
 1. 保留原目录和诊断，不手工把 catalog.next 改名，不删除异常日志尾部掩盖错误。
 2. 用当前信任配置 Open；Store 校验唯一已提交根，遗留 running 变为 interrupted，不假报旧进程仍在工作。
 3. 重建应用 realm、builtin、Broker、validator 与其他访问设施，再 Restore 外部 entry。
-4. 检查启用意图、实际 State、WaitingFor 和健康请求；业务任务从宿主自己的 journal 恢复，不从 runs.json 猜测已完成。
+4. 检查启用意图、实际 State、Waiting 和健康请求；业务任务从宿主自己的 journal 恢复，不从 runs.json 猜测已完成。
 
 Open 失败时按[恢复指南](recovery.md)处理，从可信包或一致备份显式恢复；不退回空 Store 或内存 namespace 假装启动成功。升级过持久格式后，旧二进制可能拒绝新字段，不能直接降级打开。
 

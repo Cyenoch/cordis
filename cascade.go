@@ -95,7 +95,7 @@ func (h *Host) optionsAfterCascade(plan CascadePlan) (packagehost.ChangeOptions,
 		if _, builtin := h.builtins[id]; builtin {
 			continue
 		}
-		if state := instance.Status().State; state != contract.Stopped && state != contract.Failed {
+		if state := instance.(*hostInstance).Instance.Status().State; state != contract.Stopped && state != contract.Failed {
 			options.InUse = append(options.InUse, h.packages[id])
 		}
 	}
@@ -157,6 +157,11 @@ func (h *Host) ReplaceCascade(ctx context.Context, ref contract.PackageRef, opti
 	if err != nil {
 		return err
 	}
+	release, err := h.reservePlan(plan)
+	if err != nil {
+		return err
+	}
+	defer release()
 	actual, err := h.optionsAfterCascade(plan)
 	if err != nil {
 		return err
@@ -195,6 +200,11 @@ func (h *Host) UninstallCascade(ctx context.Context, ref contract.PackageRef, de
 	if err != nil {
 		return packagehost.Removal{}, err
 	}
+	release, err := h.reservePlan(plan)
+	if err != nil {
+		return packagehost.Removal{}, err
+	}
+	defer release()
 	actual, err := h.optionsAfterCascade(plan)
 	if err != nil {
 		return packagehost.Removal{}, err

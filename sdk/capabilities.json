@@ -1,0 +1,1 @@
+{"schema":"cordis-go.sdk/v1","protocol":{"major":1,"minMinor":0,"maxMinor":0},"features":["cancel","parent","tasks","events","children"]}

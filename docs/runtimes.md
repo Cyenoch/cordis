@@ -36,9 +36,9 @@ session, err := wasmRuntime.Start(startContext, launch)
 - 返回的 `Session` 独占激活。宿主调用 `Close`，或者 endpoint 协议失败/退出、Lifetime 取消、stderr 超额，都会关闭管道并终止进程树。`Done` 在 wait/reap、stderr 和管道清理、工作目录删除尝试结束后关闭；清理失败保留在 `Err`，不能把 Done 当作删除成功。
 - `Close` 可并发、可重复，等待同一结果。启动 stdio 关闭后独立推进终止，避免 Windows 同步 pipe Read 阻塞 Close 而阻止 kill。Unix 向专用进程组发送 SIGTERM，Windows 以关闭输入为协作停止信号；宽限期后强杀并回收。Windows 等待 Job 的 ActiveProcesses 归零，再关闭 Job；执行映像延迟释放时仅对 ACCESS_DENIED/SHARING_VIOLATION 重试删除至多两秒，仍失败则报告。内核不可中断 I/O 不保证绝对墙钟期限。
 - 默认 grace 是 1 秒，最大 30 秒；`Launch.Grace` 非零时覆盖 Options。正常显式停止引起的进程退出信号不算插件崩溃；协议错误、非主动退出及清理错误保留在 `Session.Err`。
-- Runtime **不发送 initialize**。Facade 在 Start 后完成协议协商。`Launch.OpenSession` 非空时接收原始双工 transport，用于宿主专有 ABI；否则构造通用 `wire.Endpoint`。专有 session 的 Close 必须及时返回，宿主 handler 必须响应自己的 ctx；这里不假称能够杀死任意宿主 Go goroutine。通用 wire 的 `Wait` 会等待 host handler，不属于外部进程 reap 的完成条件。
+- Runtime **不发送 initialize**。Facade 在 Start 后完成协议协商。`Launch.SessionFactory` 明确描述 generic/custom；nil 选择通用 wire，非 nil 的 Open 接收原始 transport、身份、handler 和帧预算。启动前完成描述符及通用预算校验，自有 ABI 不被注入额外 envelope。专有 session 的 Close 必须及时返回，宿主 handler 必须响应自己的 ctx；这里不假称能够杀死任意宿主 Go goroutine。通用 wire 的 `Wait` 会等待 host handler，不属于外部进程 reap 的完成条件。
 
-专有构造器返回实现 `contract.PluginSession` 的 session 时，受管进程 wrapper 保留 typed Initialize/Invoke/Deliver/Shutdown。Facade 的 `Options.SessionFactory` 根据已验证 Manifest 选择构造器，`Options.HandleGuest` 仍在正常 Scope 和 policy 边界后执行，不能以自定义 envelope 绕过授权。专有协议的行为验收由宿主维护。
+专有构造器返回实现 `contract.PluginSession` 的 session 时，受管进程 wrapper 保留 typed Initialize/Publish/Retire/Invoke/Deliver/Shutdown。Facade 的 `Options.SessionFactory` 根据已验证 Manifest 选择构造器，`Options.HandleGuest` 仍在正常 Scope 和 policy 边界后执行，不能以自定义 envelope 绕过授权。专有协议的行为验收由宿主维护。
 
 ## Native：信任而不是权限沙箱
 
@@ -61,7 +61,7 @@ GOOS=wasip1 GOARCH=wasm go build -o plugin.wasm ./your-plugin
 
 wazero 固定 {{docs.wazeroVersion}}，启用 `WithCloseOnContextDone(true)`。默认模块文件最大 64 MiB、每实例线性内存最多 4096 pages（256 MiB），编译与到首次读取会话 stdin 的启动阶段各 30 秒。编译的进程内硬 watchdog 覆盖编译器不及时响应 ctx 的情况。启动达到首次 stdin 读取之后，command 是持续运行的消息泵，而不是把整个激活生存期误当成一次有期限的调用。
 
-初始化/业务调用的 deadline、最多在途数和帧大小由 `Options.Limits` 传给 wire；默认 30 秒 / 64 / 1 MiB。忽略取消且宽限期内无有效响应会关闭 endpoint；Runtime 接到 Done 后终止独立 worker。CPU 无限循环和阻塞 stdin 都不依赖 guest 合作：worker 关闭 stdio 解除 WASI host I/O，外层强杀兜底。专用 OpenSession 须自行提供同等调用限制。
+初始化/业务调用的 deadline 和最多在途数由 Runtime 的 `Options.Limits` 传给 wire，默认 30 秒 / 64。帧大小不再位于 Limits：Host 使用显式 `Options.FrameBytes`，直接 Runtime 使用 `Launch.FrameBytes`，范围为 4096–1048576，零值不补默认。SDK 在 Start 前应用预算并在 Registration 原值确认；详见[协议参考](protocol.md#帧预算与失败范围)。忽略取消且宽限期内无有效响应会关闭 endpoint；Runtime 接到 Done 后终止独立 worker。CPU 无限循环和阻塞 stdin 都不依赖 guest 合作。自有 SessionFactory 需明确标为 custom 并自行负责调用限制，不注入通用协议。
 
 不 preopen 任何目录，不配置 FS、不向 guest 传入环境、不暴露任意 host module；只实例化 WASI，拒绝非 WASI import、imported memory 和 `sock_*` import。标准 WASI 文件调用没有预开放文件描述符，因此不能读取宿主任意路径。时钟和随机数显式提供；guest 的参数仅为固定程序名，不含宿主模块路径。worker 诊断不输出 guest 堆栈、源码或模块内容。
 

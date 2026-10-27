@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/Cyenoch/cordis/access"
 	"github.com/Cyenoch/cordis/contract"
 )
 
@@ -18,6 +19,73 @@ type hostScope struct {
 	contract.Scope
 	host  *Host
 	realm string
+}
+
+func (s *hostScope) Go(work func(context.Context) error) error {
+	return contract.Go(s.Scope, work)
+}
+
+func (s *hostScope) OnPublish(hook func(context.Context) error) error {
+	return s.Scope.(contract.ActivationScope).OnPublish(hook)
+}
+
+func (s *hostScope) OnRetire(hook func(context.Context) error) error {
+	return s.Scope.(contract.ActivationScope).OnRetire(hook)
+}
+
+func (s *hostScope) InvokeHost(ctx context.Context, capability string, input json.RawMessage) (json.RawMessage, error) {
+	return s.host.broker.Call(ctx, s.Identity(), capability, input)
+}
+
+type localTask struct{ task *access.Task }
+
+func (t localTask) Context() context.Context { return t.task.Context() }
+func (t localTask) Finish(ctx context.Context, state string, result json.RawMessage, failure contract.Code) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var cause error
+	if failure != "" {
+		cause = contract.Fail(failure, "task failed")
+	}
+	return t.task.Finish(access.TaskState(state), result, cause)
+}
+func (t localTask) Release(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return t.task.Release()
+}
+func (s *hostScope) BeginTask(ctx context.Context, id string) (contract.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	task, err := s.host.tasks.Create(s.Context(), s.Identity(), id, contract.NewID())
+	if err != nil {
+		return nil, err
+	}
+	if err := task.Start(); err != nil {
+		return nil, err
+	}
+	return localTask{task}, nil
+}
+
+func (s *hostScope) Contribute(item contract.Contribution) error {
+	batch, err := s.host.contributions.Stage(s.Context(), s.Identity(), []contract.Contribution{item})
+	if err != nil {
+		return err
+	}
+	if err := batch.Abort(); err != nil {
+		return err
+	}
+	s.host.mu.Lock()
+	defer s.host.mu.Unlock()
+	if s.host.staged == nil {
+		s.host.staged = map[string][]contract.Contribution{}
+	}
+	owner := s.Identity()
+	s.host.staged[owner.Activation] = append(s.host.staged[owner.Activation], item)
+	return nil
 }
 
 // RegisterDefinition makes a builtin definition available to same-package children.
@@ -123,9 +191,9 @@ func (s *hostScope) CreateChild(ctx context.Context, child contract.Child) (cont
 	if definition.Start == nil {
 		return nil, contract.Fail(contract.Invalid, "child definition is not registered")
 	}
-	original := definition.Start
+	original := definition
 	definition.Start = func(ctx context.Context, scope contract.Scope) error {
-		return original(ctx, &hostScope{Scope: scope, host: h, realm: entry.Realm})
+		return h.startBuiltin(ctx, scope, entry.Realm, original)
 	}
 	instance, err := h.engine.AddOwned(entry, definition, contract.Identity{Package: owner.Package, Digest: "builtin"}, owner)
 	if err != nil {

@@ -45,3 +45,12 @@ transport 保持存活足够长，以区分“资源已排空”和“成功发�
 ## 执行证据与边界
 
 集成负责人统一执行单测、集成、race 和真实外部 smoke；实际结果、对应源码修订及目标平台输出见 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)。本文描述测试职责和复现范围，不另外宣称所有最新修改或五目标矩阵已通过。旧修订结果、交叉编译和未执行目标不能提升为当前通过；这些回归也不代表产品 UI、游戏事务或发行认证。
+
+
+## 单源配置与管理边界
+
+`config/*_test.go` 约束严格格式选择、来源映射、精确数字及合法/冲突 TOML 表；`schema/references_test.go` 约束同一声明图的引用展开预算，防止小输入反复复制大描述。生成代码由独立 module 编译并实际编码，包含空 `json.Number` 拒绝、两次 CLI 生成同包、consumer 方法身份与显式 minor 范围。
+
+Host 的管理回归覆盖更新取代旧 revision、Stop 不被更新等待阻塞、cascade 替换预留完整目标树、提交前取消 Close 仍可接纳新操作，以及 Disable 已持久提交后等待取消仍保留 CommitError 且不能被 Resume 撤销。`host_lifecycle_test.go` 的 custom PluginSession 验证发布确认门槛和退役清理映射；`host_dx_integration_test.go` 则真实运行 Native/WASI，约束预检早于持久/退役、managed work 不占业务位且先退出再清理，以及 opt-in stderr 的脱敏与可观察失败。
+
+这些当前测试与执行结果对应 [OpenSpec 第 15 组](../openspec/changes/build-go-plugin-framework/tasks.md)，不能用旧文档中的历史平台记录代替本轮验证。

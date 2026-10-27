@@ -7,6 +7,7 @@ codePaths:
   - host.go
   - children.go
   - instance.go
+  - management.go
   - service.go
   - ownership.go
   - contract
@@ -17,11 +18,11 @@ codePaths:
 
 这个程序创建一个父实例和一个可选子实例。父实例先就绪，子实例等待迟到的服务；服务出现后，子实例可以处理请求。最后停用父实例，观察子实例先释放资源。
 
-示例使用进程内 builtin，便于直接查看生命周期。外部插件使用相同的 Scope 和 Child API，但要用 `sdk.ServeDefinitions` 提供定义，并在 Manifest 中声明它们；每个外部 activation 仍是独立进程。真实外部链见[生命周期验收](lifecycle-acceptance.md)。
+示例使用进程内 builtin，便于直接查看生命周期。外部插件使用相同的 Scope 和 Child API，由作者 TOML 契约生成定义并交给 `sdk.Main`；每个外部 activation 仍是独立进程。真实外部链见[生命周期验收](lifecycle-acceptance.md)。
 
 ## 准备 module
 
-以下实操用绝对 `replace` 指向页尾代码基线所对应的检出，方便与当前源码一起验证。从 Cordis 仓库根执行：
+以下实操用绝对 `replace` 指向包含本轮组合 API 的本地检出，方便与当前源码一起验证。从 Cordis 仓库根执行：
 
 ```sh
 CORDIS_ROOT="$(pwd)"
@@ -194,14 +195,15 @@ func run() (result error) {
     if err := child.Wait(ctx); err != nil {
         return err
     }
-    response, err := host.Call(ctx, "demo", contract.Requirement{
+    caller := host.Realm("demo")
+    response, err := caller.Call(ctx, contract.Requirement{
         Name: doubled.Name, Major: 1,
     }, json.RawMessage(`{"delta":2}`))
     if err != nil {
         return err
     }
     fmt.Println("call:", string(response))
-    events, err := host.Emit(ctx, "demo", question.Name, json.RawMessage(`{"text":"continue?"}`), question.Mode)
+    events, err := caller.Emit(ctx, question.Name, json.RawMessage(`{"text":"continue?"}`), question.Mode)
     if err != nil {
         return err
     }
@@ -233,7 +235,7 @@ cleanup: child-last, child-first, parent
 
 父实例的 `Start` 只登记子实例，没有调用 `child.Wait`。它必须先返回并完成发布，子实例才能启动。父初始化中等待自己的子树会返回 `reentrant_call`，不能用 goroutine 绕过。
 
-`demo` realm 隔离了两个服务 key，子实例继承父 realm。调用使用 `host.Call(ctx, "demo", ...)`；同一个服务要启用多份时，为每份实例创建独立 realm。realm 控制服务解析，不是文件或网络权限。
+`demo` realm 隔离了两个服务 key，子实例继承父 realm。`host.Realm("demo")` 直接实现共用 Caller / Emitter，可交给生成 client，不必手写适配器；同一个服务要启用多份时，为每份实例创建独立 realm。realm 控制服务解析，不是文件或网络权限。
 
 事件采用 `First`：第一个监听者明确返回 `Handled:true`，即使值是 `false` 也会停止。通知所有监听者时改用 `Sequential` 或 `Parallel`；后者最多同时调度八个监听者，同一 activation 的回调仍串行。事件传播范围见[组合参考](composition.md)。
 
@@ -243,6 +245,10 @@ middleware 在下游调用前拒绝负数，也可以检查调用结果。一次
 
 ## 接到外部插件
 
-把两个定义交给 `sdk.ServeDefinitions(ctx, parentDefinition, featureDefinition)`，Manifest 中也声明 `parent`、`feature` 及其 requires/provides。`contract.CreateChild` 不变，外部子实例只能选同包同版本的定义。动态子实例随父 activation 结束，不写成持久启用项；需要重启恢复的独立配置使用宿主持有的 `Entry.Parent`。
+在作者 TOML 契约声明 `parent`、`feature` 及其 requires/provides，由 `cordis build` 生成 `NewParentDefinition`、`NewFeatureDefinition` 和 typed Config；业务入口使用 `sdk.Main(NewParentDefinition(startParent), NewFeatureDefinition(startFeature))`。包版本、服务范围及机器 Manifest 不再手抄进业务 Go，完整构建闭环见[快速开始](getting-started.md)。`contract.CreateChild` 不变，外部子实例只能选同包同版本的定义。动态子实例随父 activation 结束，不写成持久启用项；需要重启恢复的独立配置使用宿主持有的 `Entry.Parent`。
 
 更新或停止子实例时使用返回的 ChildInstance；远程 `Status()` 是上次应答快照，需要新状态时调用 `Refresh(ctx)`。父停止会结束整棵子树，不必自行复制一套子实例清理逻辑。
+
+需要随 activation 运行的后台工作时，在 Start 中用 `contract.Go(scope, work)` 登记；它等最终发布确认后才启动，退役时取消并等待，不是持久任务，也不让未同步的业务状态自动线程安全。普通回调仍保持串行。
+
+重开宿主恢复持久启用项时，`report, err := host.Restore(ctx)` 同时返回逐条报告与可检查的聚合错误；独立条目可继续恢复，失败父节点只阻塞其子树。检查两者，不把部分成功当全部成功；重复 Restore 不重启匹配条目，也不撤销当前宿主里的临时 Stop。

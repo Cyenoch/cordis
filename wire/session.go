@@ -23,6 +23,8 @@ type Options struct {
 	Guest     bool
 	Handler   Handler
 	Limits    Limits
+	// FrameBytes is required for hosts. Guests bind it from initialize.
+	FrameBytes int
 }
 
 type reply struct {
@@ -31,8 +33,9 @@ type reply struct {
 }
 
 type outbound struct {
-	data     []byte
-	shutdown bool
+	data      []byte
+	shutdown  bool
+	committed <-chan struct{}
 }
 type pending struct {
 	ctx       context.Context
@@ -41,8 +44,9 @@ type pending struct {
 	cancelAck chan struct{}
 }
 type incoming struct {
-	cancel context.CancelFunc
-	method string
+	cancel      context.CancelFunc
+	method      string
+	recoverable bool
 }
 type cancellation struct {
 	ctx      context.Context
@@ -52,27 +56,29 @@ type cancellation struct {
 }
 
 type Endpoint struct {
-	mu             sync.Mutex
-	issue          chan struct{}
-	transport      io.ReadWriteCloser
-	handler        Handler
-	limits         Limits
-	guest          bool
-	identity       contract.Identity
-	ready          bool
-	sequence       uint64
-	pending        map[string]*pending
-	incoming       map[string]incoming
-	remoteSequence uint64
-	canceled       map[string]*cancellation
-	cancelOrder    []string
-	out            chan outbound
-	done           chan struct{}
-	err            error
-	closeOnce      sync.Once
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
+	mu               sync.Mutex
+	issue            chan struct{}
+	transport        io.ReadWriteCloser
+	handler          Handler
+	limits           Limits
+	guest            bool
+	identity         contract.Identity
+	ready            bool
+	frameBytes       int
+	initializeIssued bool
+	sequence         uint64
+	pending          map[string]*pending
+	incoming         map[string]incoming
+	remoteSequence   uint64
+	canceled         map[string]*cancellation
+	cancelOrder      []string
+	out              chan outbound
+	done             chan struct{}
+	err              error
+	closeOnce        sync.Once
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
 }
 
 func New(options Options) (*Endpoint, error) {
@@ -81,9 +87,6 @@ func New(options Options) (*Endpoint, error) {
 	}
 	limits := options.Limits
 	defaults := DefaultLimits()
-	if limits.FrameBytes == 0 {
-		limits.FrameBytes = defaults.FrameBytes
-	}
 	if limits.Inflight == 0 {
 		limits.Inflight = defaults.Inflight
 	}
@@ -93,12 +96,24 @@ func New(options Options) (*Endpoint, error) {
 	if limits.Grace == 0 {
 		limits.Grace = defaults.Grace
 	}
-	if limits.FrameBytes < 128 || limits.Inflight < 1 || limits.Deadline <= 0 || limits.Deadline > 120*time.Second || limits.Grace < 0 {
+	if limits.Inflight < 1 || limits.Deadline <= 0 || limits.Deadline > 120*time.Second || limits.Grace < 0 {
 		return nil, contract.Fail(contract.Invalid, "invalid session limits")
+	}
+	if options.Guest {
+		if options.FrameBytes != 0 {
+			return nil, contract.Fail(contract.Invalid, "guest frameBytes is bound by initialize")
+		}
+	} else {
+		if err := contract.ValidateFrameBytes(options.FrameBytes); err != nil {
+			return nil, err
+		}
+		if options.Identity.Activation == "" || len(options.Identity.Activation) > 128 {
+			return nil, contract.Fail(contract.Invalid, "invalid host activation")
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Endpoint{transport: options.Transport, handler: options.Handler, limits: limits, guest: options.Guest,
-		identity: options.Identity, pending: map[string]*pending{}, incoming: map[string]incoming{},
+		identity: options.Identity, frameBytes: options.FrameBytes, pending: map[string]*pending{}, incoming: map[string]incoming{},
 		canceled: map[string]*cancellation{}, cancelOrder: []string{}, issue: make(chan struct{}, 1),
 		out: make(chan outbound, limits.Inflight+4), done: make(chan struct{}), ctx: ctx, cancel: cancel}
 	e.wg.Go(e.readLoop)
@@ -156,6 +171,23 @@ func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessag
 		return nil, err
 	}
 	e.mu.Lock()
+	if e.guest && e.frameBytes == 0 {
+		e.mu.Unlock()
+		<-e.issue
+		return nil, contract.Fail(contract.NotReady, "session budget not initialized")
+	}
+	if method == "initialize" {
+		initialization, err := decodeInitialize(input)
+		if err == nil && (e.guest || e.initializeIssued || initialization.FrameBytes != e.frameBytes || initialization.Identity.Activation != e.identity.Activation) {
+			err = contract.Fail(contract.Invalid, "invalid or repeated initialization")
+		}
+		if err != nil {
+			e.mu.Unlock()
+			<-e.issue
+			return nil, err
+		}
+		e.initializeIssued = true
+	}
 	ref, _ := ctx.Value(requestKey{}).(requestReference)
 	initializing := false
 	if ref.endpoint == e {
@@ -276,17 +308,109 @@ func (e *Endpoint) removePending(id string, canceled bool) bool {
 }
 
 func (e *Endpoint) send(ctx context.Context, frame Frame) error {
-	data, err := encodeFrame(frame, e.limits.FrameBytes)
+	e.mu.Lock()
+	limit := e.frameBytes
+	e.mu.Unlock()
+	data, err := encodeFrame(frame, limit)
 	if err != nil {
 		return err
 	}
+	return e.enqueue(ctx, outbound{data: data, shutdown: e.guest && frame.Kind == "response" && frame.Method == "shutdown" && frame.Error == nil})
+}
+
+func (e *Endpoint) enqueue(ctx context.Context, message outbound) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
-	case e.out <- outbound{data: data, shutdown: e.guest && frame.Kind == "response" && frame.Method == "shutdown" && frame.Error == nil}:
+	case e.out <- message:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-e.done:
 		return e.Err()
+	}
+}
+
+func controlMethod(method string) bool {
+	switch method {
+	case "initialize", "health", "shutdown", "activation.publish", "activation.retire":
+		return true
+	default:
+		return false
+	}
+}
+
+func canceledResponse(ctx context.Context, response Frame) Frame {
+	if ctx.Err() == nil {
+		return response
+	}
+	response.Payload = nil
+	response.Error = &contract.Error{Code: contract.Canceled, Message: "request canceled"}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		response.Error = &contract.Error{Code: contract.Timeout, Message: "request deadline exceeded"}
+	}
+	return response
+}
+
+func (e *Endpoint) sendResponse(ctx, deliveryCtx context.Context, response Frame) error {
+	e.mu.Lock()
+	recoverable := e.incoming[response.ID].recoverable
+	limit := e.frameBytes
+	e.mu.Unlock()
+	initializes := response.Method == "initialize" && response.Error == nil
+	if initializes {
+		if err := decodeRegistration(response.Payload, limit); err != nil {
+			return err
+		}
+	}
+	data, err := encodeFrame(response, limit)
+	if _, oversized := errors.AsType[*frameSizeError](err); oversized && recoverable {
+		response.Payload = nil
+		response.Error = &contract.Error{Code: contract.PluginFailed, Message: "response exceeds frame byte limit"}
+		data, err = encodeFrame(response, limit)
+	}
+	if err != nil {
+		return err
+	}
+	if initializes {
+		committed := make(chan struct{})
+		if err := e.enqueue(deliveryCtx, outbound{data: data, committed: committed}); err != nil {
+			return err
+		}
+		e.mu.Lock()
+		if ctx.Err() != nil || e.ctx.Err() != nil {
+			e.mu.Unlock()
+			// Closing the endpoint releases the writer without exposing success.
+			return contract.Fail(contract.Canceled, "initialization canceled")
+		}
+		e.ready = true
+		close(committed)
+		e.mu.Unlock()
+		return nil
+	}
+	requestDone := ctx.Done()
+	for {
+		if err := deliveryCtx.Err(); err != nil {
+			return err
+		}
+		if ctx.Err() != nil && requestDone != nil {
+			response = canceledResponse(ctx, response)
+			data, err = encodeFrame(response, limit)
+			if err != nil {
+				return err
+			}
+			requestDone = nil
+		}
+		select {
+		case e.out <- outbound{data: data, shutdown: e.guest && response.Method == "shutdown" && response.Error == nil}:
+			return nil
+		case <-requestDone:
+		case <-deliveryCtx.Done():
+			return deliveryCtx.Err()
+		case <-e.done:
+			return e.Err()
+		}
 	}
 }
 
@@ -296,6 +420,13 @@ func (e *Endpoint) writeLoop() {
 		case <-e.done:
 			return
 		case message := <-e.out:
+			if message.committed != nil {
+				select {
+				case <-message.committed:
+				case <-e.done:
+					return
+				}
+			}
 			data := message.data
 			for len(data) > 0 {
 				n, err := e.transport.Write(data)
@@ -318,9 +449,15 @@ func (e *Endpoint) writeLoop() {
 }
 
 func (e *Endpoint) readLoop() {
-	reader := bufio.NewReaderSize(e.transport, min(e.limits.FrameBytes, 4096))
+	reader := bufio.NewReaderSize(e.transport, 4096)
 	for {
-		frame, err := readFrame(reader, e.limits.FrameBytes)
+		e.mu.Lock()
+		limit := e.frameBytes
+		e.mu.Unlock()
+		if limit == 0 {
+			limit = contract.MaxFrameBytes
+		}
+		frame, err := readFrame(reader, limit)
 		if err != nil {
 			e.shutdown(err)
 			return
@@ -334,8 +471,25 @@ func (e *Endpoint) readLoop() {
 
 func (e *Endpoint) receive(frame Frame) error {
 	e.mu.Lock()
-	if e.identity.Activation == "" && e.guest && frame.Kind == "request" && frame.Method == "initialize" {
-		e.identity.Activation = frame.Activation
+	if e.guest && e.frameBytes == 0 {
+		if frame.Kind != "request" || frame.Method != "initialize" || frame.Parent != "" {
+			e.mu.Unlock()
+			return contract.Fail(contract.Invalid, "first frame must initialize the session")
+		}
+		init, err := decodeInitialize(frame.Payload)
+		if err != nil {
+			e.mu.Unlock()
+			return err
+		}
+		if frame.wireBytes > init.FrameBytes || init.Identity.Activation != frame.Activation {
+			e.mu.Unlock()
+			return contract.Fail(contract.Invalid, "initialize exceeds budget or identity mismatch")
+		}
+		e.frameBytes = init.FrameBytes
+		e.identity = init.Identity
+	} else if frame.Kind == "request" && frame.Method == "initialize" {
+		e.mu.Unlock()
+		return contract.Fail(contract.Invalid, "session already initialized")
 	}
 	if frame.Activation != e.identity.Activation {
 		e.mu.Unlock()
@@ -361,6 +515,10 @@ func (e *Endpoint) receive(frame Frame) error {
 		}
 		delete(e.pending, frame.ID)
 		if frame.Method == "initialize" && frame.Error == nil && p.ctx.Err() == nil {
+			if err := decodeRegistration(frame.Payload, e.frameBytes); err != nil {
+				e.mu.Unlock()
+				return err
+			}
 			e.ready = true
 		}
 		var err error
@@ -422,7 +580,7 @@ func (e *Endpoint) receive(frame Frame) error {
 	}
 	ctx, cancel := context.WithTimeout(parent, time.Duration(frame.DeadlineMS)*time.Millisecond)
 	ctx = context.WithValue(ctx, requestKey{}, requestReference{endpoint: e, id: frame.ID})
-	e.incoming[frame.ID] = incoming{cancel: cancel, method: frame.Method}
+	e.incoming[frame.ID] = incoming{cancel: cancel, method: frame.Method, recoverable: e.ready && !controlMethod(frame.Method)}
 	e.mu.Unlock()
 	e.wg.Go(func() { e.handle(ctx, cancel, frame) })
 	return nil
@@ -442,9 +600,6 @@ func (e *Endpoint) handle(ctx context.Context, cancel context.CancelFunc, frame 
 	} else if ctx.Err() != nil {
 		err = contract.Fail(contract.Canceled, "request canceled")
 	}
-	if err == nil && frame.Method == "initialize" {
-		e.ready = true
-	}
 	e.mu.Unlock()
 	response := Frame{Schema: contract.SessionSchema, Kind: "response", Activation: frame.Activation, ID: frame.ID, Method: frame.Method, Payload: payload}
 	if err != nil {
@@ -459,7 +614,7 @@ func (e *Endpoint) handle(ctx context.Context, cancel context.CancelFunc, frame 
 	}
 	deliveryCtx, deliveryCancel := context.WithTimeout(e.ctx, e.limits.Grace)
 	defer deliveryCancel()
-	if err := e.send(deliveryCtx, response); err != nil && e.ctx.Err() == nil {
+	if err := e.sendResponse(ctx, deliveryCtx, response); err != nil && e.ctx.Err() == nil {
 		e.shutdown(err)
 	}
 }

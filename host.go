@@ -19,37 +19,44 @@ import (
 type externalCleanupKey struct{}
 
 type Options struct {
-	Directory      string
-	Trust          packagehost.TrustPolicy
-	DecodePackage  packagehost.MetadataDecoder
-	Runtimes       map[string]contract.Runtime
-	Authorize      func(context.Context, contract.Identity, contract.Capability) (json.RawMessage, error)
-	SessionFactory func(contract.Manifest) contract.SessionFactory
-	HandleGuest    contract.GuestAdapter
-	Grace          time.Duration
+	Directory        string
+	Trust            packagehost.TrustPolicy
+	DecodePackage    packagehost.MetadataDecoder
+	Runtimes         map[string]contract.Runtime
+	Authorize        func(context.Context, contract.Identity, contract.Capability) (json.RawMessage, error)
+	SessionFactory   func(contract.Manifest) *contract.SessionFactory
+	FrameBytes       int
+	HandleGuest      contract.GuestAdapter
+	Sink             *access.Sink
+	DiagnosticStderr bool
+	Grace            time.Duration
 }
 
 type Host struct {
-	mu            sync.Mutex
-	operations    chan struct{}
-	childMu       sync.Mutex
-	engine        *core.Engine
-	store         *packagehost.Store
-	policy        *access.Policy
-	broker        *access.Broker
-	contributions *access.ContributionStore
-	tasks         *access.TaskManager
-	options       Options
-	entries       map[string]contract.Instance
-	entrySpecs    map[string]contract.Entry
-	packages      map[string]contract.PackageRef
-	builtins      map[string]contract.Definition
-	batches       map[string]*access.Batch
-	sessions      map[string]contract.Session
-	dynamic       map[string]ownedChild
-	definitions   map[string]contract.Definition
-	admissions    map[string]bool
-	closed        bool
+	mu               sync.Mutex
+	operations       chan struct{}
+	childMu          sync.Mutex
+	engine           *core.Engine
+	store            *packagehost.Store
+	policy           *access.Policy
+	broker           *access.Broker
+	contributions    *access.ContributionStore
+	tasks            *access.TaskManager
+	options          Options
+	entries          map[string]contract.Instance
+	entrySpecs       map[string]contract.Entry
+	packages         map[string]contract.PackageRef
+	builtins         map[string]contract.Definition
+	batches          map[string]*access.Batch
+	staged           map[string][]contract.Contribution
+	sessions         map[string]contract.Session
+	dynamic          map[string]ownedChild
+	definitions      map[string]contract.Definition
+	admissions       map[string]bool
+	controls         map[string]bool
+	packageOps       map[string]bool
+	closed           bool
+	diagnosticErrors []error
 }
 
 func Open(options Options) (*Host, error) {
@@ -86,6 +93,13 @@ func (h *Host) lockOperation(ctx context.Context) error {
 			h.unlockOperation()
 			return err
 		}
+		h.mu.Lock()
+		closed := h.closed
+		h.mu.Unlock()
+		if closed {
+			h.unlockOperation()
+			return contract.Fail(contract.NotReady, "host is closed")
+		}
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -109,12 +123,24 @@ func (h *Host) beforePublish(owner contract.Identity) error {
 	if batch != nil {
 		return batch.Commit()
 	}
-	return nil
+	h.mu.Lock()
+	items := h.staged[owner.Activation]
+	delete(h.staged, owner.Activation)
+	h.mu.Unlock()
+	if len(items) == 0 {
+		return nil
+	}
+	staged, err := h.contributions.Stage(context.Background(), owner, items)
+	if err != nil {
+		return err
+	}
+	return staged.Commit()
 }
 
 func (h *Host) onRetire(owner contract.Identity) {
 	h.mu.Lock()
 	delete(h.batches, owner.Activation)
+	delete(h.staged, owner.Activation)
 	h.mu.Unlock()
 	// Revoke is idempotent at this host seam: failed startup may never activate policy.
 	if err := h.policy.Check(owner); err == nil {
@@ -136,6 +162,9 @@ func (h *Host) Select(ctx context.Context, ref contract.PackageRef) error {
 		return err
 	}
 	defer h.unlockOperation()
+	if h.packageBusy(ref.ID) {
+		return contract.Fail(contract.Conflict, "package operation is in progress")
+	}
 	options, err := h.changeOptions()
 	if err != nil {
 		return err
@@ -162,7 +191,7 @@ func (h *Host) changeOptions() (packagehost.ChangeOptions, error) {
 		if _, builtin := h.builtins[id]; builtin {
 			continue
 		}
-		state := instance.Status().State
+		state := instance.(*hostInstance).Instance.Status().State
 		if state == contract.Stopped || state == contract.Failed {
 			continue
 		}
@@ -177,6 +206,12 @@ func (h *Host) Enable(ctx context.Context, entry contract.Entry) (contract.Insta
 		return nil, err
 	}
 	defer h.unlockOperation()
+	if h.controlBusy(entry.ID, entry.Parent) {
+		return nil, contract.Fail(contract.Conflict, "entry ownership tree has an operation in progress")
+	}
+	if h.packageBusy(entry.Package) {
+		return nil, contract.Fail(contract.Conflict, "package operation is in progress")
+	}
 	return h.enable(ctx, entry)
 }
 
@@ -234,15 +269,15 @@ func (h *Host) enableEntry(ctx context.Context, entry contract.Entry, owner *con
 		return nil, contract.Fail(contract.Denied, "runtime not enabled by host")
 	}
 	entry.Enabled = true
-	definition := contract.Definition{ID: spec.ID, Requires: spec.Requires, Provides: spec.Provides,
+	if len(entry.Config) == 0 {
+		entry.Config = json.RawMessage(`{}`)
+	}
+	definition := contract.Definition{ID: spec.ID, Requires: spec.Requirements(), Provides: spec.Provides,
 		Validate: func(config json.RawMessage) error {
-			if len(pkg.Manifest.ConfigSchema) == 0 {
-				return nil
-			}
-			return schema.Validate(pkg.Manifest.ConfigSchema, config)
+			return schema.Validate(spec.ConfigSchema, config)
 		}}
 	definition.Start = func(startCtx context.Context, scope contract.Scope) error {
-		return h.startExternal(startCtx, scope, pkg, entry, adapter)
+		return h.diagnose(startCtx, scope.Identity(), "", "initialize", h.startExternal(startCtx, scope, pkg, entry, adapter))
 	}
 	if err := h.engine.Preflight(entry, definition); err != nil {
 		return nil, err
@@ -285,6 +320,13 @@ func (h *Host) enableEntry(ctx context.Context, entry contract.Entry, owner *con
 func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg packagehost.Package, entry contract.Entry, adapter contract.Runtime) error {
 	scope = &hostScope{Scope: scope, host: h, realm: entry.Realm}
 	owner := scope.Identity()
+	var factory *contract.SessionFactory
+	if h.options.SessionFactory != nil {
+		factory = h.options.SessionFactory(pkg.Manifest)
+	}
+	if err := factory.Validate(h.options.FrameBytes); err != nil {
+		return err
+	}
 	if err := h.store.BeginRun(ctx, owner); err != nil {
 		if catalogCommitted(err) {
 			return errors.Join(err, h.store.EndRun(context.Background(), owner, "failed"))
@@ -335,16 +377,22 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 	if err != nil {
 		return err
 	}
-	launch := contract.Launch{Identity: owner, Manifest: pkg.Manifest, Directory: snapshot.Directory, Artifact: artifact, Grace: h.options.Grace}
+	launch := contract.Launch{Identity: owner, Manifest: pkg.Manifest, Directory: snapshot.Directory, Artifact: artifact, Grace: h.options.Grace, FrameBytes: h.options.FrameBytes, SessionFactory: factory}
+	if h.options.DiagnosticStderr && h.options.Sink != nil {
+		launch.Stderr = func(chunk []byte) error {
+			err := h.options.Sink.Emit(context.Background(), access.DiagnosticInput{Owner: owner, Stage: "stderr", Code: contract.PluginFailed, Summary: string(chunk)})
+			if err != nil {
+				h.keepDiagnosticError(err)
+			}
+			return err
+		}
+	}
 	launch.Handle = func(callCtx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 		value, err := h.handleGuest(callCtx, scope, method, input)
 		if err != nil {
-			return nil, (*access.Sink)(nil).PublicError(err)
+			return nil, h.options.Sink.PublicError(h.diagnose(callCtx, owner, method, "guest-call", err))
 		}
 		return value, nil
-	}
-	if h.options.SessionFactory != nil {
-		launch.OpenSession = h.options.SessionFactory(pkg.Manifest)
 	}
 	session, err := adapter.Start(ctx, launch)
 	if err != nil {
@@ -362,13 +410,32 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 		return err
 	}
 	var plugin contract.PluginSession = genericPlugin{session: session}
-	if adapted, ok := session.(contract.PluginSession); ok {
-		plugin = adapted
-	}
+	selected, _ := session.(contract.PluginSession)
 	if adapted, ok := session.(interface{ PluginSession() contract.PluginSession }); ok {
-		if selected := adapted.PluginSession(); selected != nil {
-			plugin = selected
+		if mapped := adapted.PluginSession(); mapped != nil {
+			selected = mapped
 		}
+	}
+	if factory.IsCustom() != (selected != nil) {
+		return errors.Join(contract.Fail(contract.Invalid, "session factory protocol does not match PluginSession"), session.Close())
+	}
+	if selected != nil {
+		plugin = selected
+	}
+	lifecycle := scope.(contract.ActivationScope)
+	if err := lifecycle.OnPublish(func(publishCtx context.Context) error {
+		publishCtx, cancel := context.WithTimeout(publishCtx, h.options.Grace)
+		defer cancel()
+		return plugin.Publish(publishCtx)
+	}); err != nil {
+		return errors.Join(err, session.Close())
+	}
+	if err := lifecycle.OnRetire(func(retireCtx context.Context) error {
+		retireCtx, cancel := context.WithTimeout(retireCtx, h.options.Grace)
+		defer cancel()
+		return plugin.Retire(retireCtx)
+	}); err != nil {
+		return errors.Join(err, session.Close())
 	}
 	if err := scope.Defer(func(cleanupCtx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(cleanupCtx, h.options.Grace)
@@ -379,9 +446,12 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 	}); err != nil {
 		return err
 	}
-	registration, err := plugin.Initialize(ctx, contract.Initialize{Identity: owner, Protocol: pkg.Manifest.Protocol, Definition: entry.Definition, Config: scope.Config()})
+	registration, err := plugin.Initialize(ctx, contract.Initialize{Identity: owner, Protocol: pkg.Manifest.Protocol, Definition: entry.Definition, Config: scope.Config(), FrameBytes: h.options.FrameBytes})
 	if err != nil {
 		return err
+	}
+	if !factory.IsCustom() && registration.FrameBytes != h.options.FrameBytes {
+		return contract.Fail(contract.Invalid, "registration frameBytes mismatch")
 	}
 	if registration.Minor != minor {
 		return contract.Fail(contract.Incompatible, "plugin selected incompatible protocol minor")
@@ -416,7 +486,7 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 			if core.IsCleanup(callCtx, owner) {
 				callCtx = context.WithValue(callCtx, externalCleanupKey{}, owner)
 			}
-			return plugin.Invoke(callCtx, contract.Invocation{Service: service, Input: input})
+			return plugin.Invoke(callCtx, contract.Invocation{Service: service, Input: input, Cleanup: core.IsCleanup(callCtx, owner)})
 		}); err != nil {
 			return err
 		}
@@ -453,7 +523,7 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 	go func() {
 		<-session.Done()
 		if err := session.Err(); err != nil {
-			h.engine.FailActivation(owner, err)
+			h.engine.FailActivation(owner, h.diagnose(context.Background(), owner, "", "session", err))
 		}
 	}()
 	return nil
@@ -477,6 +547,12 @@ func (h *Host) handleGuest(ctx context.Context, scope contract.Scope, method str
 	if h.options.HandleGuest != nil {
 		return h.options.HandleGuest(ctx, scope, method, input)
 	}
+	return h.DispatchGuest(ctx, scope, method, input)
+}
+
+// DispatchGuest is the standard dispatcher for explicit delegation by a custom
+// HandleGuest. A handler error never triggers implicit fallback.
+func (h *Host) DispatchGuest(ctx context.Context, scope contract.Scope, method string, input json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	case "child":
 		return h.handleChild(ctx, scope, input)
@@ -517,6 +593,15 @@ func (h *Host) handleGuest(ctx context.Context, scope contract.Scope, method str
 				h.engine.FailActivation(scope.Identity(), err)
 			}
 		}()
+		return json.RawMessage(`{}`), nil
+	case "task.release":
+		var request contract.TaskRequest
+		if err := contract.Decode(input, &request); err != nil {
+			return nil, err
+		}
+		if err := h.tasks.Release(scope.Identity(), request.ID, request.Token); err != nil {
+			return nil, err
+		}
 		return json.RawMessage(`{}`), nil
 	case "task.finish":
 		var request contract.TaskRequest
@@ -563,6 +648,11 @@ func (h *Host) Disable(ctx context.Context, id string) error {
 		return err
 	}
 	defer h.unlockOperation()
+	release, err := h.reserveTree(id)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return h.disable(ctx, id)
 }
 
@@ -615,22 +705,25 @@ func (h *Host) disableOne(ctx context.Context, id string) error {
 	if instance == nil {
 		return contract.Fail(contract.NotReady, "entry does not exist")
 	}
-	coreInstance := instance
-	if external, ok := instance.(*hostInstance); ok {
-		coreInstance = external.Instance
-	}
-	stopErr := coreInstance.Stop(ctx)
-	removeErr := h.engine.Remove(ctx, id)
-	if !h.engine.Missing(id) {
-		return errors.Join(stopErr, removeErr)
-	}
 	var persistErr error
+	entry.Enabled = false
 	if !builtin {
-		entry.Enabled = false
 		persistErr = h.store.SaveEntry(ctx, entry)
 		if persistErr != nil && !catalogCommitted(persistErr) {
-			return errors.Join(stopErr, removeErr, persistErr)
+			return persistErr
 		}
+	}
+	h.mu.Lock()
+	h.entrySpecs[id] = entry
+	h.mu.Unlock()
+	wait, err := h.engine.Stop(ctx, id)
+	if err != nil {
+		return errors.Join(persistErr, err)
+	}
+	stopErr := h.waitOperation(func() error { return wait(ctx) })
+	removeErr := h.waitOperation(func() error { return h.engine.Remove(ctx, id) })
+	if !h.engine.Missing(id) {
+		return errors.Join(stopErr, removeErr, persistErr)
 	}
 	h.mu.Lock()
 	delete(h.entries, id)
@@ -646,6 +739,9 @@ func (h *Host) Uninstall(ctx context.Context, ref contract.PackageRef, deleteDat
 		return packagehost.Removal{}, err
 	}
 	defer h.unlockOperation()
+	if h.packageBusy(ref.ID) {
+		return packagehost.Removal{}, contract.Fail(contract.Conflict, "package operation is in progress")
+	}
 	options, err := h.changeOptions()
 	if err != nil {
 		return packagehost.Removal{}, err
@@ -659,6 +755,24 @@ func (h *Host) Replace(ctx context.Context, ref contract.PackageRef, options pac
 		return err
 	}
 	defer h.unlockOperation()
+	releasePackage, err := h.reservePackage(ref.ID)
+	if err != nil {
+		return err
+	}
+	defer releasePackage()
+	h.mu.Lock()
+	var roots []string
+	for id, pkg := range h.packages {
+		if pkg.ID == ref.ID {
+			roots = append(roots, id)
+		}
+	}
+	h.mu.Unlock()
+	release, err := h.reserveTrees(roots)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return h.replace(ctx, ref, options)
 }
 
@@ -733,20 +847,25 @@ func (h *Host) replace(ctx context.Context, ref contract.PackageRef, options pac
 		}
 	}
 	for _, instance := range instances {
-		result = errors.Join(result, instance.Wait(ctx))
+		result = errors.Join(result, h.waitOperation(func() error { return instance.Wait(ctx) }))
 	}
 	return result
 }
 
 func (h *Host) Close(ctx context.Context) error {
-	if err := h.lockOperation(ctx); err != nil {
-		return err
+	select {
+	case h.operations <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	defer h.unlockOperation()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	h.mu.Lock()
 	h.closed = true
 	h.mu.Unlock()
-	err := h.engine.Close(ctx)
+	err := h.waitOperation(func() error { return h.engine.Close(ctx) })
 	if !h.engine.Drained() {
 		return err
 	}
@@ -758,6 +877,9 @@ func (h *Host) AddBuiltin(ctx context.Context, entry contract.Entry, definition 
 		return nil, err
 	}
 	defer h.unlockOperation()
+	if h.controlBusy(entry.ID, entry.Parent) {
+		return nil, contract.Fail(contract.Conflict, "entry ownership tree has an operation in progress")
+	}
 	return h.addBuiltin(entry, definition)
 }
 
@@ -773,11 +895,14 @@ func (h *Host) addBuiltin(entry contract.Entry, definition contract.Definition) 
 	if entry.Package == "" {
 		entry.Package = "builtin"
 	}
+	if len(entry.Config) == 0 {
+		entry.Config = json.RawMessage(`{}`)
+	}
 	entry.Enabled = true
 	entry.Config = append(json.RawMessage(nil), entry.Config...)
 	original := definition
 	definition.Start = func(ctx context.Context, scope contract.Scope) error {
-		return original.Start(ctx, &hostScope{Scope: scope, host: h, realm: entry.Realm})
+		return h.startBuiltin(ctx, scope, entry.Realm, original)
 	}
 	instance, err := h.engine.Add(entry, definition, contract.Identity{Package: entry.Package, Entry: entry.ID, Digest: "builtin"})
 	if err != nil {
@@ -795,11 +920,15 @@ func (h *Host) addBuiltin(entry contract.Entry, definition contract.Definition) 
 func (h *Host) Status(id string) (contract.Status, error) {
 	h.mu.Lock()
 	instance := h.entries[id]
+	entry := h.entrySpecs[id]
 	h.mu.Unlock()
 	if instance == nil {
 		return contract.Status{}, fmt.Errorf("entry %q not found", id)
 	}
-	return instance.Status(), nil
+	status := instance.Status()
+	status.Enabled = entry.Enabled
+	status.TemporaryStopped = entry.Enabled && status.State == contract.Stopped
+	return status, nil
 }
 
 // Resume re-enables an existing, fully stopped entry. Disable removes the entry;
@@ -808,8 +937,26 @@ func (h *Host) Resume(ctx context.Context, id string) error {
 	if err := h.lockOperation(ctx); err != nil {
 		return err
 	}
-	defer h.unlockOperation()
-	return h.engine.Enable(ctx, id)
+	release, err := h.reserveTree(id)
+	if err != nil {
+		h.unlockOperation()
+		return err
+	}
+	h.mu.Lock()
+	enabled := h.entrySpecs[id].Enabled
+	h.mu.Unlock()
+	if !enabled {
+		release()
+		h.unlockOperation()
+		return contract.Fail(contract.NotReady, "entry is persistently disabled")
+	}
+	instance, err := h.engine.Resume(id)
+	release()
+	h.unlockOperation()
+	if err != nil {
+		return err
+	}
+	return instance.Wait(ctx)
 }
 
 // Supervise explicitly restarts failed activations within a finite lifetime

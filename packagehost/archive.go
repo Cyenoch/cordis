@@ -43,6 +43,9 @@ func validateConfigSchema(raw json.RawMessage) error {
 	return schema.Check(raw)
 }
 func validateConfig(raw, value json.RawMessage) error {
+	if len(value) == 0 {
+		value = json.RawMessage(`{}`)
+	}
 	if err := contract.CheckJSON(value, 32, 10000); err != nil {
 		return err
 	}
@@ -462,6 +465,11 @@ func PackWithDecoder(ctx context.Context, dir, archive string, decoder MetadataD
 	l := DefaultLimits()
 	if err = copyDirectory(ctx, dir, stage, l); err != nil {
 		return p, err
+	}
+	if decoder == nil {
+		if err = stageAuthor(ctx, stage); err != nil {
+			return p, err
+		}
 	}
 	if err = os.Remove(filepath.Join(stage, SignatureFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return p, err

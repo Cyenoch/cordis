@@ -12,14 +12,7 @@ import (
 
 type Service[In, Out any] struct{ Contract contract.Service }
 
-type Provider interface {
-	Provide(contract.Service, contract.Handler) error
-}
-type Caller interface {
-	Call(context.Context, contract.Requirement, json.RawMessage) (json.RawMessage, error)
-}
-
-func Provide[In, Out any](scope Provider, service Service[In, Out], handler func(context.Context, In) (Out, error)) error {
+func Provide[In, Out any](scope contract.Registrar, service Service[In, Out], handler func(context.Context, In) (Out, error)) error {
 	if err := contract.CheckDataType(reflect.TypeFor[In]()); err != nil {
 		return err
 	}
@@ -39,7 +32,7 @@ func Provide[In, Out any](scope Provider, service Service[In, Out], handler func
 	})
 }
 
-func Call[In, Out any](ctx context.Context, scope Caller, service Service[In, Out], input In) (Out, error) {
+func Call[In, Out any](ctx context.Context, scope contract.Caller, service Service[In, Out], input In) (Out, error) {
 	var output Out
 	data, err := contract.Encode(input)
 	if err != nil {

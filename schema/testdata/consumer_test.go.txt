@@ -17,31 +17,31 @@ func (s *localScope) Provide(service contract.Service,handler contract.Handler) 
     return nil
 }
 func (s *localScope) Call(ctx context.Context,requirement contract.Requirement,input json.RawMessage) (json.RawMessage,error) {
-    if requirement.Name != "example.echo" || requirement.Major != 1 { return nil,contract.Fail(contract.Invalid,"wrong requirement") }
-    return s.handler(ctx,input)
+    if requirement.Name != "example.echo" || requirement.Major != 1 || requirement.MinMinor!=1 || requirement.MaxMinor!=3 { return nil,contract.Fail(contract.Invalid,"wrong requirement") }
+    if !requirement.Accepts(contract.Service{Name:"example.echo",Major:1,Minor:2}) { return nil,contract.Fail(contract.Incompatible,"provider minor mismatch") };return s.handler(ctx,input)
 }
 
 type implementation struct{}
 func (implementation) Echo(ctx context.Context,input ExampleEchoEchoRequest) (ExampleEchoEchoResponse,error) {
     repeat := 1
-    if input.Repeat.Present { repeat = int(input.Repeat.Value) }
-    return ExampleEchoEchoResponse{Text:ExampleEchoEchoResponseText(strings.Repeat(string(input.Text),repeat)),Sequence:ExampleEchoEchoResponseSequence(input.Sequence)},nil
+    if input.Repeat.Present { repeat = mustRepeat(input.Repeat.Value) }
+    return ExampleEchoEchoResponse{Text:strings.Repeat(input.Text,repeat),Sequence:input.Sequence},nil
 }
 func (implementation) Choose(ctx context.Context,input ExampleEchoChooseRequest) (ExampleEchoChooseResponse,error) {
-    if input.VariantText.Present { return ExampleEchoChooseResponse{ExampleEchoChooseResponseItem(input.VariantText.Value.Text)},nil }
+    if input.VariantText.Present { return ExampleEchoChooseResponse{input.VariantText.Value.Text},nil }
     return ExampleEchoChooseResponse{},nil
 }
 
 func TestGeneratedTypedRoundTrip(t *testing.T) {
     scope := &localScope{}
     if err := RegisterExampleEchoServer(scope,implementation{}); err != nil { t.Fatal(err) }
-    client := NewExampleEchoClient(scope)
+    client,err := NewExampleEchoClient(scope, ExampleEchoConsumer(1,3)); if err != nil { t.Fatal(err) }
     input := ExampleEchoEchoRequest{
         Text: "hi",
-        Sequence: ExampleEchoEchoRequestSequence(9223372036854775807),
-        Payload: ExampleEchoEchoRequestPayload([]byte("bytes")),
-        Note: ExampleEchoEchoRequestNote{Nullable:schema.Nullable[ExampleEchoEchoRequestNoteValue]{}},
-        Repeat:schema.Some(ExampleEchoEchoRequestRepeat(2)),
+        Sequence: schema.Int64(9223372036854775807),
+        Payload: []byte("bytes"),
+        Note: schema.Nullable[string]{},
+        Repeat:schema.Some(json.Number("2")),
     }
     response,err := client.Echo(context.Background(),input)
     if err != nil { t.Fatal(err) }
@@ -53,23 +53,22 @@ func TestGeneratedTypedRoundTrip(t *testing.T) {
     if string(wire["sequence"]) != `"9223372036854775807"` || string(wire["note"]) != "null" || string(wire["payload"]) != `"Ynl0ZXM="` { t.Fatalf("wrong wire data: %s",encoded) }
     var decoded ExampleEchoEchoRequest
     if err := json.Unmarshal(encoded,&decoded); err != nil { t.Fatal(err) }
-    if !decoded.Repeat.Present || decoded.Repeat.Value != 2 || decoded.Note.Valid { t.Fatalf("presence/null lost: %+v",decoded) }
-    input.Repeat = schema.Optional[ExampleEchoEchoRequestRepeat]{}
+    if !decoded.Repeat.Present || decoded.Repeat.Value != "2" || decoded.Note.Valid { t.Fatalf("presence/null lost: %+v",decoded) }
+    input.Repeat = schema.Optional[json.Number]{}
     encoded,err = json.Marshal(input)
     if err != nil { t.Fatal(err) }
     wire = nil
     if err := json.Unmarshal(encoded,&wire); err != nil { t.Fatal(err) }
     if _,exists := wire["repeat"]; exists { t.Fatal("absent optional field was serialized") }
-    input.Repeat = schema.Some(ExampleEchoEchoRequestRepeat(0))
+    input.Repeat = schema.Some(json.Number("0"))
     if _,err := client.Echo(context.Background(),input); err == nil { t.Fatal("client sent invalid range") }
 }
 
 func TestGeneratedUnionAndStrictServer(t *testing.T) {
     scope := &localScope{}
     if err := RegisterExampleEchoServer(scope,implementation{}); err != nil { t.Fatal(err) }
-    client := NewExampleEchoClient(scope)
-    var input ExampleEchoChooseRequest
-    if err := json.Unmarshal([]byte(`{"kind":"text","text":"chosen"}`),&input); err != nil { t.Fatal(err) }
+    client,err := NewExampleEchoClient(scope, ExampleEchoConsumer(1,3)); if err != nil { t.Fatal(err) }
+    input := NewExampleEchoChooseRequestVariantText(ExampleEchoChooseRequestVariantText{Text:"chosen"})
     response,err := client.Choose(context.Background(),input)
     if err != nil { t.Fatal(err) }
     if len(response) != 1 || response[0] != "chosen" { t.Fatalf("wrong union response: %v",response) }
@@ -83,4 +82,19 @@ func TestGeneratedUnionAndStrictServer(t *testing.T) {
     } {
         if _,err := scope.handler(context.Background(),json.RawMessage(raw)); err == nil { t.Fatalf("invalid envelope accepted: %s",raw) }
     }
+}
+
+func mustRepeat(n json.Number)int {v,err:=n.Int64();if err!=nil{panic(err)};return int(v)}
+
+func TestWrongConsumerIdentity(t *testing.T) {
+ for _,mutate:=range []func(*contract.Consumer){
+  func(c *contract.Consumer){c.Requirement.Name="another"},
+  func(c *contract.Consumer){c.Requirement.Major=2},
+  func(c *contract.Consumer){c.Requirement.MinMinor=2},
+  func(c *contract.Consumer){c.Requirement.MaxMinor=0},
+  func(c *contract.Consumer){c.Contract="another method schema"},
+ } {
+  c:=ExampleEchoConsumer(1,3);mutate(&c)
+  if _,err:=NewExampleEchoClient(&localScope{},c);err==nil{t.Fatal("invalid consumer accepted")}
+ }
 }

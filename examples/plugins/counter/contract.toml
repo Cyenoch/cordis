@@ -1,0 +1,19 @@
+[types.Settings]
+type = "object"
+
+[types.Settings.properties.initial]
+type = "integer"
+
+[[services]]
+name = "example.counter"
+version = 1
+
+[[services.methods]]
+name = "execute"
+request = { type = "object", properties = { operation = { type = "string" }, delta = { type = "integer" } }, required = ["operation", "delta"] }
+response = { type = "object", properties = { value = { type = "integer" }, events = { type = "integer" }, host = { type = "string" } }, required = ["value", "events"] }
+
+[[definitions]]
+id = "counter"
+config = { "$ref" = "#/types/Settings" }
+provides = ["example.counter"]

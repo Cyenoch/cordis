@@ -11,7 +11,7 @@ import (
 )
 
 func manifestFixture(id, version string) contract.Manifest {
-	return contract.Manifest{Schema: contract.PackageSchema, ID: id, Version: version, Publisher: "example", Protocol: contract.Protocol{Major: 1, MaxMinor: 0}, Definitions: []contract.DefinitionSpec{{ID: "main"}}, DefaultDefinition: "main", Runtime: contract.RuntimeSpec{Kind: "wasm", Entry: "plugin.wasm"}, DataVersion: 1}
+	return contract.Manifest{Schema: contract.PackageSchema, ID: id, Version: version, Publisher: "example", Protocol: contract.Protocol{Major: 1, MaxMinor: 0}, Definitions: []contract.DefinitionSpec{{ID: "main", ConfigSchema: []byte(`{"type":"object"}`)}}, DefaultDefinition: "main", Runtime: contract.RuntimeSpec{Kind: "wasm", Entry: "plugin.wasm"}, DataVersion: 1}
 }
 func TestValidateManifest(t *testing.T) {
 	t.Parallel()
@@ -26,7 +26,7 @@ func TestValidateManifest(t *testing.T) {
 		{"invalid semver", func(m *contract.Manifest) { m.Version = "1.0" }},
 		{"unknown definition", func(m *contract.Manifest) { m.DefaultDefinition = "missing" }},
 		{"duplicate definition", func(m *contract.Manifest) { m.Definitions = append(m.Definitions, m.Definitions[0]) }},
-		{"invalid schema", func(m *contract.Manifest) { m.ConfigSchema = []byte(`{"type":"not-a-json-type"}`) }},
+		{"invalid schema", func(m *contract.Manifest) { m.Definitions[0].ConfigSchema = []byte(`{"type":"not-a-json-type"}`) }},
 		{"invalid range", func(m *contract.Manifest) {
 			m.Dependencies = []contract.Dependency{{ID: "dep", Min: "2.0.0", Max: "1.0.0"}}
 		}},

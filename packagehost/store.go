@@ -619,7 +619,8 @@ func clonePackageChecked(p Package) (Package, error) {
 	m.HostMetadata = append([]byte(nil), m.HostMetadata...)
 	m.Definitions = append([]contract.DefinitionSpec(nil), m.Definitions...)
 	for i := range m.Definitions {
-		m.Definitions[i].Requires = append([]contract.Requirement(nil), m.Definitions[i].Requires...)
+		m.Definitions[i].Requires = append([]contract.Consumer(nil), m.Definitions[i].Requires...)
+		m.Definitions[i].ConfigSchema = append([]byte(nil), m.Definitions[i].ConfigSchema...)
 		m.Definitions[i].Provides = append([]contract.Service(nil), m.Definitions[i].Provides...)
 	}
 	m.Runtime.Artifacts = append([]contract.Artifact(nil), m.Runtime.Artifacts...)
@@ -633,7 +634,6 @@ func clonePackageChecked(p Package) (Package, error) {
 	for i := range m.Contributions {
 		m.Contributions[i].Data = append([]byte(nil), m.Contributions[i].Data...)
 	}
-	m.ConfigSchema = append([]byte(nil), m.ConfigSchema...)
 	p.Manifest = m
 	return p, nil
 }
@@ -708,14 +708,14 @@ func preflight(c catalog, ref contract.PackageRef) ([]string, error) {
 		for _, dep := range p.Manifest.Dependencies {
 			selected, ok := c.Selected[dep.ID]
 			if !ok {
-				return fmt.Errorf("%s requires missing selected package %s", current.ID, dep.ID)
+				return fmt.Errorf("%s requires missing selected package %s %s", current.ID, dep.ID, dependencyConstraint(dep))
 			}
 			accepts, err := acceptsDependency(selected.Version, dep)
 			if err != nil {
 				return err
 			}
 			if !accepts {
-				return fmt.Errorf("%s requires %s [%s,%s), selected %s", current.ID, dep.ID, dep.Min, dep.Max, selected.Version)
+				return fmt.Errorf("%s requires %s %s, selected %s", current.ID, dep.ID, dependencyConstraint(dep), selected.Version)
 			}
 			if err = visit(selected); err != nil {
 				return err
@@ -724,7 +724,7 @@ func preflight(c catalog, ref contract.PackageRef) ([]string, error) {
 		for _, dep := range p.Manifest.OptionalDependencies {
 			selected, ok := c.Selected[dep.ID]
 			if !ok {
-				diagnostics = append(diagnostics, fmt.Sprintf("%s: optional dependency %s is not selected", current.ID, dep.ID))
+				diagnostics = append(diagnostics, fmt.Sprintf("%s: optional dependency %s %s is not selected", current.ID, dep.ID, dependencyConstraint(dep)))
 				continue
 			}
 			accepts, err := acceptsDependency(selected.Version, dep)
@@ -732,7 +732,7 @@ func preflight(c catalog, ref contract.PackageRef) ([]string, error) {
 				return err
 			}
 			if !accepts {
-				diagnostics = append(diagnostics, fmt.Sprintf("%s: optional dependency %s version %s is incompatible", current.ID, dep.ID, selected.Version))
+				diagnostics = append(diagnostics, fmt.Sprintf("%s: optional dependency %s requires %s, selected %s is incompatible", current.ID, dep.ID, dependencyConstraint(dep), selected.Version))
 			}
 		}
 		visiting[current.ID] = false
@@ -898,12 +898,13 @@ func validateEntry(m contract.Manifest, e contract.Entry) error {
 	for _, d := range m.Definitions {
 		if d.ID == e.Definition {
 			found = true
+			return validateConfig(d.ConfigSchema, e.Config)
 		}
 	}
 	if !found {
 		return fmt.Errorf("unknown definition %s", e.Definition)
 	}
-	return validateConfig(m.ConfigSchema, e.Config)
+	return nil
 }
 func (s *Store) Entries() ([]contract.Entry, error) {
 	s.mu.Lock()
@@ -920,6 +921,9 @@ func (s *Store) Entries() ([]contract.Entry, error) {
 	return out, nil
 }
 func (s *Store) SaveEntry(ctx context.Context, e contract.Entry) error {
+	if len(e.Config) == 0 {
+		e.Config = json.RawMessage(`{}`)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.check(); err != nil {

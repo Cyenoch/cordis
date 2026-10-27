@@ -3,6 +3,7 @@ codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
 codePaths:
   - contract/group.go
   - contract/group_test.go
+  - contract/capabilities.go
   - internal/core/cleanup.go
   - sdk/client.go
   - conformance/cmd/lifecycle-smoke
@@ -18,6 +19,7 @@ codePaths:
 - `var group contract.Group` 是可用的独立资源组；调用者必须自己调用 `Close`。Group 使用后不得复制。
 - `group.Defer(cleanup)` 只在成功时接管该清理。nil cleanup 返回 `invalid_message`；开始关闭后拒绝新登记，返回 `not_ready`。登记失败时，刚取得的资源仍由调用者负责释放。
 - `group.Close(ctx)` 开始一次共享释放并等待结束。第一次 Close 立即封闭登记；同时或以后调用 Close 不会再次释放，也不会重试失败的清理。完成的等待者取得同一个缓存的聚合错误；全部成功时为 nil。
+- `contract.Own(owner, resource)` 适用于 `Close() error` 资源。登记成功转移所有权，失败立即尝试 Close，并返回登记错误和关闭错误；owner 可以是 Scope 或 Group。
 
 Scope 在初始化失败、停用或退役时执行已登记的清理。先创建受 Scope 管理的组，再逐个取得资源并登记；嵌套组把 Close 登记在父组中，不另建 activation 或服务绑定。
 
@@ -26,7 +28,6 @@ package plugin
 
 import (
     "context"
-    "errors"
     "os"
 
     "github.com/Cyenoch/cordis/contract"
@@ -42,8 +43,8 @@ func start(_ context.Context, scope contract.Scope) error {
         if err != nil {
             return err // Scope 仍会清理此前已经登记的文件。
         }
-        if err := group.Defer(func(context.Context) error { return file.Close() }); err != nil {
-            return errors.Join(err, file.Close()) // 登记失败，没有转移所有权。
+        if _, err := contract.Own(group, file); err != nil {
+            return err // 登记失败时 Own 已尝试关闭该文件。
         }
     }
     return nil
@@ -63,6 +64,8 @@ func start(_ context.Context, scope contract.Scope) error {
 跨组没有全局 LIFO。父组只在执行到子组的登记位置时等待该子组。跨插件仍以服务依赖、父子实例的退役顺序为准，参见[组合、实例与清理](composition.md)。通常让 Scope 发起关闭，才能把其清理 binding context 传给整组；若业务代码提前显式 Close，则整次共享释放使用该首次调用的 context 值，后来的 Scope Close 不会替换它。
 
 ## 清理不是业务回滚
+
+外部 SDK 的 Scope 清理复用同一 `contract.Group`：每项独立 recover、LIFO、一次释放并缓存聚合错误。Start 因取消仍在退出时可以登记刚取得资源的清理，真正执行清理前会先等 Start 返回。受管工作通过 `contract.Go(scope, work)` 在 Start 中登记，最终 publish 才启动；retire 先取消工作但不释放资源，shutdown 等工作实际退出后再清理。它与服务/事件回调并发，不占业务串行位。初始化 context 返回即结束，工作使用 activation context；清理必须用独立的 cleanup context。
 
 Group 负责关闭连接、取消并等待受管理工作、撤销订阅等资源生命周期；它不撤销已经提交的文件写入、网络请求、数据库提交或其他外部副作用。初始化中途失败会释放已登记资源，但不是事务，也不提供任意业务补偿。需要回滚的业务必须自己定义事务边界和补偿策略。
 

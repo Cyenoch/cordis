@@ -13,9 +13,7 @@ codePaths:
 
 # 生成服务实操
 
-当服务有多个方法或会被多方使用时，把数据契约交给生成器，比手工同步请求结构和 method envelope 更方便。本例生成一个 echo 服务，在 builtin Scope 上注册，再从另一个实例调用。
-
-生成的代码只依赖 `contract`、`schema` 和标准库；注册到外部 SDK 的方式相同，不需要把宿主实现编译进插件。字段规则和编码边界见[数据契约参考](contracts.md)。
+同一份作者声明生成配置、typed Start、service client/server 和 Manifest 的 definition 元数据。生成代码只依赖标准库、`contract` 和 `schema`；字段规则见[数据契约参考](contracts.md)。
 
 ## 建立独立项目
 
@@ -23,26 +21,30 @@ codePaths:
 
 ```sh
 CORDIS_ROOT="$(pwd)"
-go build -o /tmp/cordis-generate ./cmd/cordis
-mkdir -p /tmp/cordis-generated
+mkdir -p /tmp/cordis-generated/echo
 cd /tmp/cordis-generated
 go mod init example.com/cordis-generated
 go mod edit -require=github.com/Cyenoch/cordis@v0.0.0
 go mod edit -replace="github.com/Cyenoch/cordis=$CORDIS_ROOT"
-mkdir echo
 ```
 
-Windows 可使用任意空目录及 `cordis-generate.exe`，replace 指向本地检出的绝对路径。后续 Go 与 JSON 文件不变。
+Windows 使用空目录，并将 replace 指向本地检出的绝对路径。
 
 ## 写契约并生成
 
 ```json title="echo.schema.json"
 {
   "schema": "cordis-go.contract/v1",
+  "types": {
+    "Settings": {
+      "type": "object",
+      "properties": {"prefix": {"type": "string"}},
+      "required": ["prefix"]
+    }
+  },
   "services": [{
     "name": "example.echo",
-    "major": 1,
-    "minor": 0,
+    "version": "1.1",
     "methods": [{
       "name": "echo",
       "request": {
@@ -50,20 +52,66 @@ Windows 可使用任意空目录及 `cordis-generate.exe`，replace 指向本地
         "properties": {"text": {"type": "string", "minLength": 1}},
         "required": ["text"]
       },
-      "response": {"type": "string"}
+      "response": {
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"]
+      }
     }]
-  }]
+  }],
+  "definitions": [
+    {"id":"echo","config":{"$ref":"#/types/Settings"},"provides":["example.echo"]},
+    {"id":"client","requires":[{"name":"source","service":"example.echo","minMinor":1,"maxMinor":3}]}
+  ]
 }
 ```
 
-保存后生成：
+`version:1` 是 1.0；`"1.1"` 是 1.1，不接受浮点数 `1.1`、补丁位或旧 `major/minor`。consumer 范围必须显式声明；引用同文档服务确定 major 与方法契约，不由 provider 版本猜范围。
 
-```sh
-/tmp/cordis-generate generate -package echo echo.schema.json > echo/api.gen.go
-gofmt -w echo/api.gen.go
+用公开库生成，并同时导出配置编辑器 schema：
+
+```go title="generate.go"
+//go:build ignore
+
+package main
+
+import (
+    "bytes"
+    "encoding/json"
+    "os"
+
+    "github.com/Cyenoch/cordis/schema"
+)
+
+func main() {
+    if err := run(); err != nil { panic(err) }
+}
+
+func run() error {
+    raw, err := os.ReadFile("echo.schema.json")
+    if err != nil { return err }
+    declaration, err := schema.Parse(raw)
+    if err != nil { return err }
+    var output bytes.Buffer
+    if err := schema.GenerateMany(&output, "echo", declaration); err != nil { return err }
+    if err := os.WriteFile("echo/api.gen.go", output.Bytes(), 0600); err != nil { return err }
+    specs, err := declaration.Specs()
+    if err != nil { return err }
+    // Specs 按 ID 排序；本例 client、echo 的顺序固定。
+    standard, err := schema.Export(specs[1].ConfigSchema)
+    if err != nil { return err }
+    if err := os.WriteFile("echo.editor.schema.json", standard, 0600); err != nil { return err }
+    metadata, err := json.Marshal(specs)
+    if err != nil { return err }
+    return os.WriteFile("definitions.json", metadata, 0600)
+}
 ```
 
-`example.echo` 对应 `ExampleEchoClient` 和 `ExampleEchoServer`，方法类型为 `ExampleEchoEchoRequest`、`ExampleEchoEchoResponse`。生成文件不应手改；契约变化后重新生成并审查差异。
+```sh
+go run generate.go
+```
+
+生成前统一检查符号并运行 gofmt；失败不会写半份生成内容。这里的 `os.WriteFile` 是教程的本地写文件步骤，不提供原子替换保证。多个声明可一起传给 `GenerateMany`；独立调用 `Generate` 的文件也可放在同包，不会各自重定义 Caller/Registrar。指纹常量按 definition/service 命名，分次调用 `GenerateMany`（包括 CLI generate）也不会引入固定公共常量；完整声明可通过 `declaration.Fingerprint()` 取得。
 
 ## 注册和调用
 
@@ -84,10 +132,10 @@ import (
     "github.com/Cyenoch/cordis/contract"
 )
 
-type echoServer struct{}
+type echoServer struct { prefix string }
 
-func (echoServer) Echo(_ context.Context, input echo.ExampleEchoEchoRequest) (echo.ExampleEchoEchoResponse, error) {
-    return echo.ExampleEchoEchoResponse(strings.ToUpper(string(input.Text))), nil
+func (s echoServer) Echo(_ context.Context, input echo.ExampleEchoEchoRequest) (echo.ExampleEchoEchoResponse, error) {
+    return echo.ExampleEchoEchoResponse{Text: s.prefix + strings.ToUpper(input.Text)}, nil
 }
 
 func main() {
@@ -101,54 +149,37 @@ func run() (result error) {
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
     defer cancel()
     directory, err := os.MkdirTemp("", "cordis-generated-")
-    if err != nil {
-        return err
-    }
+    if err != nil { return err }
     defer func() { result = errors.Join(result, os.RemoveAll(directory)) }()
     host, err := cordis.Open(cordis.Options{Directory: directory})
-    if err != nil {
-        return err
-    }
+    if err != nil { return err }
     defer func() {
         closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
         defer stop()
         result = errors.Join(result, host.Close(closeCtx))
     }()
-    service := contract.Service{Name: "example.echo", Major: 1}
     provider, err := host.AddBuiltin(ctx, contract.Entry{
-        ID: "echo", Config: json.RawMessage(`{}`),
-    }, contract.Definition{ID: "echo", Provides: []contract.Service{service},
-        Start: func(_ context.Context, scope contract.Scope) error {
-            return echo.RegisterExampleEchoServer(scope, echoServer{})
-        },
-    })
-    if err != nil {
-        return err
-    }
-    if err := provider.Wait(ctx); err != nil {
-        return err
-    }
+        ID: "echo", Config: json.RawMessage(`{"prefix":"> "}`),
+    }, echo.NewEchoDefinition(func(_ context.Context, scope contract.Scope, cfg echo.EchoConfig) error {
+        return echo.RegisterExampleEchoServer(scope, echoServer{prefix: cfg.Prefix})
+    }))
+    if err != nil { return err }
+    if err := provider.Wait(ctx); err != nil { return err }
     consumer, err := host.AddBuiltin(ctx, contract.Entry{
         ID: "client", Config: json.RawMessage(`{}`),
-    }, contract.Definition{ID: "client",
-        Requires: []contract.Requirement{{Name: service.Name, Major: 1}},
-        Start: func(ctx context.Context, scope contract.Scope) error {
-            client := echo.NewExampleEchoClient(scope)
-            output, err := client.Echo(ctx, echo.ExampleEchoEchoRequest{Text: "hello"})
-            if err != nil {
-                return err
-            }
-            fmt.Println("echo:", output)
-            if _, err := client.Echo(ctx, echo.ExampleEchoEchoRequest{}); err == nil {
-                return errors.New("empty text should fail schema validation")
-            }
-            fmt.Println("empty text rejected")
-            return nil
-        },
-    })
-    if err != nil {
-        return err
-    }
+    }, echo.NewClientDefinition(func(ctx context.Context, scope contract.Scope, _ echo.ClientConfig) error {
+        client, err := echo.NewExampleEchoClient(scope, echo.ClientSourceConsumer())
+        if err != nil { return err }
+        output, err := client.Echo(ctx, echo.ExampleEchoEchoRequest{Text: "hello"})
+        if err != nil { return err }
+        fmt.Println("echo:", output.Text)
+        if _, err := client.Echo(ctx, echo.ExampleEchoEchoRequest{}); err == nil {
+            return errors.New("empty text should fail schema validation")
+        }
+        fmt.Println("empty text rejected")
+        return nil
+    }))
+    if err != nil { return err }
     return consumer.Wait(ctx)
 }
 ```
@@ -159,26 +190,24 @@ go run .
 ```
 
 ```text title="预期输出"
-echo: HELLO
+echo: > HELLO
 empty text rejected
 ```
 
-client 在发送前校验 request，server 在分派前再次校验来自另一端的数据。这里的两次校验分别位于两个信任边界。未知字段、未知方法、缺失 input 和不满足 schema 的响应都会报错，不补默认值。
+本例作者不重复手写 Definition ID、Requires/Provides、配置 Decode 或字段 schema。用于机器包时，将 `declaration.Specs()` 直接赋给 `Manifest.Definitions`；生成的 `EchoDefinitionSpec()` / `ClientDefinitionSpec()` 来自同一数据。配置-only 或仅贡献的 definition 不需要虚构服务。
 
-## 让宿主直接调用
+client 在发送前校验 request，server 在分派前校验另一端的数据。这是两个信任边界，不补默认值。未知字段、未知方法、缺失 input、坏 response 及失败的业务调用均明确返回错误。
 
-生成 client 需要 `Call(ctx, requirement, input)`，而 `Host.Call` 多一个 realm 参数。要在应用入口调用，可以给固定 realm 写一个小适配器，或直接使用 `Host.Call`：
+## 消费者范围与契约身份
 
-```go
-output, err := host.Call(ctx, "", contract.Requirement{
-    Name: "example.echo", Major: 1, MinMinor: 0, MaxMinor: 0,
-}, json.RawMessage(`{"method":"echo","input":{"text":"hello"}}`))
-```
+`ClientSourceConsumer()` 的范围是声明里的 1.1–1.3。client 不缩窄成生成时的 1.1；如果实际 provider 为兼容的 1.2，仍可按该范围路由。简单调用也可显式使用 `ExampleEchoConsumer(1, 3)`；构造器返回错误，不静默修正范围。
 
-响应是原始方法返回值 `"HELLO"`，不是另包一层 `{"output":...}`。应用内有 Scope 时优先使用生成 client，避免手写 envelope。
+`contract.Consumer` 包含 Requirement 与本地方法契约指纹。client 检查服务名、major、范围是否包含声明 minor，以及方法身份；同名同 major 的另一份方法 schema 不会仅凭版本通过。身份不包含 provider minor，不要求 provider 整体指纹相等，也不证明语义兼容。包 SemVer、服务版本和会话协议各自独立。
 
-## 契约变更与版本
+宿主入口应使用其公开的 realm-bound Caller；生成 client 只依赖 `contract.Caller`，不需要具体 SDK Client 断言或重复生成接口。宿主自身的 realm、可见性和授权策略仍由 Host 决定。
 
-包 SemVer、服务 major/minor 和会话协议版本是三件事。生成 client 请求声明里的精确 minor，不根据包版本猜测服务兼容性。改变必需字段、字段含义或方法语义时，先决定服务兼容策略，再同步 consumer 的 requirement、Manifest 和生成文件。
+## 可选、null 与联合
 
-需要可选、nullable、64 位整数、字节或 tagged union 时，使用[受限 Schema](contracts.md)明确声明。普通 Go 指针或 `interface{}` 不能代替跨进程契约。
+普通叶子直接使用 `string/bool/schema.Int64/schema.Uint64/json.Number/[]byte`；跨方法传递普通字符串不必强制转换。`Optional[T]` 表示是否出现，`Nullable[T]` 表示显式 null：`schema.Some(false)` 不等于省略，`schema.NonNull("")` 不等于 null。显式具名约束根保留独立 codec，父对象编码也保留所有叶子约束。
+
+tagged union 使用 `New<Union>Variant<Tag>(value)` 自动填 tag；不能同时设置两个分支。配置编辑器关联、JSON Schema 导出限制及完整向量命令见[数据契约参考](contracts.md)。

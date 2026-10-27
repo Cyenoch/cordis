@@ -9,6 +9,16 @@ import (
 
 type genericPlugin struct{ session contract.Session }
 
+func (s genericPlugin) Publish(ctx context.Context) error {
+	_, err := s.session.Call(ctx, "activation.publish", json.RawMessage(`{}`))
+	return err
+}
+
+func (s genericPlugin) Retire(ctx context.Context) error {
+	_, err := s.session.Call(ctx, "activation.retire", json.RawMessage(`{}`))
+	return err
+}
+
 func (s genericPlugin) Initialize(ctx context.Context, input contract.Initialize) (contract.Registration, error) {
 	var output contract.Registration
 	data, err := json.Marshal(input)

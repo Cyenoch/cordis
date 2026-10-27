@@ -5,10 +5,43 @@ package packagehost
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Cyenoch/cordis/contract"
 )
+
+func TestPreflightDiagnosticsReportActualDependencyConstraint(t *testing.T) {
+	t.Parallel()
+	for _, dependency := range []contract.Dependency{
+		{ID: "dep", Range: "^2.0.0"},
+		{ID: "dep", Min: "2.0.0", Max: "3.0.0"},
+	} {
+		t.Run(dependencyConstraint(dependency), func(t *testing.T) {
+			ref := contract.PackageRef{ID: "demo", Version: "1.0.0", Digest: "demo"}
+			selected := contract.PackageRef{ID: "dep", Version: "1.0.0", Digest: "dep"}
+			c := catalog{
+				Installed: map[string]Package{
+					"demo": {Ref: ref, Manifest: contract.Manifest{Dependencies: []contract.Dependency{dependency}}},
+					"dep":  {Ref: selected},
+				},
+				Selected: map[string]contract.PackageRef{"dep": selected},
+			}
+			_, err := preflight(c, ref)
+			if err == nil || !strings.Contains(err.Error(), dependencyConstraint(dependency)) || !strings.Contains(err.Error(), "selected 1.0.0") {
+				t.Fatalf("required dependency diagnostic: %v", err)
+			}
+			p := c.Installed["demo"]
+			p.Manifest.Dependencies = nil
+			p.Manifest.OptionalDependencies = []contract.Dependency{dependency}
+			c.Installed["demo"] = p
+			diagnostics, err := preflight(c, ref)
+			if err != nil || len(diagnostics) != 1 || !strings.Contains(diagnostics[0], dependencyConstraint(dependency)) || !strings.Contains(diagnostics[0], "selected 1.0.0") {
+				t.Fatalf("optional dependency diagnostic: %v, %v", diagnostics, err)
+			}
+		})
+	}
+}
 
 func TestReverseDependenciesPlansTransitiveCascadeWithoutMutation(t *testing.T) {
 	t.Parallel()

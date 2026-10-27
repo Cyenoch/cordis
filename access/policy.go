@@ -178,6 +178,25 @@ func (p *Policy) Grant(owner contract.Identity, capability string, scope json.Ra
 	return grant, nil
 }
 
+// RevokeCapability revokes the current grant using a trusted activation identity.
+// A missing grant returns NotReady; revoking an already revoked grant is idempotent.
+func (p *Policy) RevokeCapability(owner contract.Identity, capability string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a, err := p.activeLocked(owner)
+	if err != nil {
+		return err
+	}
+	grant := a.grants[capability]
+	if grant == nil {
+		return contract.Fail(contract.NotReady, "capability grant not found")
+	}
+	if !grant.revoked {
+		p.revokeGrantLocked(a, grant)
+	}
+	return nil
+}
+
 func (g *Grant) Revoke() error {
 	if g == nil || g.policy == nil {
 		return contract.Fail(contract.Invalid, "invalid grant")
@@ -198,9 +217,7 @@ func (g *Grant) Revoke() error {
 
 func (p *Policy) revokeGrantLocked(a *activation, grant *Grant) {
 	grant.revoked = true
-	if a.grants[grant.capability] == grant {
-		delete(a.grants, grant.capability)
-	}
+	// Retain the current handle so host lookup can distinguish revocation from absence.
 	for lease := range a.calls {
 		if lease.grant == grant {
 			lease.cancel()

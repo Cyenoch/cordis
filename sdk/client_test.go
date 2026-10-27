@@ -19,18 +19,10 @@ func TestExternalAuthorInitializationAndShutdown(t *testing.T) {
 	result := make(chan error, 1)
 	go func() {
 		result <- sdk.ServeTransport(t.Context(), contract.Definition{ID: "sample", Start: func(ctx context.Context, scope contract.Scope) error {
-			client, ok := scope.(*sdk.Client)
-			if !ok {
-				return contract.Fail(contract.Invalid, "client type")
-			}
-			data, err := client.InvokeHost(ctx, "greeting", json.RawMessage(`{}`))
-			if err != nil {
-				return err
-			}
-			var greeting struct {
+			greeting, err := contract.InvokeHost[struct{}, struct {
 				Value int `json:"value"`
-			}
-			if err := contract.Decode(data, &greeting); err != nil {
+			}](ctx, scope, "greeting", struct{}{})
+			if err != nil {
 				return err
 			}
 			if greeting.Value != 42 {
@@ -48,7 +40,7 @@ func TestExternalAuthorInitializationAndShutdown(t *testing.T) {
 			})
 		}}, right)
 	}()
-	host, err := wire.New(wire.Options{Transport: left, Identity: contract.Identity{Package: "example", Entry: "one", Activation: "activation"}, Handler: func(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+	host, err := wire.New(wire.Options{FrameBytes: contract.MaxFrameBytes, Transport: left, Identity: contract.Identity{Package: "example", Entry: "one", Activation: "activation"}, Handler: func(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 		if method != "host.invoke" {
 			return nil, contract.Fail(contract.Invalid, "unexpected host method")
 		}
@@ -63,11 +55,14 @@ func TestExternalAuthorInitializationAndShutdown(t *testing.T) {
 		}
 		host.Wait()
 	}()
-	init, err := json.Marshal(contract.Initialize{Identity: contract.Identity{Package: "example", Entry: "one", Activation: "activation"}, Protocol: contract.Protocol{Major: 1}, Definition: "sample", Config: json.RawMessage(`{}`)})
+	init, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Identity: contract.Identity{Package: "example", Entry: "one", Activation: "activation"}, Protocol: contract.Protocol{Major: 1}, Definition: "sample", Config: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := host.Call(t.Context(), "initialize", init); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.Call(t.Context(), "activation.publish", json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	payload, err := json.Marshal(contract.Invocation{Service: contract.Service{Name: "sample.echo", Major: 1}, Input: json.RawMessage(`8`)})

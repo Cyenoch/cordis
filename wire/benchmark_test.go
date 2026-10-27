@@ -27,14 +27,14 @@ func BenchmarkEndpointNetPipe(b *testing.B) {
 			handler := func(_ context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 				switch method {
 				case "initialize":
-					return json.RawMessage(`{}`), nil
+					return testRegistration(), nil
 				case "call":
 					return input, nil
 				default:
 					return nil, contract.Fail(contract.Invalid, "unknown benchmark method")
 				}
 			}
-			host, err := New(Options{Transport: left, Identity: contract.Identity{Activation: "benchmark"}, Handler: handler})
+			host, err := New(Options{FrameBytes: contract.MaxFrameBytes, Transport: left, Identity: contract.Identity{Activation: "benchmark"}, Handler: handler})
 			if err != nil {
 				b.Fatal(errors.Join(err, left.Close(), right.Close()))
 			}
@@ -54,7 +54,7 @@ func BenchmarkEndpointNetPipe(b *testing.B) {
 				}
 				guest.Wait()
 			})
-			if _, err := host.Call(b.Context(), "initialize", json.RawMessage(`{}`)); err != nil {
+			if _, err := host.Call(b.Context(), "initialize", testInitialize("benchmark")); err != nil {
 				b.Fatal(err)
 			}
 			input := json.RawMessage(`"` + strings.Repeat("x", size.bytes-2) + `"`)

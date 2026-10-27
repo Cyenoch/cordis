@@ -1,0 +1,103 @@
+package composed
+
+import (
+ "context"
+ "encoding/json"
+ "os"
+ "reflect"
+ "testing"
+
+ "github.com/Cyenoch/cordis/contract"
+ "github.com/Cyenoch/cordis/schema"
+)
+
+type localScope struct {
+ contract.Scope
+ config json.RawMessage
+ handlers map[string]contract.Handler
+}
+func (s *localScope) Config() json.RawMessage { return s.config }
+func (s *localScope) Provide(service contract.Service,handler contract.Handler)error{s.handlers[service.Name]=handler;return nil}
+func (s *localScope) Call(ctx context.Context,r contract.Requirement,input json.RawMessage)(json.RawMessage,error){
+ minor:=uint32(0);if r.Name=="alpha"{minor=2}
+ if !r.Accepts(contract.Service{Name:r.Name,Major:1,Minor:minor}){return nil,contract.Fail(contract.Incompatible,"provider outside range")}
+ return s.handlers[r.Name](ctx,input)
+}
+
+type alphaServer struct{}
+func (alphaServer) Echo(_ context.Context,input AlphaEchoRequest)(AlphaEchoResponse,error){return AlphaEchoResponse{Text:input.Text},nil}
+type betaServer struct{}
+func (betaServer) Echo(_ context.Context,input BetaEchoRequest)(BetaEchoResponse,error){return BetaEchoResponse{Text:input.Text},nil}
+
+func TestComposableServices(t *testing.T){
+ s:=&localScope{handlers:map[string]contract.Handler{}}
+ if err:=RegisterAlphaServer(s,alphaServer{});err!=nil{t.Fatal(err)}
+ if err:=RegisterBetaServer(s,betaServer{});err!=nil{t.Fatal(err)}
+ a,err:=NewAlphaClient(s,CounterSourceConsumer());if err!=nil{t.Fatal(err)}
+ b,err:=NewBetaClient(s,BetaConsumer(0,0));if err!=nil{t.Fatal(err)}
+ response,err:=a.Echo(context.Background(),AlphaEchoRequest{Text:"direct leaf"});if err!=nil{t.Fatal(err)}
+ next,err:=b.Echo(context.Background(),BetaEchoRequest{Text:response.Text});if err!=nil||next.Text!="direct leaf"{t.Fatalf("response=%+v err=%v",next,err)}
+ exact,err:=NewAlphaClient(s,AlphaConsumer(1,1));if err!=nil{t.Fatal(err)}
+ if _,err:=exact.Echo(context.Background(),AlphaEchoRequest{Text:"outside"});err==nil{t.Fatal("provider outside explicit range accepted")}
+}
+
+func TestTypedDefinitionAndManifestMetadata(t *testing.T){
+ raw,err:=os.ReadFile("specs.json");if err!=nil{t.Fatal(err)}
+ var specs []contract.DefinitionSpec
+ if err:=contract.Decode(raw,&specs);err!=nil{t.Fatal(err)}
+ if !reflect.DeepEqual(specs,[]contract.DefinitionSpec{CounterDefinitionSpec(),PanelDefinitionSpec()}){t.Fatal("Manifest and generated descriptors drifted")}
+ hash,err:=os.ReadFile("fingerprint.txt");if err!=nil{t.Fatal(err)}
+ if string(hash)!=PanelDefinitionDeclarationFingerprint{t.Fatal("generated fingerprint differs from parsed graph")}
+ called:=false
+ panel:=NewPanelDefinition(func(_ context.Context,_ contract.Scope,cfg PanelConfig)error{
+  called=true
+  if cfg.Title!="ok"||cfg.Note.Valid||!cfg.Enabled.Present||cfg.Enabled.Value{t.Fatalf("typed config=%+v",cfg)}
+  return nil
+ })
+ if err:=panel.Validate([]byte(`{"title":"x","note":null}`));err==nil{t.Fatal("config constraint lost")}
+ if err:=panel.Validate([]byte(`{}`));err==nil{t.Fatal("required config lost")}
+ s:=&localScope{config:[]byte(`{"title":"ok","note":null,"enabled":false}`)}
+ if err:=panel.Start(context.Background(),s);err!=nil{t.Fatal(err)}
+ if !called{t.Fatal("typed start not called")}
+ counter:=NewCounterDefinition(func(_ context.Context,_ contract.Scope,cfg CounterConfig)error{return nil})
+ if err:=counter.Validate([]byte(`1`));err==nil{t.Fatal("explicit scalar config root constraint lost")}
+ if err:=counter.Validate([]byte(`2`));err!=nil{t.Fatal(err)}
+ contribution:=NewContributionDefinition(func(_ context.Context,_ contract.Scope,cfg ContributionConfig)error{return nil})
+ if len(contribution.Requires)!=0||len(contribution.Provides)!=0{t.Fatal("contribution-only definition has fictitious service")}
+ if err:=contribution.Validate([]byte(`{}`));err!=nil{t.Fatal(err)}
+ if err:=contribution.Validate([]byte(`{"unknown":1}`));err==nil{t.Fatal("implicit config is not closed")}
+}
+
+func TestNamedRootAndOptionalNull(t *testing.T){
+ if _,err:=json.Marshal(Label("x"));err==nil{t.Fatal("named type constraint lost")}
+ var cfg PanelConfig
+ if err:=json.Unmarshal([]byte(`{"title":"ok","note":null}`),&cfg);err!=nil{t.Fatal(err)}
+ if cfg.Enabled.Present||cfg.Note.Valid{t.Fatal("absence and null confused")}
+ cfg.Enabled=schema.Some(false);cfg.Note=schema.NonNull("")
+ raw,err:=json.Marshal(cfg);if err!=nil{t.Fatal(err)}
+ var next PanelConfig
+ if err:=json.Unmarshal(raw,&next);err!=nil{t.Fatal(err)}
+ if !next.Enabled.Present||next.Enabled.Value||!next.Note.Valid||next.Note.Value!=""{t.Fatalf("zero values lost: %+v",next)}
+ before:=next
+ if err:=json.Unmarshal([]byte(`{"title":"bad","note":5}`),&next);err==nil{t.Fatal("invalid decode accepted")}
+ if !reflect.DeepEqual(before,next){t.Fatal("failed decode mutated receiver")}
+}
+
+func TestNullableObjectUsesSharedWrapper(t *testing.T){
+ cfg:=PanelConfig{Title:"ok",Details:schema.Some(schema.NonNull(PanelConfigDetailsValue{Name:"visible"}))}
+ raw,err:=json.Marshal(cfg);if err!=nil{t.Fatal(err)}
+ var decoded PanelConfig
+ if err:=json.Unmarshal(raw,&decoded);err!=nil{t.Fatal(err)}
+ if !decoded.Details.Present||!decoded.Details.Value.Valid||decoded.Details.Value.Value.Name!="visible"{t.Fatalf("nullable object lost: %+v",decoded)}
+ cfg.Details=schema.Some(schema.Nullable[PanelConfigDetailsValue]{})
+ raw,err=json.Marshal(cfg);if err!=nil{t.Fatal(err)}
+ if err:=json.Unmarshal(raw,&decoded);err!=nil{t.Fatal(err)}
+ if !decoded.Details.Present||decoded.Details.Value.Valid{t.Fatal("present null object confused with absent")}
+}
+
+func TestUnionConstructorFillsFormattedTag(t *testing.T){
+ for _,value:=range []CodeChoice{
+  NewCodeChoiceVariant1(CodeChoiceVariant1{}),
+  NewCodeChoiceVariant2(CodeChoiceVariant2{}),
+ }{raw,err:=json.Marshal(value);if err!=nil{t.Fatal(err)};var decoded CodeChoice;if err:=json.Unmarshal(raw,&decoded);err!=nil{t.Fatal(err)}}
+}

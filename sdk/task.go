@@ -15,7 +15,7 @@ type Task struct {
 	cancel context.CancelFunc
 }
 
-func (c *Client) BeginTask(ctx context.Context, id string) (*Task, error) {
+func (c *Client) BeginTask(ctx context.Context, id string) (contract.Task, error) {
 	if id == "" {
 		return nil, contract.Fail(contract.Invalid, "task id required")
 	}
@@ -23,7 +23,7 @@ func (c *Client) BeginTask(ctx context.Context, id string) (*Task, error) {
 	if c.tasks == nil {
 		c.tasks = map[string]*Task{}
 	}
-	if c.tasks[id] != nil || c.closed {
+	if c.tasks[id] != nil || c.retiring || c.closed {
 		c.mu.Unlock()
 		return nil, contract.Fail(contract.Conflict, "task already exists or client closed")
 	}
@@ -46,6 +46,14 @@ func (c *Client) BeginTask(ctx context.Context, id string) (*Task, error) {
 }
 
 func (t *Task) Context() context.Context { return t.ctx }
+func (t *Task) Release(ctx context.Context) error {
+	data, err := json.Marshal(contract.TaskRequest{ID: t.id, Token: t.token})
+	if err != nil {
+		return err
+	}
+	_, err = t.client.endpoint.Call(ctx, "task.release", data)
+	return err
+}
 func (t *Task) Finish(ctx context.Context, state string, result json.RawMessage, failure contract.Code) error {
 	data, err := json.Marshal(contract.TaskRequest{ID: t.id, Token: t.token, State: state, Result: result, Failure: failure})
 	if err != nil {

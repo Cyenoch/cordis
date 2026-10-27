@@ -1,0 +1,510 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Cordis author declaration",
+  "description": "Author declaration format, not the instance configuration editor schema. Use schema.Export for configuration.",
+  "$comment": "Go compiler additionally validates reference existence/cycles, kind-specific keywords and constraints, literal validity, service graph references, method/Go symbol uniqueness and consumer ranges. Go also requires an integer version token (not 1.0 or exponent notation) and uint32 components in version strings; JSON Schema cannot distinguish numeric token spelling.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "cordis-go.contract/v1"
+    },
+    "types": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/rootData"
+      }
+    },
+    "services": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/service"
+      }
+    },
+    "definitions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/definition"
+      }
+    }
+  },
+  "required": [
+    "schema"
+  ],
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": [
+        "types"
+      ],
+      "properties": {
+        "types": {
+          "minProperties": 1
+        }
+      }
+    },
+    {
+      "required": [
+        "services"
+      ],
+      "properties": {
+        "services": {
+          "minItems": 1
+        }
+      }
+    },
+    {
+      "required": [
+        "definitions"
+      ],
+      "properties": {
+        "definitions": {
+          "minItems": 1
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "nullable": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "enum": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "const": {},
+        "type": {
+          "enum": [
+            "object",
+            "array",
+            "string",
+            "boolean",
+            "number",
+            "integer"
+          ]
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/data"
+          }
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "additionalProperties": {
+          "const": false
+        },
+        "items": {
+          "$ref": "#/$defs/data"
+        },
+        "minLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "minItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "maxItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "int64",
+            "uint64",
+            "byte"
+          ]
+        },
+        "contentEncoding": {
+          "const": "base64"
+        },
+        "oneOf": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/data"
+          }
+        },
+        "discriminator": {
+          "type": "object",
+          "properties": {
+            "propertyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "propertyName"
+          ],
+          "additionalProperties": false
+        },
+        "$ref": {
+          "type": "string",
+          "pattern": "^#/(\\$defs|types)/([^~/]|~[01])+$"
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "$ref"
+          ],
+          "maxProperties": 1
+        },
+        {
+          "required": [
+            "type"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "oneOf"
+                ]
+              },
+              {
+                "required": [
+                  "$ref"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "oneOf",
+            "discriminator"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "type"
+                ]
+              },
+              {
+                "required": [
+                  "$ref"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "rootData": {
+      "type": "object",
+      "properties": {
+        "nullable": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "enum": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "const": {},
+        "type": {
+          "enum": [
+            "object",
+            "array",
+            "string",
+            "boolean",
+            "number",
+            "integer"
+          ]
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/data"
+          }
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "additionalProperties": {
+          "const": false
+        },
+        "items": {
+          "$ref": "#/$defs/data"
+        },
+        "minLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "minItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "maxItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "int64",
+            "uint64",
+            "byte"
+          ]
+        },
+        "contentEncoding": {
+          "const": "base64"
+        },
+        "oneOf": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/data"
+          }
+        },
+        "discriminator": {
+          "type": "object",
+          "properties": {
+            "propertyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "propertyName"
+          ],
+          "additionalProperties": false
+        },
+        "$ref": {
+          "type": "string",
+          "pattern": "^#/(\\$defs|types)/([^~/]|~[01])+$"
+        },
+        "$defs": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/data"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "$ref"
+          ],
+          "maxProperties": 2
+        },
+        {
+          "required": [
+            "type"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "oneOf"
+                ]
+              },
+              {
+                "required": [
+                  "$ref"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "oneOf",
+            "discriminator"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "type"
+                ]
+              },
+              {
+                "required": [
+                  "$ref"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "method": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "request": {
+          "$ref": "#/$defs/rootData"
+        },
+        "response": {
+          "$ref": "#/$defs/rootData"
+        }
+      },
+      "required": [
+        "name",
+        "request",
+        "response"
+      ],
+      "additionalProperties": false
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*\\.(0|[1-9][0-9]*)$"
+            }
+          ]
+        },
+        "methods": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/method"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "methods"
+      ],
+      "additionalProperties": false
+    },
+    "consumer": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "service": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minMinor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "maxMinor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "name",
+        "service",
+        "minMinor",
+        "maxMinor"
+      ],
+      "additionalProperties": false
+    },
+    "definition": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "config": {
+          "$ref": "#/$defs/rootData"
+        },
+        "provides": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "requires": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/consumer"
+          }
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

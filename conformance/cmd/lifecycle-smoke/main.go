@@ -20,6 +20,7 @@ import (
 	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/access"
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/examples/pluginmeta"
 	"github.com/Cyenoch/cordis/packagehost"
 	"github.com/Cyenoch/cordis/runtime/native"
 	"github.com/Cyenoch/cordis/runtime/wasm"
@@ -47,9 +48,9 @@ type evidence struct {
 
 // These are real protocol sessions; the wrapper only observes completed calls.
 // A denied release or failed shutdown is never converted to success.
-func (e *evidence) factory(contract.Manifest) contract.SessionFactory {
-	return func(transport io.ReadWriteCloser, owner contract.Identity, handler contract.SessionHandler) (contract.Session, error) {
-		endpoint, err := wire.New(wire.Options{Transport: transport, Identity: owner,
+func (e *evidence) factory(contract.Manifest) *contract.SessionFactory {
+	return &contract.SessionFactory{Protocol: contract.GenericSession, Open: func(transport io.ReadWriteCloser, owner contract.Identity, handler contract.SessionHandler, frameBytes int) (contract.Session, error) {
+		endpoint, err := wire.New(wire.Options{Transport: transport, Identity: owner, FrameBytes: frameBytes,
 			Handler: func(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
 				output, err := handler(ctx, method, data)
 				if err != nil {
@@ -61,13 +62,16 @@ func (e *evidence) factory(contract.Manifest) contract.SessionFactory {
 						return nil, err
 					}
 					var request struct {
-						Operation string `json:"operation"`
-						Owner     string `json:"owner,omitempty"`
+						Method string `json:"method"`
+						Input  struct {
+							Operation string `json:"operation"`
+							Owner     string `json:"owner,omitempty"`
+						} `json:"input"`
 					}
 					if err := contract.Decode(call.Input, &request); err != nil {
 						return nil, err
 					}
-					if request.Operation == "release" {
+					if request.Method == "execute" && request.Input.Operation == "release" {
 						var value counts
 						if err := contract.Decode(output, &value); err != nil {
 							return nil, err
@@ -81,7 +85,7 @@ func (e *evidence) factory(contract.Manifest) contract.SessionFactory {
 			return nil, err
 		}
 		return &observedSession{Session: endpoint, owner: owner, evidence: e}, nil
-	}
+	}}
 }
 
 func (e *evidence) add(value observation) {
@@ -173,7 +177,7 @@ func run(kind, guest, worker, badGuest string) (result report, resultErr error) 
 		}
 		adapter = wasm.New(worker, wasm.Options{Grace: 3 * time.Second})
 	}
-	options := cordis.Options{Directory: filepath.Join(root, "catalog"), Grace: 5 * time.Second,
+	options := cordis.Options{FrameBytes: contract.MaxFrameBytes, Directory: filepath.Join(root, "catalog"), Grace: 5 * time.Second,
 		Trust: packagehost.TrustPolicy{Keys: map[string]packagehost.TrustedKey{
 			"acceptance": {PublicKey: public, Publisher: "independent-author"}},
 			Publishers: map[string][]string{"independent-author": {"example.chain"}}},
@@ -225,7 +229,7 @@ func run(kind, guest, worker, badGuest string) (result report, resultErr error) 
 	}
 	result.Runtime = kind
 	result.Assertions = []string{"signed-install", "consumer-first-late-provider", "minor-2-in-range-1-to-3"}
-	if !slices.Contains(provider.Status().Diagnostics, "example.chain: optional dependency example.optional is not selected") {
+	if !slices.Contains(provider.Status().Diagnostics, "example.chain: optional dependency example.optional ^1.0.0 is not selected") {
 		return result, errors.New("optional package diagnostic lost at facade status")
 	}
 	result.Assertions = append(result.Assertions, "optional-dependency-status-diagnostic")
@@ -358,7 +362,7 @@ func run(kind, guest, worker, badGuest string) (result report, resultErr error) 
 	if err := configureFamily(host); err != nil {
 		return result, err
 	}
-	if err := host.Restore(ctx); err != nil {
+	if _, err := host.Restore(ctx); err != nil {
 		return result, fmt.Errorf("reopen restore: %w", err)
 	}
 	if err := expectCounts(ctx, host, "", "persisted", 2); err != nil {
@@ -506,8 +510,13 @@ func waitActive(ctx context.Context, host *cordis.Host, id string) error {
 
 func invoke(ctx context.Context, host *cordis.Host, realm, service, operation string) (counts, error) {
 	input, err := json.Marshal(struct {
+		Method string `json:"method"`
+		Input  struct {
+			Operation string `json:"operation"`
+		} `json:"input"`
+	}{Method: "execute", Input: struct {
 		Operation string `json:"operation"`
-	}{Operation: operation})
+	}{Operation: operation}})
 	if err != nil {
 		return counts{}, err
 	}
@@ -813,19 +822,10 @@ func makeArchive(ctx context.Context, root, kind, guest, version string, key ed2
 	if err := errors.Join(copyErr, output.Close(), input.Close()); err != nil {
 		return "", err
 	}
-	provides := func(name string) []contract.Service { return []contract.Service{{Name: name, Major: 1, Minor: 2}} }
-	requires := func(name string) []contract.Requirement {
-		return []contract.Requirement{{Name: name, Major: 1, MinMinor: 1, MaxMinor: 3}}
-	}
-	manifest := contract.Manifest{Schema: contract.PackageSchema, ID: "example.chain", Version: version,
-		Publisher: "independent-author", Protocol: contract.Protocol{Major: 1}, DefaultDefinition: "provider",
-		Definitions: []contract.DefinitionSpec{
-			{ID: "provider", Requires: []contract.Requirement{}, Provides: provides("chain.a")},
-			{ID: "middle", Requires: requires("chain.a"), Provides: provides("chain.b")},
-			{ID: "consumer", Requires: requires("chain.b"), Provides: provides("chain.c")},
-			{ID: "optional-parent", Requires: []contract.Requirement{}, Provides: []contract.Service{}},
-		}, Runtime: contract.RuntimeSpec{Kind: kind}, Dependencies: []contract.Dependency{},
-		OptionalDependencies: []contract.Dependency{{ID: "example.optional", Range: "^1.0.0"}}, Capabilities: []contract.Capability{}, Contributions: []contract.Contribution{}}
+	manifest := pluginmeta.Chain()
+	// Recovery conformance deliberately packages this declaration as several releases.
+	manifest.Version = version
+	manifest.Runtime = contract.RuntimeSpec{Kind: kind}
 	if kind == "wasm" {
 		manifest.Runtime.Entry = artifact
 	} else {

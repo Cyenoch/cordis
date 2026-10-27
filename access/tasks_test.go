@@ -250,12 +250,14 @@ func TestTaskResultQuotaBoundaries(t *testing.T) {
 				return task.Finish(access.TaskCompleted, result, nil)
 			}
 			result := json.RawMessage(`"` + strings.Repeat("x", access.MaxTaskResultBytes-2) + `"`)
+			var retained *access.Task
 			for i := range access.MaxTaskResultBytesPerActivation / access.MaxTaskResultBytes {
 				task, err := manager.Create(t.Context(), owner, fmt.Sprintf("result-%d", i), "test-generation")
 				if err != nil {
 					t.Fatal(err)
 				}
 				if i == 0 {
+					retained = task
 					tooLarge := json.RawMessage(`"` + strings.Repeat("x", access.MaxTaskResultBytes-1) + `"`)
 					if err := finish(task, tooLarge); !errors.Is(err, access.ErrTaskQuota) {
 						t.Fatalf("oversized result accepted: %v", err)
@@ -277,6 +279,19 @@ func TestTaskResultQuotaBoundaries(t *testing.T) {
 			}
 			if err := finish(over, nil); err != nil {
 				t.Fatalf("quota rejection prevented result-free finish: %v", err)
+			}
+			if err := manager.Release(owner, retained.Status().ID, retained.Status().Token); err != nil {
+				t.Fatal(err)
+			}
+			replacement, err := manager.Create(t.Context(), owner, "replacement-result", "new-generation")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := finish(replacement, result); err != nil {
+				t.Fatalf("release did not reclaim result budget: %v", err)
+			}
+			if string(retained.Status().Result) != string(result) {
+				t.Fatal("release destroyed host-held result")
 			}
 			if err := policy.Revoke(owner); err != nil {
 				t.Fatal(err)
@@ -317,7 +332,128 @@ func TestTaskFinishRejectsMalformedResultsWithoutCommitting(t *testing.T) {
 	}
 }
 
+func TestTaskReleasePreservesEveryTerminalState(t *testing.T) {
+	t.Parallel()
+	for _, state := range []access.TaskState{
+		access.TaskCompleted, access.TaskFailed, access.TaskCanceled, access.TaskInterrupted,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			t.Parallel()
+			policy := access.NewPolicy()
+			owner := identity("release")
+			activate(t, policy, owner)
+			manager := access.NewTaskManager(policy)
+			task, err := manager.Create(t.Context(), owner, "job", "generation")
+			if err != nil {
+				t.Fatal(err)
+			}
+			requireAccessCode(t, task.Release(), contract.Conflict)
+			var failure error
+			if state != access.TaskCompleted {
+				failure = errors.New("host-only task failure")
+			}
+			if err := task.Finish(state, json.RawMessage(`{"retained":true}`), failure); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := task.Release(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			status := task.Status()
+			if status.State != state || string(status.Result) != `{"retained":true}` || task.Err() != failure {
+				t.Fatalf("release changed terminal handle: %#v, %v", status, task.Err())
+			}
+			select {
+			case <-task.Done():
+			default:
+				t.Fatal("released task lost terminal signal")
+			}
+			if len(manager.Snapshot()) != 0 {
+				t.Fatal("released task retained in ledger")
+			}
+		})
+	}
+}
+
+func TestTaskReleaseAllowsLongLivedActivation(t *testing.T) {
+	t.Parallel()
+	policy := access.NewPolicy()
+	owner := identity("long-lived")
+	activate(t, policy, owner)
+	manager := access.NewTaskManager(policy)
+	for cycle := range 3 {
+		handles := make([]*access.Task, 0, access.MaxTasksPerActivation)
+		for i := range access.MaxTasksPerActivation {
+			id := fmt.Sprintf("job-%d", i)
+			token := contract.NewID()
+			task, err := manager.Create(t.Context(), owner, id, token)
+			if err != nil {
+				t.Fatalf("cycle %d task %d: %v", cycle, i, err)
+			}
+			if err := manager.Finish(owner, id, token, access.TaskCompleted, json.RawMessage(`true`), nil); err != nil {
+				t.Fatal(err)
+			}
+			handles = append(handles, task)
+		}
+		if _, err := manager.Create(t.Context(), owner, "overflow", contract.NewID()); !errors.Is(err, access.ErrTaskQuota) {
+			t.Fatalf("retained terminal tasks bypassed quota: %v", err)
+		}
+		if len(manager.Snapshot()) != access.MaxTasksPerActivation {
+			t.Fatal("manager implicitly evicted retained results")
+		}
+		for _, task := range handles {
+			status := task.Status()
+			if err := manager.Release(owner, status.ID, status.Token); err != nil {
+				t.Fatal(err)
+			}
+			if task.Status().State != access.TaskCompleted || string(task.Status().Result) != "true" {
+				t.Fatal("release changed existing handle")
+			}
+		}
+		if len(manager.Snapshot()) != 0 {
+			t.Fatal("release retained ledger entries")
+		}
+	}
+}
+
+func TestTaskManagerReleaseRequiresMatchingTerminalTask(t *testing.T) {
+	t.Parallel()
+	policy := access.NewPolicy()
+	owner := identity("release")
+	activate(t, policy, owner)
+	manager := access.NewTaskManager(policy)
+	requireAccessCode(t, access.NewTaskManager(nil).Release(owner, "job", "token"), contract.Invalid)
+	requireAccessCode(t, manager.Release(owner, "job", "token"), contract.NotReady)
+	task, err := manager.Create(t.Context(), owner, "job", "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireAccessCode(t, manager.Release(owner, "job", "wrong-token"), contract.Denied)
+	requireAccessCode(t, manager.Release(identity("other"), "job", "token"), contract.NotReady)
+	requireAccessCode(t, manager.Release(owner, "job", "token"), contract.Conflict)
+	if err := task.Start(); err != nil {
+		t.Fatal(err)
+	}
+	requireAccessCode(t, manager.Release(owner, "job", "token"), contract.Conflict)
+	if got := manager.Snapshot(); len(got) != 1 || got[0].State != access.TaskRunning {
+		t.Fatalf("release removed active task: %#v", got)
+	}
+	if err := task.Finish(access.TaskCompleted, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	requireAccessCode(t, manager.Release(owner, "job", "wrong-token"), contract.Denied)
+	if err := manager.Release(owner, "job", "token"); err != nil {
+		t.Fatal(err)
+	}
+	requireAccessCode(t, manager.Release(owner, "job", "token"), contract.NotReady)
+	if len(manager.Snapshot()) != 0 {
+		t.Fatal("release retained task")
+	}
+}
+
 func TestTransferredTaskReleasePreservesHandleAndRecoversQuota(t *testing.T) {
+	t.Parallel()
 	policy := access.NewPolicy()
 	manager := access.NewTaskManager(policy)
 	owner := identity("release")
@@ -338,7 +474,7 @@ func TestTransferredTaskReleasePreservesHandleAndRecoversQuota(t *testing.T) {
 	if err = task.Finish(access.TaskCompleted, []byte(`{"ok":true}`), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err = task.Release(); err != nil {
+	if err = manager.Release(owner, "job", "test-generation"); err != nil {
 		t.Fatal(err)
 	}
 	if err = task.Release(); err != nil {
@@ -350,34 +486,61 @@ func TestTransferredTaskReleasePreservesHandleAndRecoversQuota(t *testing.T) {
 }
 
 func TestReleasedTaskIDRejectsOldGeneration(t *testing.T) {
-	policy := access.NewPolicy()
-	owner := identity("first")
-	activate(t, policy, owner)
-	manager := access.NewTaskManager(policy)
-	old, err := manager.Create(t.Context(), owner, "job", "old")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = old.Transfer(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err = old.Finish(access.TaskCompleted, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err = old.Release(); err != nil {
-		t.Fatal(err)
-	}
-	replacement, err := manager.Create(t.Context(), owner, "job", "new")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = manager.Finish(owner, "job", "old", access.TaskCompleted, []byte(`"stale"`), nil); err == nil {
-		t.Fatal("stale task completed replacement")
-	}
-	if replacement.Status().State != access.TaskQueued {
-		t.Fatal(replacement.Status())
-	}
-	if err = manager.Finish(owner, "job", "new", access.TaskCompleted, []byte(`"current"`), nil); err != nil {
-		t.Fatal(err)
+	t.Parallel()
+	for _, transferred := range []bool{false, true} {
+		t.Run(fmt.Sprintf("transferred-%t", transferred), func(t *testing.T) {
+			t.Parallel()
+			policy := access.NewPolicy()
+			owner := identity("first")
+			activate(t, policy, owner)
+			manager := access.NewTaskManager(policy)
+			old, err := manager.Create(t.Context(), owner, "job", "old")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if transferred {
+				if err := old.Transfer(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := old.Finish(access.TaskCompleted, json.RawMessage(`"original"`), nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := old.Release(); err != nil {
+				t.Fatal(err)
+			}
+			replacement, err := manager.Create(t.Context(), owner, "job", "new")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = manager.Create(t.Context(), owner, "job", "old")
+			requireAccessCode(t, err, contract.Conflict)
+			for _, state := range []access.TaskState{access.TaskCompleted, access.TaskCanceled} {
+				requireAccessCode(t, manager.Finish(owner, "job", "old", state, json.RawMessage(`"stale"`), nil), contract.Denied)
+			}
+			requireAccessCode(t, manager.Release(owner, "job", "old"), contract.Denied)
+			requireAccessCode(t, old.Start(), contract.Conflict)
+			requireAccessCode(t, old.Cancel(), contract.Conflict)
+			requireAccessCode(t, old.Finish(access.TaskCompleted, json.RawMessage(`"late"`), nil), contract.Conflict)
+			if err := old.Release(); err != nil {
+				t.Fatal(err)
+			}
+			if replacement.Status().State != access.TaskQueued {
+				t.Fatal(replacement.Status())
+			}
+			if err := manager.Finish(owner, "job", "new", access.TaskCompleted, json.RawMessage(`"current"`), nil); err != nil {
+				t.Fatal(err)
+			}
+			requireAccessCode(t, manager.Release(owner, "job", "old"), contract.Denied)
+			if err := old.Release(); err != nil {
+				t.Fatal(err)
+			}
+			if got := manager.Snapshot(); len(got) != 1 || got[0].Token != "new" || string(got[0].Result) != `"current"` {
+				t.Fatalf("old token or handle changed replacement: %#v", got)
+			}
+			if old.Status().State != access.TaskCompleted || string(old.Status().Result) != `"original"` {
+				t.Fatal("ID reuse changed old terminal handle")
+			}
+		})
 	}
 }

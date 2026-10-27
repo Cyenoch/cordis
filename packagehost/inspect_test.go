@@ -106,7 +106,7 @@ func TestStoreRejectsSigningKeyBindingAndConfigBeforeExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := manifestFixture("demo", "2.0.0")
-	m.ConfigSchema = json.RawMessage(`{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"],"additionalProperties":false}`)
+	m.Definitions[0].ConfigSchema = json.RawMessage(`{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"],"additionalProperties":false}`)
 	validArchive, _ := archiveFixture(t, m, key)
 	p, err := store.Install(ctx, validArchive)
 	if err != nil {

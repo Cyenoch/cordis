@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/packagehost"
+	"sync/atomic"
 	"testing"
 )
 
@@ -72,5 +73,54 @@ func TestCascadeDeniedHasNoSideEffects(t *testing.T) {
 	plan, err := h.PlanCascade(t.Context(), p1, packagehost.SelectPackage)
 	if err != nil || len(plan.Entries) != 0 {
 		t.Fatal("same-version replace planned removal", plan, err)
+	}
+}
+
+func TestReplaceCascadeReservesTargetTreeWhileDisposingChild(t *testing.T) {
+	h, p1, p2 := lifecycleHost(t)
+	parent, err := h.Enable(t.Context(), contract.Entry{ID: "target", Package: p1.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := parent.Wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var starts atomic.Int32
+	child, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "child", Parent: "target", Config: []byte(`1`)}, contract.Definition{Start: func(_ context.Context, s contract.Scope) error {
+		if starts.Add(1) == 1 {
+			return s.Defer(func(context.Context) error { close(entered); <-release; return nil })
+		}
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- h.ReplaceCascade(t.Context(), p2, packagehost.ChangeOptions{}, func(context.Context, CascadePlan) error { return nil })
+	}()
+	<-entered
+	if _, err := parent.Update(t.Context(), []byte(`{}`)); err == nil {
+		close(release)
+		t.Fatal("cascade admitted an update to snapshotted target")
+	}
+	if err := h.Resume(t.Context(), "target"); err == nil {
+		close(release)
+		t.Fatal("cascade admitted conflicting target control")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	current, err := h.Instance("target")
+	if err != nil || current == parent {
+		t.Fatal("replacement did not install new handle", err)
+	}
+	if _, err := parent.Update(t.Context(), []byte(`{}`)); err == nil {
+		t.Fatal("stale handle updated replacement")
 	}
 }

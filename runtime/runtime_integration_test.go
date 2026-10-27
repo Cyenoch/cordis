@@ -67,8 +67,9 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 			start := func(t *testing.T) contract.Session {
 				t.Helper()
 				startup, cancel := context.WithCancel(context.Background())
-				session, err := test.runtime.Start(startup, contract.Launch{
-					Identity:  contract.Identity{Package: "faultplugin", Entry: "instance", Activation: contract.NewID(), Digest: "fixture"},
+				identity := contract.Identity{Package: "faultplugin", Entry: "instance", Activation: contract.NewID(), Digest: "fixture"}
+				session, err := test.runtime.Start(startup, contract.Launch{FrameBytes: contract.MaxFrameBytes,
+					Identity:  identity,
 					Directory: root, Artifact: test.artifact,
 					Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 						return nil, contract.Fail(contract.Denied, "fixture has no host grants")
@@ -81,7 +82,11 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 				t.Cleanup(func() { session.Close() })
 				ctx, done := context.WithTimeout(context.Background(), 40*time.Second)
 				defer done()
-				if _, err := session.Call(ctx, "initialize", json.RawMessage(`{}`)); err != nil {
+				input, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Identity: identity, Protocol: contract.Protocol{Major: 1}, Definition: "fixture", Config: json.RawMessage(`{}`)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := session.Call(ctx, "initialize", input); err != nil {
 					t.Fatalf("initialize real command: %v", err)
 				}
 				return session
@@ -229,7 +234,7 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 				} else {
 					adapter = wasm.New(workerPath, wasm.Options{Lifetime: lifetime, Grace: 100 * time.Millisecond})
 				}
-				session, err := adapter.Start(context.Background(), contract.Launch{
+				session, err := adapter.Start(context.Background(), contract.Launch{FrameBytes: contract.MaxFrameBytes,
 					Identity: contract.Identity{Activation: contract.NewID()}, Directory: root, Artifact: test.artifact,
 					Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 						return nil, contract.Fail(contract.Denied, "no grants")
@@ -265,7 +270,7 @@ func TestNativeStartupRejectsInvalidPaths(t *testing.T) {
 	runtime := native.New()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := runtime.Start(ctx, contract.Launch{})
+	_, err := runtime.Start(ctx, contract.Launch{FrameBytes: contract.MaxFrameBytes})
 	if err == nil {
 		t.Fatal("canceled or empty launch accepted")
 	}
@@ -274,7 +279,7 @@ func TestNativeStartupRejectsInvalidPaths(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("not executable"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = runtime.Start(context.Background(), contract.Launch{Directory: root, Artifact: outside})
+	_, err = runtime.Start(context.Background(), contract.Launch{FrameBytes: contract.MaxFrameBytes, Directory: root, Artifact: outside})
 	if err == nil || errors.Is(err, context.Canceled) {
 		t.Fatal("artifact escaped package root")
 	}
@@ -329,7 +334,7 @@ func TestWASMWorkerLimits(t *testing.T) {
 			if err := os.WriteFile(path, fixture.binary, 0600); err != nil {
 				t.Fatal(err)
 			}
-			session, err := wasm.New(worker, fixture.options).Start(context.Background(), contract.Launch{
+			session, err := wasm.New(worker, fixture.options).Start(context.Background(), contract.Launch{FrameBytes: contract.MaxFrameBytes,
 				Identity: contract.Identity{Activation: contract.NewID()}, Directory: root, Artifact: path,
 				Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 					return nil, contract.Fail(contract.Denied, "no host imports")

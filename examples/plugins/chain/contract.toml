@@ -1,0 +1,61 @@
+[types.Settings]
+type = "object"
+
+[types.Settings.properties.label]
+type = "string"
+
+[types.Request]
+type = "object"
+required = ["operation"]
+
+[types.Request.properties.operation]
+type = "string"
+
+[types.Request.properties.owner]
+type = "string"
+
+[types.Response]
+type = "object"
+required = ["acquired", "released", "live", "label"]
+
+[types.Response.properties]
+acquired = { type = "integer" }
+released = { type = "integer" }
+live = { type = "integer" }
+label = { type = "string" }
+
+[[services]]
+name = "chain.a"
+version = "1.2"
+methods = [{ name = "execute", request = { "$ref" = "#/types/Request" }, response = { "$ref" = "#/types/Response" } }]
+
+[[services]]
+name = "chain.b"
+version = "1.2"
+methods = [{ name = "execute", request = { "$ref" = "#/types/Request" }, response = { "$ref" = "#/types/Response" } }]
+
+[[services]]
+name = "chain.c"
+version = "1.2"
+methods = [{ name = "execute", request = { "$ref" = "#/types/Request" }, response = { "$ref" = "#/types/Response" } }]
+
+[[definitions]]
+id = "provider"
+config = { "$ref" = "#/types/Settings" }
+provides = ["chain.a"]
+
+[[definitions]]
+id = "middle"
+config = { "$ref" = "#/types/Settings" }
+provides = ["chain.b"]
+requires = [{ name = "upstream", service = "chain.a", minMinor = 1, maxMinor = 3 }]
+
+[[definitions]]
+id = "consumer"
+config = { "$ref" = "#/types/Settings" }
+provides = ["chain.c"]
+requires = [{ name = "upstream", service = "chain.b", minMinor = 1, maxMinor = 3 }]
+
+[[definitions]]
+id = "optional-parent"
+config = { "$ref" = "#/types/Settings" }

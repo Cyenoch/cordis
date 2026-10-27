@@ -14,7 +14,10 @@ import (
 	"github.com/Cyenoch/cordis/contract"
 )
 
-func auditHandler(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+func auditHandler(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
+	if method == "initialize" {
+		return testRegistration(), nil
+	}
 	return json.RawMessage(`{}`), nil
 }
 func auditWrite(t *testing.T, c net.Conn, f Frame) {
@@ -26,7 +29,7 @@ func auditWrite(t *testing.T, c net.Conn, f Frame) {
 func auditEndpoint(t *testing.T, limits Limits) (*Endpoint, net.Conn) {
 	t.Helper()
 	a, b := net.Pipe()
-	e, err := New(Options{Transport: a, Identity: contract.Identity{Activation: "audit"}, Limits: limits, Handler: auditHandler})
+	e, err := New(Options{FrameBytes: contract.MaxFrameBytes, Transport: a, Identity: contract.Identity{Activation: "audit"}, Limits: limits, Handler: auditHandler})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +99,7 @@ func TestCanceledParentChildInTransitKeepsSessionHealthy(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		a, b := net.Pipe()
 		gate := &auditGateTransport{Conn: b, entered: make(chan struct{}), release: make(chan struct{})}
-		host, err := New(Options{Transport: a, Identity: contract.Identity{Activation: "audit"}, Handler: auditHandler})
+		host, err := New(Options{FrameBytes: contract.MaxFrameBytes, Transport: a, Identity: contract.Identity{Activation: "audit"}, Handler: auditHandler})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +114,7 @@ func TestCanceledParentChildInTransitKeepsSessionHealthy(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { host.Close(); guest.Close(); host.Wait(); guest.Wait() }()
-		if _, err := host.Call(context.Background(), "initialize", nil); err != nil {
+		if _, err := host.Call(context.Background(), "initialize", testInitialize("audit")); err != nil {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithCancel(context.Background())

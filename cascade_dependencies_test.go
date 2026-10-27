@@ -53,7 +53,7 @@ func dependencyHostRuntime(t *testing.T, nativeV2 bool) (*Host, contract.Package
 	}
 	var fixtures []fixture
 	for _, pair := range [][2]string{{"a", "1.0.0"}, {"a", "2.0.0"}, {"b", "1.0.0"}} {
-		m := contract.Manifest{Schema: contract.PackageSchema, ID: pair[0], Version: pair[1], Publisher: "publisher", Protocol: contract.Protocol{Major: 1}, Definitions: []contract.DefinitionSpec{{ID: "main"}}, DefaultDefinition: "main", Runtime: contract.RuntimeSpec{Kind: "wasm", Entry: "plugin.wasm"}}
+		m := contract.Manifest{Schema: contract.PackageSchema, ID: pair[0], Version: pair[1], Publisher: "publisher", Protocol: contract.Protocol{Major: 1}, Definitions: []contract.DefinitionSpec{{ID: "main", ConfigSchema: json.RawMessage(`{"type":"object","properties":{}}`)}}, DefaultDefinition: "main", Runtime: contract.RuntimeSpec{Kind: "wasm", Entry: "plugin.wasm"}}
 		if nativeV2 && pair[0] == "a" && pair[1] == "2.0.0" {
 			m.Runtime = contract.RuntimeSpec{Kind: "native", Artifacts: []contract.Artifact{{OS: runtime.GOOS, Arch: runtime.GOARCH, Path: "plugin.wasm"}}}
 		}
@@ -76,7 +76,7 @@ func dependencyHostRuntime(t *testing.T, nativeV2 bool) (*Host, contract.Package
 		trust.DevDigests[p.Ref.Digest] = true
 		fixtures = append(fixtures, fixture{m, path, p.Ref})
 	}
-	h, err := Open(Options{Directory: t.TempDir(), Trust: trust, Runtimes: map[string]contract.Runtime{"wasm": fixtureRuntime{}}})
+	h, err := Open(Options{FrameBytes: contract.MaxFrameBytes, Directory: t.TempDir(), Trust: trust, Runtimes: map[string]contract.Runtime{"wasm": fixtureRuntime{}}})
 	if err != nil {
 		t.Fatal(err)
 	}

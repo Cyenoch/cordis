@@ -36,7 +36,7 @@ func TestWASICommandAuthorSDK(t *testing.T) {
 		t.Fatalf("author build %v: %s", err, data)
 	}
 	identity := contract.Identity{Package: "example.counter", Entry: "one", Activation: contract.NewID(), Digest: "fixture"}
-	session, err := wasm.New(worker).Start(t.Context(), contract.Launch{Identity: identity, Directory: dir, Artifact: plugin, Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	session, err := wasm.New(worker).Start(t.Context(), contract.Launch{FrameBytes: contract.MaxFrameBytes, Identity: identity, Directory: dir, Artifact: plugin, Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 		return json.RawMessage(`{"message":"host callback"}`), nil
 	}})
 	if err != nil {
@@ -49,17 +49,20 @@ func TestWASICommandAuthorSDK(t *testing.T) {
 	}()
 	startup, startupCancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer startupCancel()
-	input, err := json.Marshal(contract.Initialize{Identity: identity, Protocol: contract.Protocol{Major: 1}, Definition: "counter", Config: json.RawMessage(`{"initial":4}`)})
+	input, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Identity: identity, Protocol: contract.Protocol{Major: 1}, Definition: "counter", Config: json.RawMessage(`{"initial":4}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.Call(startup, "initialize", input); err != nil {
 		t.Fatalf("WASI SDK initialize: %v", err)
 	}
+	if _, err := session.Call(startup, "activation.publish", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
 	startupCancel()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	input, err = json.Marshal(contract.Invocation{Service: contract.Service{Name: "example.counter", Major: 1}, Input: json.RawMessage(`{"operation":"host","delta":0}`)})
+	input, err = json.Marshal(contract.Invocation{Service: contract.Service{Name: "example.counter", Major: 1}, Input: json.RawMessage(`{"method":"execute","input":{"operation":"host","delta":0}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +81,7 @@ func TestWASICommandAuthorSDK(t *testing.T) {
 	if result.Value != 4 || result.Host != "host callback" {
 		t.Fatalf("wrong guest result: %s", data)
 	}
-	waitInput, err := json.Marshal(contract.Invocation{Service: contract.Service{Name: "example.counter", Major: 1}, Input: json.RawMessage(`{"operation":"wait","delta":0}`)})
+	waitInput, err := json.Marshal(contract.Invocation{Service: contract.Service{Name: "example.counter", Major: 1}, Input: json.RawMessage(`{"method":"execute","input":{"operation":"wait","delta":0}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

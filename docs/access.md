@@ -21,6 +21,7 @@ codePaths:
 - `NewPolicy()`：零值也可用，实例不可复制。
 - `Policy.Grant(identity, capability, scope)`：仅能给已声明能力发放宿主 handle；同能力重新授权先撤销旧 grant。
 - `Grant.Revoke()`：关闭该 grant 后续调用，取消已准入调用，不影响其他 grant。
+- `Policy.RevokeCapability(identity, capability)`：宿主按受信任身份定位当前 grant，复用同一撤销与取消机制，无需保存初始化时的 handle。未授予的能力返回 `not_ready`，重复撤销当前已撤销 grant 幂等；旧激活返回 `denied`，不影响新激活或其他 owner、能力。重新授权后此入口撤销新的 grant，旧 handle 不能撤销它。
 - `Policy.Revoke(identity)`：关闭整次激活，撤销贡献、中断未移交任务并取消在途调用。
 - `Policy.Calls(identity)`：宿主可以观察已取消但 handler 尚未返回的调用，包括已退休激活；取消不等于系统调用结束。
 
@@ -42,14 +43,16 @@ codePaths:
 
 ## 任务与显式接管
 
-`manager := NewTaskManager(policy)`；`manager.Create(ctx, identity, id, token)` 建立 queued 任务。活跃 ledger 中同 owner 的 ID 不可重复，token 每次创建必须使用新 `contract.NewID()`；SDK 自动生成并在 begin/finish/cancel 全链携带，拒绝已释放旧代次的迟到完成/取消；`Task.Start()` 转为 running。`Task.Finish(state, result, failure)` 提交唯一终态：completed、failed、canceled 或 interrupted；failed 必须有错误，completed 不能附带错误。完成后再次提交返回 conflict，不改终态。原始错误只通过 host handle 的 `Err()` 返回；`Status()` 仅携带稳定失败码和显式结果。
+`manager := NewTaskManager(policy)`；`manager.Create(ctx, identity, id, token)` 建立 queued 任务。同 owner 的 ID 在 ledger 中仍有记录时不可重复；显式释放后可重用 ID，但调用者每次创建必须使用新的 `contract.NewID()` token。SDK 自动生成 token，begin/finish/cancel 全链携带并匹配，防止旧代次消息修改新任务；manager 不保存已释放 token 的永久历史，不能把重复使用 token 当作受支持的反重放方式。`Task.Start()` 转为 running。`Task.Finish(state, result, failure)` 提交唯一终态：completed、failed、canceled 或 interrupted；failed 必须有错误，completed 不能附带错误。完成后再次提交返回 conflict，不改终态。原始错误只通过 host handle 的 `Err()` 返回；`Status()` 仅携带稳定失败码和显式结果。
 
 - `Task.Context()` 是实际执行工作必须遵守的取消信号；`Done()` 表示任务管理终态，不声明外部 I/O 已回滚。
 - caller 取消使未移交任务 canceled；完成与接管提交前在 policy 锁内检查当前 parent 的 `Err()`，不依赖异步取消 callback 的调度。激活停止使未移交任务 interrupted，且拒绝新建任务和迟到完成。
 - `Task.Transfer(hostCtx)` 是仅宿主持有 handle 才能执行的接管。只能接管仍未取消的任务；在同一临界区替换取消 parent 后，后续由 hostCtx 控制。停止插件不会杀死已接管事务。
 - guest 完成消息必须走 `TaskManager.Finish(identity,id,token,state,result,failure)`；此入口拒绝旧激活，也拒绝修改已接管任务。宿主通过持有的 `Task` 完成已接管事务。
 - 每个 manager 为每次激活保留至多 `MaxTasksPerActivation`（256）条记录，包含 queued、running、终态和显式接管任务；单个结果至多 `MaxTaskResultBytes`（1 MiB），累计保留结果至多 `MaxTaskResultBytesPerActivation`（8 MiB），均按原始 JSON 字节计算。超过限制返回 `ErrTaskQuota`，不新建记录、不复制结果、不提交终态；累计结果额度耗尽后仍允许无结果完成。此固定有界历史避免 guest 通过顺序完成任务耗尽宿主内存。
-- 激活撤销时 manager 删除该 owner 所有未接管记录和结果，`Snapshot()` 不再显示它们；仅显式接管记录继续保留。宿主已经持有的 `Task` handle 仍可读取终态、结果与原始 `Err()`；删除 ledger 不会破坏 handle，也不表示外部操作已回滚。终态接管任务由宿主调用 `Task.Release()` 从 manager ledger 和结果额度中移除；运行中拒绝释放，重复释放幂等。已有 handle 的 Status/Err 仍可读；宿主也应释放自己的引用。
+- 宿主可对任意普通或接管任务调用 `Task.Release()`，显式移除终态 ledger 并回收记录计数与结果额度；queued、running 返回 `conflict`，不删除活跃工作。不自动淘汰其他保留结果；同一 activation 可持续完成、释放并创建新任务。重复调用同一 handle 的 Release 幂等，旧 handle 的 Status/Err/Done 保持独立终态，迟到 Release 不会删掉复用 ID 的新任务。宿主也应释放自己的引用。
+- 未保存 handle 的可信宿主可用 `TaskManager.Release(identity,id,token)`，从现有 ledger 核对完整 owner 与创建 token 后委托给 `Task.Release()`；不绕过 token，也不要求 owner 仍活跃，因此可释放退休激活的已接管终态任务。未找到返回 `not_ready`（含已释放记录），token 不符返回 `denied`，活跃任务返回 `conflict`。`Snapshot()` 保留供宿主查询现有记录，不接受 guest 自报身份作为管理授权。
+- 激活撤销时 manager 删除该 owner 所有未接管记录和结果，`Snapshot()` 不再显示它们；仅显式接管记录继续保留。宿主已经持有的 `Task` handle 仍可读取终态、结果与原始 `Err()`；删除 ledger 不会破坏 handle，也不表示外部操作已回滚。
 
 checkpoint、持久任务 journal、业务恢复和补偿由宿主负责。任务完成不表示外部事务已持久化，cleanup 也不会回滚数据库或网络副作用。
 
@@ -73,4 +76,12 @@ checkpoint、持久任务 journal、业务恢复和补偿由宿主负责。任�
 
 ## 行为测试
 
-`access/*_test.go` 覆盖撤销与准入交错、取消及迟到结果、整批校验失败不可见、core gate 可见性、旧激活拒绝、任务唯一终态与接管存活、取消 callback 延迟时完成/接管拒绝、任务 flood 与结果字节边界、退休 ledger 清理及宿主 handle 保留、跨 namespace/配额拒绝、真实持久化/确认迁移和诊断 secret 不泄露。集成负责人统一记录单测、集成与 race 的实际结果；当前修订和平台范围以 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md) 为准。
+`access/*_test.go` 覆盖撤销与准入交错、按当前能力撤权及其他 owner/grant 隔离、取消及迟到结果、整批校验失败不可见、core gate 可见性、旧激活拒绝、任务唯一终态与接管存活、取消 callback 延迟时完成/接管拒绝、任务 flood 与结果字节边界、同 activation 长期完成/释放循环、终态计数与结果额度回收、活跃任务不可删、旧 handle/token 不修改新任务、退休 ledger 清理及宿主 handle 保留、跨 namespace/配额拒绝、真实持久化/确认迁移和诊断 secret 不泄露。集成负责人统一记录单测、集成与 race 的实际结果；当前修订和平台范围以 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md) 为准。
+
+## Typed namespace 与未知提交
+
+`access.Register[I,O]` 复用 Broker 的同一授权准入及 `contract.Encode/DecodeData`。`access.RegisterNamespace(broker, store, capability, authorize)` 提供标准字节 CRUD；owner 来自受信调用绑定，namespace 按 package 绑定，guest 请求不能选 owner 或 namespace。迁移和删除整个空间仍由宿主显式确认。
+
+`client := sdk.NewNamespaceClient(invoker, capability)` 接受 `contract.HostInvoker`；`Read/Write/Delete` 返回 typed 错误，`Do` 同时公开 `NamespaceResult.Outcome`。有效应答保留 missing、denied、quota、not-committed、committed 与 recovery-required；字节用标准 base64，线上不携带本地 cause。
+
+请求已经发出但因取消、撤权、断链或非法/迟到应答无法确认结果时，返回 `*contract.SubmissionUnknownError` 并保留原原因，不能当作未提交或 storage recovery-required 自动重试。只有发出前已证明失败，或收到确定的存储结果，才使用对应 outcome。宿主的 `CommittedError` 和 `RecoveryError` 与共享错误类型一致，`errors.Is/As` 保留本地原因。

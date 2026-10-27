@@ -1,0 +1,16 @@
+id = "example.counter"
+version = "1.0.0"
+publisher = "example.author"
+contracts = ["contract.toml"]
+
+[runtime]
+kind = "native"
+
+[[runtime.artifacts]]
+os = "darwin"
+arch = "arm64"
+path = "plugin"
+
+[[capabilities]]
+id = "example.greeting"
+scope = {}

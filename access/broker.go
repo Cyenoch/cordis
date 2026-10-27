@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -53,6 +54,37 @@ func (b *Broker) Register(capability string, authorize ScopeHandler, handler Hos
 	}
 	b.handlers[capability] = capabilityHandler{authorize: authorize, handle: handler}
 	return nil
+}
+
+// Register adapts business data without changing Broker's authorization or
+// trusted session identity. Local handler errors retain their original chain.
+func Register[I, O any](
+	b *Broker,
+	capability string,
+	authorize ScopeHandler,
+	handler func(context.Context, contract.Identity, I) (O, error),
+) error {
+	if b == nil || handler == nil {
+		return contract.Fail(contract.Invalid, "incomplete typed capability handler")
+	}
+	if err := contract.CheckDataType(reflect.TypeFor[I]()); err != nil {
+		return fmt.Errorf("capability input: %w", err)
+	}
+	if err := contract.CheckDataType(reflect.TypeFor[O]()); err != nil {
+		return fmt.Errorf("capability output: %w", err)
+	}
+	return b.Register(capability, authorize,
+		func(ctx context.Context, owner contract.Identity, raw json.RawMessage) (json.RawMessage, error) {
+			var input I
+			if err := contract.DecodeData(raw, &input); err != nil {
+				return nil, err
+			}
+			output, err := handler(ctx, owner, input)
+			if err != nil {
+				return nil, err
+			}
+			return contract.Encode(output)
+		})
 }
 
 // Call takes owner from the trusted session binding; do not decode it from input.

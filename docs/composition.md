@@ -42,9 +42,9 @@ CreateChild 只登记，不等待启动。父实例发布后子实例才可启�
 
 Definition 的 `Requires` 是当前 activation 的必需服务列表，`Provides` 是初始化必须完成的精确声明。所有注册在 Start 中暂存；Start 成功、声明齐全、无重复 provider 且 revision 仍为最新时才整体发布服务和订阅。消费者初始化前取得固定 binding snapshot，不会在调用中悄悄切换 provider。provider 退役后消费者退回等待，新的 provider 发布后生成新的消费者 activation。
 
-`Instance.Status` 分别报告 Desired、Applied、WaitingFor 和最后错误。`Update` 先校验再增加 Desired，取消其等待不撤销有效更新。更新会停止旧 activation，最终只应用最新版本；被覆盖的等待者收到 `UpdateResult.Superseded`。旧初始化即使忽略取消并迟到完成也不能发布。失败实例只有有效 Update 或显式 Retry 才恢复。确定的服务激活依赖环被诊断为 `reentrant_call`。
+`Instance.Status` 分别报告 Desired、Applied、Waiting 和最后错误。`Update` 先校验再增加 Desired，取消其等待不撤销有效更新。更新会停止旧 activation，最终只应用最新版本；被覆盖的等待者收到 `UpdateResult.Superseded`。旧初始化即使忽略取消并迟到完成也不能发布。失败实例只有有效 Update 或显式 Retry 才恢复。确定的服务激活依赖环被诊断为 `reentrant_call`。
 
-Facade 的 `Status.Diagnostics` 保留包预检中可选依赖缺失/不兼容的诊断，不将其混成启动失败；必需服务未满足仍由 WaitingFor 表达。配置提交和 Stop/Remove/Close 的生命周期准入有序协调：停用之后拒绝的更新不能迟到写入 catalog，也不能复活已关闭实例。真实外部链与对应并发回归见[生命周期验收](lifecycle-acceptance.md)和[回归](regressions.md)。
+Facade 的 `Status.Diagnostics` 保留包预检中可选依赖缺失/不兼容的诊断，不将其混成启动失败；必需服务未满足仍由 Waiting 表达。配置提交和 Stop/Remove/Close 的生命周期准入有序协调：停用之后拒绝的更新不能迟到写入 catalog，也不能复活已关闭实例。真实外部链与对应并发回归见[生命周期验收](lifecycle-acceptance.md)和[回归](regressions.md)。
 
 ## 所有权与停止顺序
 
@@ -73,3 +73,17 @@ Facade 跟踪 external 与 builtin 的同一父子所有权树。`Host.Disable(p
 `Hooks.BeforePublish(identity)` 在锁外准备与 activation 关联的外部记录；失败会阻止发布并进入统一清理。`OnRetire(identity)` 在锁外撤销记录，且此时 `IsActive(identity)` 必为 false。每个 activation 的两个 hook 互斥串行：退役若先发生，迟到初始化会跳过 BeforePublish；若预备已开始，撤销等待它返回，避免迟到预备记录重新出现。普通取消不被 hook 阻塞。
 
 独立 registry 的锁无法凭两个普通回调实现跨锁原子提交。外部贡献的读取必须先取得 snapshot、释放自己的锁，再用 `Engine.IsActive(identity)` 筛选；该 active 标志就是服务与贡献共同的可见提交点。不要在外部 registry 锁内回调 Engine，避免 ABBA 锁顺序。
+
+## 配置与当前管理状态
+
+配置约束属于 definition，不属于包。生成的 `New<Name>Definition` 同时提供 validator、服务描述和 typed Start；Enable、Update、Replace 和 child 登记在持久意图或旧实例退役前使用相同校验。只对省略配置补 `{}`，显式 null 不变；空对象仍须通过根类型和必填约束。
+
+`host.Instance(id)` 返回当前句柄，`host.Instances()` 返回独立快照。替换前的句柄不能修改新登记。`Status.Waiting` 包含 requirement 的完整 minor 范围、可见 provider 和原因；不包含不可见 realm 的 provider 身份。宿主的 `host.Realm(name)` 可直接作为生成客户端的 `contract.Caller`，不必手写 realm adapter。
+
+`Instance.Stop` 是当前宿主内的临时停止，不改变持久启用意图；`Resume` 显式恢复。`Host.Disable` 持久停用并移除运行树，`Host.Remove` 进一步删除 entry 记录，不删除插件业务数据。管理操作只在全局短期准入内提交意图，初始化、依赖与清理等待不占全局准入；替换/删除保留同一 entry/树的预留直到操作结束；配置提交后交给 revision 机制，后续 Update 可取代等待中的旧 revision，Stop 也能提交退役，不受旧更新等待阻塞。Resume 仅恢复仍持久启用的临时停止，不能撤销已提交的 Disable；等待取消后可以继续 Disable 完成移除。取消等待不撤销已提交意图，也不宣称清理完成。
+
+## 发布确认与受管工作
+
+`contract.Go(scope, work)` 只在 Start 期间登记。Start context 返回即结束，工作使用 activation context；工作与串行服务/事件回调并发，共享状态由作者同步。完成本地发布后，Host 等待当前 activation 的 publish 确认，才开放普通调用、推进 Active/applied 和完成等待者。确认失败或退役后的迟到结果不能复活工作。
+
+退役先关闭普通准入、取消工作并通知外部 SDK，再等待消费者清理，最后等待自己的工作退出并释放资源。消费者清理沿原绑定可继续调用退役 provider；只有 Host 从可信 cleanup context 生成的 invocation `cleanup:true` 才使用独立清理准入，插件不能用普通 host 调用伪造它。完整自定义 PluginSession 必须映射 Publish/Retire，不能省略通知或混入 generic envelope。

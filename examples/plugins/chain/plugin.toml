@@ -1,0 +1,17 @@
+id = "example.chain"
+version = "1.0.0"
+publisher = "independent-author"
+defaultDefinition = "provider"
+contracts = ["contract.toml"]
+
+[runtime]
+kind = "native"
+
+[[runtime.artifacts]]
+os = "darwin"
+arch = "arm64"
+path = "chain"
+
+[[optionalDependencies]]
+id = "example.optional"
+range = "^1.0.0"

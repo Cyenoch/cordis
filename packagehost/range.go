@@ -71,3 +71,10 @@ func acceptsDependency(version string, dependency contract.Dependency) (bool, er
 	}
 	return VersionInRange(version, dependency.Min, dependency.Max)
 }
+
+func dependencyConstraint(dependency contract.Dependency) string {
+	if dependency.Range != "" {
+		return dependency.Range
+	}
+	return fmt.Sprintf("[%s,%s)", dependency.Min, dependency.Max)
+}

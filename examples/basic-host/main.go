@@ -15,6 +15,7 @@ import (
 
 	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/examples/pluginmeta"
 	"github.com/Cyenoch/cordis/packagehost"
 	native "github.com/Cyenoch/cordis/runtime/native"
 	wasm "github.com/Cyenoch/cordis/runtime/wasm"
@@ -48,7 +49,7 @@ func run(worker, nativePath, wasmPath string) (result error) {
 	}
 	trust := packagehost.TrustPolicy{Keys: map[string]packagehost.TrustedKey{"example-key": {PublicKey: pub, Publisher: "example.author"}},
 		Publishers: map[string][]string{"example.author": {"example.native", "example.wasm"}}}
-	host, err := cordis.Open(cordis.Options{Directory: filepath.Join(root, "store"), Trust: trust,
+	host, err := cordis.Open(cordis.Options{FrameBytes: contract.MaxFrameBytes, Directory: filepath.Join(root, "store"), Trust: trust,
 		Runtimes: map[string]contract.Runtime{"native": native.New(), "wasm": wasm.New(worker)},
 		Authorize: func(context.Context, contract.Identity, contract.Capability) (json.RawMessage, error) {
 			return json.RawMessage(`{}`), nil
@@ -72,12 +73,13 @@ func run(worker, nativePath, wasmPath string) (result error) {
 	if err := host.Contributions().Register("example.status", func(context.Context, contract.Identity, contract.Contribution) error { return nil }); err != nil {
 		return err
 	}
+	counter := pluginmeta.Counter().Definitions[0].Provides[0]
 	for _, kind := range []string{"native", "wasm"} {
 		artifact := nativePath
 		if kind == "wasm" {
 			artifact = wasmPath
 		}
-		ref, err := buildPackage(ctx, root, kind, "1.0.0", artifact, key)
+		ref, err := buildPackage(ctx, root, kind, pluginmeta.Counter().Version, artifact, key)
 		if err != nil {
 			return err
 		}
@@ -88,10 +90,10 @@ func run(worker, nativePath, wasmPath string) (result error) {
 		if err := host.Select(ctx, pkg.Ref); err != nil {
 			return err
 		}
-		if err := host.ConfigureRealm(kind+"-a", "", []string{"example.counter@1"}); err != nil {
+		if err := host.ConfigureRealm(kind+"-a", "", []string{counter.Key()}); err != nil {
 			return err
 		}
-		if err := host.ConfigureRealm(kind+"-b", "", []string{"example.counter@1"}); err != nil {
+		if err := host.ConfigureRealm(kind+"-b", "", []string{counter.Key()}); err != nil {
 			return err
 		}
 		a, err := host.Enable(ctx, contract.Entry{ID: kind + ".a", Package: pkg.Ref.ID, Realm: kind + "-a", Config: json.RawMessage(`{"initial":10}`)})
@@ -182,7 +184,17 @@ func run(worker, nativePath, wasmPath string) (result error) {
 }
 
 func expect(ctx context.Context, host *cordis.Host, realm, input string, value, events int, greeting string) error {
-	data, err := host.Call(ctx, realm, contract.Requirement{Name: "example.counter", Major: 1}, json.RawMessage(input))
+	service := pluginmeta.Counter().Definitions[0].Provides[0]
+	request, err := json.Marshal(struct {
+		Method string          `json:"method"`
+		Input  json.RawMessage `json:"input"`
+	}{Method: "execute", Input: json.RawMessage(input)})
+	if err != nil {
+		return err
+	}
+	data, err := host.Realm(realm).Call(ctx, contract.Requirement{
+		Name: service.Name, Major: service.Major, MinMinor: service.Minor, MaxMinor: service.Minor,
+	}, request)
 	if err != nil {
 		return err
 	}
@@ -220,9 +232,11 @@ func buildPackage(ctx context.Context, root, kind, version, artifact string, key
 	if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
 		return "", err
 	}
-	manifest := contract.Manifest{Schema: contract.PackageSchema, ID: "example." + kind, Version: version, Publisher: "example.author", Protocol: contract.Protocol{Major: 1},
-		DefaultDefinition: "counter", Definitions: []contract.DefinitionSpec{{ID: "counter", Requires: []contract.Requirement{}, Provides: []contract.Service{{Name: "example.counter", Major: 1}}}},
-		Runtime: spec, Dependencies: []contract.Dependency{}, OptionalDependencies: []contract.Dependency{}, Capabilities: []contract.Capability{{ID: "example.greeting", Scope: json.RawMessage(`{}`)}}, Contributions: []contract.Contribution{}}
+	manifest := pluginmeta.Counter()
+	// This host exercises two runtime-specific identities and a version switch.
+	manifest.ID = "example." + kind
+	manifest.Version = version
+	manifest.Runtime = spec
 	raw, err := json.Marshal(manifest)
 	if err != nil {
 		return "", err

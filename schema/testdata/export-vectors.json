@@ -1,0 +1,25 @@
+[
+  {
+    "schema": {"type":"object","properties":{"note":{"type":"string","nullable":true},"flag":{"type":"boolean"}},"required":["note"]},
+    "valid": [{"note":null},{"note":"","flag":false}],
+    "invalid": [{},{"note":3},{"note":"x","unknown":true}]
+  },
+  {
+    "schema": {"type":"string","nullable":true,"enum":["ok"]},
+    "valid": ["ok"], "invalid": [null,"bad",1]
+  },
+  {
+    "schema": {"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["kind","text"]},{"type":"object","properties":{"kind":{"type":"string","const":"count"},"count":{"type":"integer","minimum":0}},"required":["kind","count"]}],"discriminator":{"propertyName":"kind"},"nullable":true},
+    "valid": [null,{"kind":"text","text":""},{"kind":"count","count":0}],
+    "invalid": [{"kind":"text"},{"kind":"count","count":-1},{"kind":"other"},{"kind":"text","text":"x","extra":0}]
+  },
+  {
+    "schema": {"$defs":{"Name":{"type":"string","minLength":2}},"type":"array","items":{"$ref":"#/$defs/Name"},"minItems":1,"maxItems":2},
+    "valid": [["ok"],["ab","cd"]], "invalid": [[],["a"],["ab","cd","ef"],null]
+  },
+  {
+    "schema": {"type":"object","properties":{"id":{"type":"string","format":"int64"},"bytes":{"type":"string","contentEncoding":"base64"},"name":{"type":"string","pattern":"\\A[a-z]+\\z"}},"required":["id","bytes","name"]},
+    "valid": [{"id":"9223372036854775807","bytes":"YQ==","name":"hello"}],
+    "invalid": [{"id":"+1","bytes":"YQ==","name":"ok"},{"id":"0","bytes":"?","name":"ok"}]
+  }
+]

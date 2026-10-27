@@ -112,7 +112,7 @@ JSON Schema 的 maxLength 按字符而非 UTF-8 字节计，不能假称仅靠 m
 2. 重建全部独立作者包、CLI 和 smoke 产物，现存开发 fixture 按新格式重生；缺字段二进制明确不支持，不提供迁移兼容运行模式。
 3. 运行有界 wire、真实 SDK、Native/WASI、schema 和独立作者验收，检查副作用/注册/清理，记录实际平台与工具版本。
 4. 需要撤回时整组撤回契约和调用者，不让同一运行配置并存两种格式；无持久业务数据迁移。
-5. 主 spec 同步按 build 基线、响应隔离、本 change 顺序；本次仅写规划，不执行同步、归档或代码更改。
+5. 主 spec 同步按 build 基线、响应隔离、本 change 顺序；本次 apply 只实施与验证，不执行主 spec 同步或归档。
 
 ## Planning Review
 

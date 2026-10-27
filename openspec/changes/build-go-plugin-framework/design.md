@@ -305,7 +305,7 @@ Manifest 移除包级 ConfigSchema，改为每个 DefinitionSpec 唯一携带配
 
 增加单一 `config/` 文件边界，仅拥有格式选择、受限语法树到 JSON 数据模型的转换、位置映射与错误；依赖 `contract`，不依赖 Host、Runtime 或 schema 生成器。`schema/` 及 CLI 复用它，再交现有 schema 校验；Host/core 继续消费规范数据，不在生命周期锁内读文件。依赖选择和许可证在实施时依据当前主文档审查，优先已有解析器；不能以 YAML `map[any]any` 或 float64 中间值丢失结构及数值。
 
-格式由显式参数或已知扩展名确定，不探测失败后轮流 fallback。对源字节、深度、集合和引用设有界限制，解析时拒绝重复键、无效 UTF-8、尾随 JSON/YAML 文档、非字符串键、YAML alias/merge/自定义 tag。保留数值词法与精确值；TOML 数字分隔符及进制到 JSON 的转换采用精确整数/十进制规则，不经 float64。共享数据 codec 特判 json.Number 的数字 token、有限性及安全整数限制，拒绝引号字符串和非法词法；合法高精度小数保持可往返。
+格式由显式参数或已知扩展名确定，不探测失败后轮流 fallback。对源字节、深度、集合和引用设有界限制；同一声明图的本地引用展开共享累计 1 MiB 字节预算（包含中间复制，在分配前计费），不能凭重复引用或多个 definition 放大绕过，解析时拒绝重复键、无效 UTF-8、尾随 JSON/YAML 文档、非字符串键、YAML alias/merge/自定义 tag。保留数值词法与精确值；TOML 数字分隔符及进制到 JSON 的转换采用精确整数/十进制规则，不经 float64。共享数据 codec 特判 json.Number 的数字 token、有限性及安全整数限制，拒绝引号字符串和非法词法；合法高精度小数保持可往返。
 
 推荐顺序按可表达能力而不是“一种格式包办”：对象型、人手维护优先 TOML；需要 null、非对象根或更深层结构时推荐 YAML；自动化交换用 JSON。TOML 无 null，不把省略、空串或 `"null"` 当 null；三种格式只接受 JSON 模型内的值，TOML/YAML 原生日期时间要求改为引号字符串，非有限数拒绝。实例配置不填业务默认、不隐式环境合并、include/watch 或回写注释。错误包含用户提供的来源名、JSON Pointer 和可获得的行列；可信本地路径与对外安全投影分离。
 
@@ -323,9 +323,9 @@ client 构造接受生成的消费者描述，其中包含同一 Requirement 与
 
 修复 SDK 清理为每项单独 recover、LIFO、至多一次和错误聚合，复用 `contract.Group` 的已有机制与独立清理 context，保留清理期间绑定能力。启动 ctx 在 Start 返回后结束，activation ctx 继续有效，builtin/SDK 一致。显式受管工作是作者主动选择的并发，使用独立工作执行位置，不占服务/事件串行位；共享业务状态由作者同步。工作由 activation 取消并等待，错误/panic 进入现有失败路径；不是持久 Task。资源接管 helper 在登记失败时关闭资源并合并错误，不把每次创建后手写 Defer 变成作者义务；裸 goroutine 和不合作 builtin 不受强杀承诺。
 
-外部 SDK 的 Start 成功不等于 Host 最终发布。直接扩展当前 `PluginSession` 与 core lifecycle hook 的发布/退役操作，通用 Session 用绑定 activation 的 `activation.publish`、`activation.retire` 控制请求/确认；这些通知不进入业务串行位，不增加兼容版本。Host 完成所有贡献/provider/环校验并提交发布后才发送 publish；SDK 单调经过 initialized、published、retiring、closed，publish 确认才启动受管工作，重复同状态通知幂等，retiring 后任何迟到 publish 不启动工作。通知或确认失败使激活进入明确失败/退役，不留下假成功。Host 关闭普通准入后，在等待消费者清理前通知 retire；SDK 先取消普通及工作 context 并确认通知，再于自身 shutdown/资源清理前等待受管工作退出。清理继续使用独立绑定 context，不能用取消通知提前释放 provider 资源。完整自定义 Session 必须映射相同生命周期操作；未支持受管工作的适配在接纳该能力前明确拒绝，不注入 generic envelope 或暗中改 ABI。
+外部 SDK 的 Start 成功不等于 Host 最终发布。直接扩展当前 `PluginSession` 与 core lifecycle hook 的发布/退役操作，通用 Session 用绑定 activation 的 `activation.publish`、`activation.retire` 控制请求/确认；这些通知不进入业务串行位，不增加兼容版本。Host 完成所有贡献/provider/环校验并提交发布后才发送 publish；SDK 单调经过 initialized、published、retiring、closed，publish 确认才启动受管工作，重复同状态通知幂等，retiring 后任何迟到 publish 不启动工作。本地发布提交不等于启动完成：只有当前 activation 和 revision 的 publish 确认成功，才能推进 Active、applied 和启动/更新等待者；确认期间不开放普通调用和依赖就绪。通知或确认失败使激活进入明确失败/退役，不留下假成功；Stop、替换或退役后的迟到确认不得推进 applied 或复活工作，等待确认不持协调锁。Host 关闭普通准入后，在等待消费者清理前通知 retire；SDK 先取消普通及工作 context 并确认通知，再于自身 shutdown/资源清理前等待受管工作退出。清理继续使用独立绑定 context，不能用取消通知提前释放 provider 资源。当前 Invocation 显式携带必需的 cleanup 布尔分类，仅 Host 从 core 可信清理 context 生成；SDK 对此保留独立请求 context 与 parent lineage，退役仅阻止普通调用，不拒绝已持有绑定的清理。完整自定义 Session 必须映射相同生命周期操作；未支持受管工作的适配在接纳该能力前明确拒绝，不注入 generic envelope 或暗中改 ABI。
 
-管理准入只覆盖校验、预留和控制意图提交，Resume、Replace、Stop 等不在全局准入内等待依赖或用户清理。关联 entry/包及树使用已有预留、登记代次和过期结果检查；控制顺序、Close 取消及不同时发布旧新 activation 仍保持。阻塞在某个条目的操作不妨碍注册它等待的 provider 或管理无关实例。
+管理准入只覆盖校验、预留和控制意图提交，Resume、Replace、Stop 等不在全局准入内等待依赖或用户清理。关联 entry/包及树使用已有预留、登记代次和过期结果检查；配置 revision 提交后释放短期预留，让新配置和 Stop 可取代旧等待，替换/cascade 则预留所有目标和依赖所有权树到完成；控制顺序、Close 取消及不同时发布旧新 activation 仍保持。阻塞在某个条目的操作不妨碍注册它等待的 provider 或管理无关实例。
 
 最小公共查询包括按 entry ID 取当前句柄和只读清单；旧句柄不转向新登记。状态区分持久 Enabled、当前 runtime 状态和临时停止，等待原因结构化包含要求范围、可见 provider 与不兼容原因，不暴露不可见 realm 的具体数据。Stop 是当前宿主临时操作，Disable 是持久停用，Remove 是移除登记/记录；不靠 API 文档一句含糊“停止”掩盖重启差异。
 
@@ -352,3 +352,5 @@ Restore 返回逐条报告及可检查的聚合错误，按父顺序尝试登记
 - editor schema 不是运行时 schema 的简单拷贝；保守投影无法表达约束，保持运行时权威，不承诺编辑器等价验证所有输入。
 - 直接修订将使旧输入和固定旧版本的消费者不兼容；同步源码和 fixture，不加兼容版本或 shim。旧持久存储无法读取须明确失败，处理真实数据前由宿主确认，不自动清库。
 - 标准流程能防止意外声明漂移，不能鉴定恶意二进制、强杀不合作 builtin 或回滚业务事务；便利入口不改变这些信任边界。
+
+自动 SDK 构建证明读取有效 GOFLAGS，遇到 Go -overlay 明确拒绝并要求外部流水线显式构建描述；物理依赖的能力文件不能冒充 overlay 实际编译输入。生成文件不发射固定包级 DeclarationFingerprint，统一按 definition/service 命名，允许 CLI 分次生成无关声明到同包。

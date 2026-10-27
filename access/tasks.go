@@ -249,14 +249,14 @@ func (t *Task) finishLocked(state TaskState, result json.RawMessage, failure err
 
 func (t *Task) Cancel() error { return t.Finish(TaskCanceled, nil, context.Canceled) }
 
-// Release removes a terminal host-owned task from the manager. Existing handles
-// retain their terminal snapshot; active work and guest task identities are not released.
+// Release removes a terminal task from the manager. Existing handles retain
+// their terminal snapshot; active work cannot be released. Repeated release is idempotent.
 func (t *Task) Release() error {
 	p := t.manager.policy
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !t.status.HostOwned || !terminal(t.status.State) {
-		return contract.Fail(contract.Conflict, "only terminal host-owned tasks can be released")
+	if !terminal(t.status.State) {
+		return contract.Fail(contract.Conflict, "only terminal tasks can be released")
 	}
 	key := taskKey{owner: t.status.Owner, id: t.status.ID}
 	if t.manager.tasks[key] != t {
@@ -270,6 +270,26 @@ func (t *Task) Release() error {
 		delete(t.manager.usage, t.status.Owner)
 	}
 	return nil
+}
+
+// Release locates a task for the trusted host, matches its creation token, and
+// releases its terminal ledger. Missing tasks return NotReady; stale tokens are denied.
+func (m *TaskManager) Release(owner contract.Identity, id, token string) error {
+	if m.policy == nil {
+		return contract.Fail(contract.Invalid, "task manager not configured")
+	}
+	m.policy.mu.Lock()
+	task := m.tasks[taskKey{owner: owner, id: id}]
+	if task == nil {
+		m.policy.mu.Unlock()
+		return contract.Fail(contract.NotReady, "task not found")
+	}
+	if task.status.Token != token {
+		m.policy.mu.Unlock()
+		return contract.Fail(contract.Denied, "task token does not match")
+	}
+	m.policy.mu.Unlock()
+	return task.Release()
 }
 
 // Transfer explicitly moves cancellation authority to the host. It neither

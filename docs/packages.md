@@ -13,7 +13,49 @@ codePaths:
 
 ## 作者流程
 
-默认 Manifest schema 为 `cordis-go.package/v1`，使用 `contract.Manifest`；已有宿主格式可通过下面的受信任 metadata decoder 接入，不要求重写原始 `plugin.json`。目录包含 Manifest 和运行产物。版本必须是完整、严格 SemVer（不带 `v`）；禁止 latest 和网络解析。运行类型只接受 `wasm` 或 `native`；native 必须显式列出每个 OS/Arch，绝不回退执行形式。
+作者包源只保留一份 `plugin.toml`、`plugin.yaml` / `plugin.yml` 或 `plugin.json`。优先使用 TOML；需要 null 或复杂结构时可使用 YAML，JSON 适合机器交换。即使显式指定文件，同目录存在多个候选仍报错，不按扩展名优先级选择。版本是完整、严格 SemVer（不带 `v`）；禁止 latest 和网络解析。运行类型只接受 `wasm` 或 `native`；native 必须显式列出每个 OS/Arch，绝不回退执行形式。
+
+最小 WASM 作者源：
+
+```toml
+id = "example.counter"
+version = "0.1.0"
+publisher = "example"
+
+[runtime]
+kind = "wasm"
+entry = "plugin.wasm"
+
+[[contract.definitions]]
+id = "counter"
+```
+
+`contract` 是内联的 `schema.Definition`，可包含 `types`、`definitions` 和 `services`；格式标识可省略。需要拆分时，用互斥的 `contracts = ["contracts/counter.toml"]` 引用包内契约文档。契约文档可用 `contracts` 列表继续组织集合，所有路径都相对包根，不相对引用文件；拒绝绝对路径、父目录、网络、链接和循环，整个声明图最多 1 MiB、引用深度最多 32。数据 schema 中的本地类型引用、约束和循环由同一 schema 编译器校验，不提供网络 `$ref` 或运行时 include。
+
+编译补齐空列表、唯一默认定义及初始 `dataVersion = 0`。多个 definition 必须明确 `defaultDefinition`；每个 definition 有自己的配置 schema，包级 `configSchema` 不合法。配置未声明时是严格空对象。发行版本只写包源，不复制到业务 Go；数据迁移之后显式保留 `dataVersion`，仅数据格式变化时推进。provider 的 `version = 1` 表示 1.0，`version = "1.2"` 表示 1.2；拒绝浮点和补丁位。consumer 必须显式给出闭合 minor 范围，不从 provider 版本推断。
+
+```go
+author, err := packagehost.LoadAuthor(sourceDirectory)
+if err != nil { return err }
+// 同一解析结果还可供 CLI generate 使用；调用者拥有 writer。
+if err := author.Generate(writer, "main"); err != nil { return err }
+
+descriptor, err := packagehost.Build(ctx, sourceDirectory, packagehost.BuildOptions{
+    GoPackage: ".",
+    GOOS: "wasip1",
+    GOARCH: "wasm",
+})
+if err != nil { return err }
+_ = descriptor // 同时原子写入 sourceDirectory/build.json
+```
+
+`Build` 必须明确指定一个 Go package 和 GOOS/GOARCH；WASM 只接受 `wasip1/wasm`。`Output` 默认取声明中的精确目标路径，显式值必须与声明一致。生成默认使用 `GeneratedPackage: "main"`、`GeneratedOutput: "cordis_gen.go"`；输出相对包根，先验证并格式化全部代码，再原子替换生成文件，然后调用 Go 构建、记录产物摘要，从不运行产物。重复构建不同 native 目标时，只有声明、生成摘要与 SDK 证明相同才保留其他目标记录；Pack 要求所有声明目标齐备。
+
+`build.json` 的 schema 为 `cordis-go.build/v1`，记录声明指纹、生成代码摘要、生成包名/路径、实际 SDK module 版本与 replace、SDK 协议/特性证明及每个目标的 SHA-256。SDK 取自目标 Go package 的实际依赖及其中的 `sdk/capabilities.json`，不是运行 CLI 的 SDK。native 还比对产物内嵌的 Go module/目标信息；Go 的 buildinfo 不支持 WASM，因此 WASM 依赖构建描述和精确产物摘要。这里防止标准流程中的意外漂移，不鉴定恶意二进制。
+
+外部流水线可调用 `PrepareBuild(ctx, dir, options)` 获得同一 `Author` 与尚无目标的描述；该调用只生成和解析实际 SDK，不声称产物已构建。流水线完成构建后显式填写 `Targets`，再调用 `WriteBuildDescriptor(dir, descriptor)` 原子记录证据。无法自动读取 SDK 能力时，外部构建必须显式提供实际 SDK 证明和同结构描述，不能默认使用 CLI 能力。Pack 重新生成并比对声明、生成代码与目标 hash，任何漂移均在替换旧归档前失败。
+
+当前机器 Manifest 使用 `contract.Manifest` 和 `cordis-go.package/v1`，只能位于 `plugin.json`，每个 definition 必须显式具有 `configSchema`。它不包含作者契约，可继续直接 Pack，不需要构建描述；不会在校验失败后尝试旧字段或作者语法。已有宿主格式可通过下面的受信任 metadata decoder 接入，不要求重写原始 `plugin.json`。
 
 ```go
 pkg, err := packagehost.Pack(ctx, sourceDirectory, archivePath)
@@ -23,7 +65,7 @@ if err != nil { return err }
 _ = pkg.Ref // 内容身份：ID、version、digest
 ```
 
-Pack 在私有临时目录生成不可变副本、严格验证 manifest 与配置 schema、重建完整性表，按路径顺序生成 ZIP。Sign 对已有 archive 再校验后原子替换签名。它们是 CLI 和宿主共享的唯一打包实现。native 包可包含跨平台产物；实际安装和 Snapshot 时要求存在本机精确匹配产物。ZIP mode 不作为执行权限来源；native runtime 应只对本次私有 Snapshot 中选中的 artifact 设置执行权限。
+Pack 在私有临时目录生成不可变副本；作者源先通过构建一致性检查，仅在副本移除源候选并生成完整机器 `plugin.json`，随后严格验证 Manifest 与配置 schema、重建完整性表，按路径顺序生成 ZIP。源目录不被回写；运行时只读取机器 Manifest，不引入 TOML/YAML wire。生成后的 Manifest、构建描述、契约文件和其他实际归档文件均受完整性覆盖。Sign 对已有 archive 再校验后原子替换签名。它们是 CLI 和宿主共享的唯一打包实现。native 包可包含跨平台产物；实际安装和 Snapshot 时要求存在本机精确匹配产物。ZIP mode 不作为执行权限来源；native runtime 应只对本次私有 Snapshot 中选中的 artifact 设置执行权限。
 
 服务/requirement 名是逻辑标识，长度上限 512；贡献 ID 上限 200。二者允许连续点以保留宿主合法 provider ID，不把它们解释为文件路径；字符仍仅限 ASCII 字母数字及 `._-/`，拒绝首尾或重复斜杠。package/publisher/definition/slot 名继续使用原 200 长度与连续点拒绝规则；归档路径仍执行下述完整路径校验。不会因逻辑标识放宽文件系统边界。
 
@@ -132,3 +174,5 @@ BeginRun 在启动前持久记录 `running`，EndRun 在实际结束后记录 `s
 `Store.ReverseDependencies(ref, enabled, action)` 的 action 为 `packagehost.SelectPackage` 或 `RemovePackage`，不会根据 ref 是否当前选中猜测意图。同版本重新选择不等于卸载。结果是排序去重的必需反向依赖包闭包，不包含可选依赖和目标自身。
 
 `Host.PlanCascade(ctx, ref, action)` 返回目标、动作和受影响 entry 的独立快照。`ReplaceCascade` 和 `UninstallCascade` 在任何停用前完成包/信任/配置/数据预检，再要求 `ConfirmCascade` 明确批准；缺 callback 或拒绝不会停用。卸载计划包含仍启用的目标 entry，替换只关闭阻塞反向依赖，目标由正常 Replace 重建。回调不得重入 Host 管理操作；修改回调收到的计划不会改变执行计划。已明确停用的反向依赖不会被偷偷重启；取消/清理失败可能留下部分停用，操作不是业务事务回滚。
+
+自动 `Build` / `PrepareBuild` 不接受有效 `GOFLAGS` 中的 `-overlay`，因为物理 SDK 能力文件不能证明 overlay 编译输入。使用 Go overlay 的外部流水线须显式记录实际编译输入对应的构建描述及摘要，再通过 `WriteBuildDescriptor` 交给 Pack 验证，不套用磁盘原 SDK 能力。

@@ -24,6 +24,9 @@ func Encode(value any) ([]byte, error) {
 	if err := CheckDataType(reflect.TypeOf(value)); err != nil {
 		return nil, err
 	}
+	if err := checkNumberValues(reflect.ValueOf(value)); err != nil {
+		return nil, err
+	}
 	data, err := json.Marshal(value)
 	if err != nil {
 		return nil, fmt.Errorf("encode contract: %w", err)
@@ -112,17 +115,20 @@ func checkValue(dec *json.Decoder, t reflect.Type, depth, maxDepth, maxArray int
 	if err != nil {
 		return fmt.Errorf("read JSON token: %w", err)
 	}
+	if t == numberType {
+		if _, ok := token.(json.Number); !ok {
+			return Fail(Invalid, "json.Number requires a JSON number token")
+		}
+	}
 	delim, ok := token.(json.Delim)
 	if !ok {
 		if t != nil && token == nil && !allowNull && (strictContainers || t.Kind() != reflect.Slice && t.Kind() != reflect.Map && t.Kind() != reflect.Interface) {
 			return Fail(Invalid, "null requires an explicit nullable codec")
 		}
 		if number, ok := token.(json.Number); ok && t != nil {
-			switch t.Kind() {
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+			if t == numberType || numericKind(t.Kind()) {
 				value, err := number.Float64()
-				if err != nil {
+				if err != nil || math.IsInf(value, 0) || math.IsNaN(value) {
 					return Fail(Invalid, "number must be finite")
 				}
 				if math.Abs(value) >= 9007199254740990 {
@@ -190,7 +196,61 @@ func checkValue(dec *json.Decoder, t reflect.Type, depth, maxDepth, maxArray int
 }
 
 var rawType = reflect.TypeFor[json.RawMessage]()
+var numberType = reflect.TypeFor[json.Number]()
 var unmarshalerType = reflect.TypeFor[json.Unmarshaler]()
+
+func numericKind(kind reflect.Kind) bool {
+	return kind >= reflect.Int && kind <= reflect.Float64
+}
+
+// encoding/json silently encodes an empty json.Number as zero. Inspect source
+// values before marshaling so invalid lexical input cannot become valid data.
+func checkNumberValues(v reflect.Value) error {
+	if v.Type() == numberType {
+		data := []byte(v.String())
+		if len(data) == 0 || !json.Valid(data) || data[0] != '-' && (data[0] < '0' || data[0] > '9') {
+			return Fail(Invalid, "invalid json.Number syntax")
+		}
+		return nil
+	}
+	if v.Type().Implements(reflect.TypeFor[json.Marshaler]()) {
+		return nil
+	}
+	switch v.Kind() {
+	case reflect.Struct:
+		fields := jsonFields(v.Type())
+		for i := range v.NumField() {
+			f := v.Type().Field(i)
+			if !f.IsExported() || f.Tag.Get("json") == "-" {
+				continue
+			}
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if name == "" {
+				name = f.Name
+			}
+			if fields[name] == nil && !f.Anonymous {
+				continue
+			}
+			if err := checkNumberValues(v.Field(i)); err != nil {
+				return fmt.Errorf("field %s: %w", f.Name, err)
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := range v.Len() {
+			if err := checkNumberValues(v.Index(i)); err != nil {
+				return err
+			}
+		}
+	case reflect.Map:
+		it := v.MapRange()
+		for it.Next() {
+			if err := checkNumberValues(it.Value()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 var fieldCache sync.Map
 

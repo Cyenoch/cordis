@@ -31,6 +31,9 @@ func TestUnreadResponsesBoundRequestWorkAndDoNotPoisonOtherEndpoints(t *testing.
 					Transport: left, Guest: true,
 					Limits: wire.Limits{Inflight: inflight, Grace: grace},
 					Handler: func(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
+						if method == "initialize" {
+							return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[],"subscriptions":[],"contributions":[]}`), nil
+						}
 						if method != "initialize" {
 							handled.Add(1)
 						}
@@ -46,10 +49,14 @@ func TestUnreadResponsesBoundRequestWorkAndDoNotPoisonOtherEndpoints(t *testing.
 					receiver.Wait()
 				}()
 				write := func(sequence int, method string) error {
+					payload := json.RawMessage(`{}`)
+					if method == "initialize" {
+						payload = json.RawMessage(`{"frameBytes":1048576,"identity":{"activation":"blocked-reader"},"protocol":{"major":1},"definition":"test","config":{}}`)
+					}
 					return json.NewEncoder(peer).Encode(wire.Frame{
 						Schema: contract.SessionSchema, Kind: "request", Activation: "blocked-reader",
 						ID: fmt.Sprintf("h:%d", sequence), Method: method,
-						Payload: json.RawMessage(`{}`), DeadlineMS: 30000,
+						Payload: payload, DeadlineMS: 30000,
 					})
 				}
 				if err := write(1, "initialize"); err != nil {
@@ -123,12 +130,15 @@ func newBackpressureHealthyEndpoint(t *testing.T) *wire.Endpoint {
 	t.Helper()
 	left, right := net.Pipe()
 	handler := func(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
+		if method == "initialize" {
+			return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[],"subscriptions":[],"contributions":[]}`), nil
+		}
 		if method == "health" {
 			return json.RawMessage(`{"ready":true}`), nil
 		}
 		return json.RawMessage(`{}`), nil
 	}
-	host, err := wire.New(wire.Options{Transport: left, Identity: contract.Identity{Activation: "healthy-neighbor"}, Handler: handler})
+	host, err := wire.New(wire.Options{FrameBytes: contract.MaxFrameBytes, Transport: left, Identity: contract.Identity{Activation: "healthy-neighbor"}, Handler: handler})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +154,7 @@ func newBackpressureHealthyEndpoint(t *testing.T) *wire.Endpoint {
 		host.Wait()
 		guest.Wait()
 	})
-	if _, err := host.Call(t.Context(), "initialize", json.RawMessage(`{}`)); err != nil {
+	if _, err := host.Call(t.Context(), "initialize", json.RawMessage(`{"frameBytes":1048576,"identity":{"activation":"healthy-neighbor"},"protocol":{"major":1},"definition":"test","config":{}}`)); err != nil {
 		t.Fatal(err)
 	}
 	return host

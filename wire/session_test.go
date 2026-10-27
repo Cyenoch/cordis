@@ -17,11 +17,17 @@ import (
 func pair(t *testing.T, host Handler, guest Handler) (*Endpoint, *Endpoint) {
 	t.Helper()
 	a, b := net.Pipe()
-	h, err := New(Options{Transport: a, Identity: contract.Identity{Activation: "sample"}, Handler: host})
+	h, err := New(Options{FrameBytes: contract.MaxFrameBytes, Transport: a, Identity: contract.Identity{Activation: "sample"}, Handler: host})
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := New(Options{Transport: b, Guest: true, Handler: guest})
+	g, err := New(Options{Transport: b, Guest: true, Handler: func(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
+		output, err := guest(ctx, method, data)
+		if method == "initialize" && err == nil {
+			return testRegistration(), nil
+		}
+		return output, err
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,10 +41,22 @@ func pair(t *testing.T, host Handler, guest Handler) (*Endpoint, *Endpoint) {
 		h.Wait()
 		g.Wait()
 	})
-	if _, err := h.Call(t.Context(), "initialize", json.RawMessage(`{}`)); err != nil {
+	if _, err := h.Call(t.Context(), "initialize", testInitialize("sample")); err != nil {
 		t.Fatal(err)
 	}
 	return h, g
+}
+
+func testInitialize(activation string) json.RawMessage {
+	data, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Identity: contract.Identity{Activation: activation}, Protocol: contract.Protocol{Major: 1}, Definition: "test", Config: json.RawMessage(`{}`)})
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+func testRegistration() json.RawMessage {
+	return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[],"subscriptions":[],"contributions":[]}`)
 }
 
 func TestEndpointBidirectionalCalls(t *testing.T) {
@@ -115,7 +133,7 @@ func TestFrameRejectsMalformedBoundaries(t *testing.T) {
 
 func TestEndpointRejectsReplayedRequest(t *testing.T) {
 	a, b := net.Pipe()
-	e, err := New(Options{Transport: a, Identity: contract.Identity{Activation: "a"}, Handler: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	e, err := New(Options{FrameBytes: contract.MaxFrameBytes, Transport: a, Identity: contract.Identity{Activation: "a"}, Handler: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 		return json.RawMessage(`{}`), nil
 	}})
 	if err != nil {
@@ -130,7 +148,7 @@ func TestEndpointRejectsReplayedRequest(t *testing.T) {
 		}
 		e.Wait()
 	}()
-	frame := Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "a", ID: "g:1", Method: "initialize", Payload: json.RawMessage(`{}`), DeadlineMS: 1000}
+	frame := Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "a", ID: "g:1", Method: "health", Payload: json.RawMessage(`{}`), DeadlineMS: 1000}
 	data, err := encodeFrame(frame, 1024)
 	if err != nil {
 		t.Fatal(err)

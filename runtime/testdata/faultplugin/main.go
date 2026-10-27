@@ -48,7 +48,13 @@ func main() {
 		var value any
 		switch request.Method {
 		case "initialize":
-			value = map[string]any{"services": []any{}, "subscriptions": []any{}, "contributions": []any{}}
+			var input struct {
+				FrameBytes int `json:"frameBytes"`
+			}
+			if err := json.Unmarshal(request.Payload, &input); err != nil {
+				panic(err)
+			}
+			value = map[string]any{"frameBytes": input.FrameBytes, "minor": 0, "features": []any{}, "services": []any{}, "subscriptions": []any{}, "contributions": []any{}}
 		case "health":
 			value = map[string]bool{"healthy": true}
 		case "counter":

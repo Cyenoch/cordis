@@ -12,8 +12,8 @@ import (
 	"github.com/Cyenoch/cordis/contract"
 )
 
-var ErrQuota = errors.New("namespace quota exceeded")
-var ErrNotFound = errors.New("namespace key not found")
+var ErrQuota = contract.ErrNamespaceQuota
+var ErrNotFound = contract.ErrNamespaceMissing
 
 type NamespaceConfig struct {
 	Name        string `json:"name"`
@@ -107,7 +107,7 @@ func (s *NamespaceStore) lock(ctx context.Context, owner contract.Identity, name
 	}
 	if s.failure != nil {
 		s.mu.Unlock()
-		return nil, fmt.Errorf("namespace needs recovery: %w", s.failure)
+		return nil, &RecoveryError{Cause: s.failure}
 	}
 	if err := s.policy.Check(owner); err != nil {
 		s.mu.Unlock()
@@ -348,10 +348,7 @@ func cloneValues(values map[string][]byte) map[string][]byte {
 
 // A complete synchronized record is committed. A subsequent directory/close
 // failure must not roll back the in-memory state.
-type CommittedError struct{ Cause error }
-
-func (e *CommittedError) Error() string { return "namespace committed but durability sync failed" }
-func (e *CommittedError) Unwrap() error { return e.Cause }
+type CommittedError = contract.NamespaceCommittedError
 
 func isCommitted(err error) bool {
 	var committed *CommittedError

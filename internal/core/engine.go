@@ -79,27 +79,37 @@ type instance struct {
 }
 
 type activation struct {
-	instance      *instance
-	identity      contract.Identity
-	revision      uint64
-	config        json.RawMessage
-	ctx           context.Context
-	cancel        context.CancelFunc
-	startDone     chan struct{}
-	done          chan struct{}
-	gate          chan struct{}
-	work          sync.WaitGroup
-	prepareDone   chan struct{}
-	bindings      map[string]*provider
-	provided      map[string]*provider
-	subscriptions []*subscription
-	cleanups      []contract.Cleanup
-	retiring      bool
-	committed     bool
-	terminal      contract.State
-	startErr      error
-	forcedErr     error
-	cleanupErr    error
+	instance       *instance
+	identity       contract.Identity
+	revision       uint64
+	config         json.RawMessage
+	ctx            context.Context
+	cancel         context.CancelFunc
+	done           chan struct{}
+	gate           chan struct{}
+	work           sync.WaitGroup
+	managedWork    sync.WaitGroup
+	managed        []func(context.Context) error
+	publishHooks   []func(context.Context) error
+	retireHooks    []func(context.Context) error
+	retireStarted  bool
+	retireWork     sync.WaitGroup
+	retireErr      error
+	startFinished  bool
+	prepareDone    chan struct{}
+	publishDone    chan struct{}
+	retireNotified chan struct{}
+	bindings       map[string]*provider
+	provided       map[string]*provider
+	subscriptions  []*subscription
+	cleanups       []contract.Cleanup
+	retiring       bool
+	committed      bool
+	ready          bool
+	terminal       contract.State
+	startErr       error
+	forcedErr      error
+	cleanupErr     error
 }
 
 func New() *Engine { return NewWithHooks(Hooks{}) }
@@ -151,10 +161,7 @@ func (e *Engine) add(entry contract.Entry, definition contract.Definition, ident
 	if entry.Definition != "" && entry.Definition != definition.ID {
 		return nil, contract.Fail(contract.Invalid, "entry definition mismatch")
 	}
-	config := slices.Clone(entry.Config)
-	if len(config) == 0 {
-		config = json.RawMessage(`{}`)
-	}
+	config := normalizeConfig(entry.Config)
 	if err := validate(definition, config); err != nil {
 		return nil, err
 	}
@@ -195,6 +202,13 @@ func (e *Engine) add(entry contract.Entry, definition contract.Definition, ident
 	return i, nil
 }
 
+func normalizeConfig(config json.RawMessage) json.RawMessage {
+	if len(config) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	return slices.Clone(config)
+}
+
 func validate(def contract.Definition, config json.RawMessage) error {
 	if err := contract.CheckJSON(config, 32, 10000); err != nil {
 		return fmt.Errorf("validate configuration: %w", err)
@@ -219,15 +233,23 @@ func (e *Engine) descendantLocked(child, parent string) bool {
 	}
 }
 func (e *Engine) resolveLocked(namespace string, requirement contract.Requirement) *provider {
+	p := e.visibleProviderLocked(namespace, requirement.Key())
+	if p != nil && requirement.Accepts(p.service) {
+		return p
+	}
+	return nil
+}
+
+func (e *Engine) visibleProviderLocked(namespace, key string) *provider {
 	for {
-		if p := e.services[namespace][requirement.Key()]; p != nil {
-			if !p.owner.retiring && requirement.Accepts(p.service) {
+		if p := e.services[namespace][key]; p != nil {
+			if !p.owner.retiring {
 				return p
 			}
 			return nil
 		}
 		r := e.realms[namespace]
-		if namespace == "" || r.isolated[requirement.Key()] {
+		if namespace == "" || r.isolated[key] {
 			return nil
 		}
 		namespace = r.parent
@@ -246,13 +268,14 @@ func (e *Engine) coordinate() {
 	for range e.wake {
 		e.mu.Lock()
 		e.detectWaitingCyclesLocked()
+		e.rebindLocked()
 		for _, i := range e.instances {
 			if i.activation != nil || !i.enabled || i.state == contract.Failed || e.closed {
 				continue
 			}
 			if i.entry.Parent != "" {
 				p := e.instances[i.entry.Parent]
-				if p.activation == nil || !p.activation.committed || p.activation.retiring {
+				if p.activation == nil || !p.activation.ready || p.activation.retiring {
 					continue
 				}
 			}
@@ -260,7 +283,7 @@ func (e *Engine) coordinate() {
 			ready := true
 			for _, req := range i.definition.Requires {
 				p := e.resolveLocked(i.entry.Realm, req)
-				if p == nil {
+				if p == nil || !p.owner.ready {
 					ready = false
 					break
 				}
@@ -273,7 +296,7 @@ func (e *Engine) coordinate() {
 			ctx, cancel := context.WithCancel(context.Background())
 			identity := i.identity
 			identity.Activation = contract.NewID()
-			a := &activation{instance: i, identity: identity, revision: i.desired, config: slices.Clone(i.config), ctx: ctx, cancel: cancel, startDone: make(chan struct{}), done: make(chan struct{}), gate: make(chan struct{}, 1), bindings: bindings, provided: map[string]*provider{}}
+			a := &activation{instance: i, identity: identity, revision: i.desired, config: slices.Clone(i.config), ctx: ctx, cancel: cancel, publishDone: make(chan struct{}), retireNotified: make(chan struct{}), done: make(chan struct{}), gate: make(chan struct{}, 1), bindings: bindings, provided: map[string]*provider{}}
 			i.activation = a
 			i.state = contract.Starting
 			i.failure = nil
@@ -298,32 +321,35 @@ func (e *Engine) coordinate() {
 func (e *Engine) signalChangedLocked() { close(e.changed); e.changed = make(chan struct{}) }
 
 func invokeStart(a *activation) (err error) {
+	ctx, cancel := context.WithCancel(context.WithValue(a.ctx, actorKey{}, a))
+	defer cancel()
 	defer func() {
 		if v := recover(); v != nil {
 			err = fmt.Errorf("plugin start panic: %v", v)
 		}
 	}()
-	return a.instance.definition.Start(context.WithValue(a.ctx, actorKey{}, a), &Scope{activation: a})
+	return a.instance.definition.Start(ctx, &Scope{activation: a})
 }
 func (e *Engine) start(a *activation) {
+	defer close(a.publishDone)
 	a.gate <- struct{}{}
 	err := invokeStart(a)
 	<-a.gate
 	e.mu.Lock()
+	a.startFinished = true
 	retiring := a.retiring
 	if !retiring {
 		a.prepareDone = make(chan struct{})
 	}
 	e.mu.Unlock()
+	if !retiring && err == nil && e.hooks.BeforePublish != nil {
+		err = invokePublish(e.hooks.BeforePublish, a.identity)
+	}
 	if !retiring {
-		if err == nil && e.hooks.BeforePublish != nil {
-			err = invokePublish(e.hooks.BeforePublish, a.identity)
-		}
 		close(a.prepareDone)
 	}
 	e.mu.Lock()
 	a.startErr = errors.Join(a.forcedErr, err)
-	close(a.startDone)
 	i := a.instance
 	if a.retiring {
 		e.signalLocked()
@@ -351,7 +377,7 @@ func (e *Engine) start(a *activation) {
 		err = e.checkPublicationCycleLocked(a)
 	}
 	if err != nil {
-		a.startErr = err
+		a.startErr = errors.Join(a.forcedErr, err)
 		e.retireLocked(a, contract.Failed)
 	} else if a.revision != i.desired || !i.enabled || e.closed {
 		e.retireLocked(a, contract.Waiting)
@@ -373,25 +399,54 @@ func (e *Engine) start(a *activation) {
 			return 0
 		})
 		a.committed = true
+		e.mu.Unlock()
+		err = e.publish(a)
+		e.mu.Lock()
+		if err != nil {
+			a.startErr = errors.Join(a.startErr, err)
+			e.retireLocked(a, contract.Failed)
+		}
+		if a.retiring {
+			e.signalLocked()
+			e.mu.Unlock()
+			return
+		}
+		a.ready = true
+		for _, work := range a.managed {
+			a.managedWork.Add(1)
+			go e.runManaged(a, work)
+		}
 		i.state = contract.Active
 		i.applied = a.revision
 		i.finishRevisionLocked(a.revision, contract.UpdateResult{Revision: a.revision, Applied: true}, nil)
-		// Only consumers whose effective binding changed retire on a local override.
-		for _, consumer := range e.instances {
-			current := consumer.activation
-			if current == nil || current == a || current.retiring {
-				continue
-			}
-			for _, req := range consumer.definition.Requires {
-				if e.resolveLocked(consumer.entry.Realm, req) != current.bindings[req.Key()] {
-					e.retireLocked(current, contract.Waiting)
-					break
-				}
-			}
-		}
+		e.rebindLocked()
 	}
 	e.signalLocked()
 	e.mu.Unlock()
+}
+
+// Recheck after both readiness and disposal: a failed, unacknowledged override
+// can reveal a provider that became ready while the override was pending.
+func (e *Engine) rebindLocked() {
+	for _, consumer := range e.instances {
+		current := consumer.activation
+		if current == nil || current.retiring {
+			continue
+		}
+		for _, req := range consumer.definition.Requires {
+			p := e.visibleProviderLocked(consumer.entry.Realm, req.Key())
+			if p != nil && !p.owner.ready {
+				continue
+			}
+			if p != nil && !req.Accepts(p.service) {
+				p = nil
+			}
+			if p != current.bindings[req.Key()] {
+				e.retireLocked(current, contract.Waiting)
+				break
+			}
+		}
+	}
 }
 
 func (e *Engine) checkPublicationCycleLocked(a *activation) error {
@@ -479,29 +534,48 @@ func invokeCleanup(fn contract.Cleanup, ctx context.Context) (err error) {
 	return fn(ctx)
 }
 func (e *Engine) dispose(a *activation, dependents []*activation) {
+	e.notifyRetire(a)
+	// Open the per-scope barrier before the global hook, which may remove and
+	// synchronously wait for children that need this provider for cleanup.
+	close(a.retireNotified)
 	e.mu.Lock()
 	prepared := a.prepareDone
+	var notifications []<-chan struct{}
+	for _, p := range a.bindings {
+		if p.owner.retiring {
+			notifications = append(notifications, p.owner.retireNotified)
+		}
+	}
+	if parent := e.instances[a.instance.entry.Parent]; parent != nil && parent.activation != nil && parent.activation.retiring {
+		notifications = append(notifications, parent.activation.retireNotified)
+	}
 	e.mu.Unlock()
 	if prepared != nil {
 		<-prepared
 	}
-	var hookErr error
-	if e.hooks.OnRetire != nil {
-		hookErr = invokeRetire(e.hooks.OnRetire, a.identity)
+	for _, notified := range notifications {
+		<-notified
 	}
-	<-a.startDone
+	var errs []error
+	if e.hooks.OnRetire != nil {
+		if err := invokeRetire(e.hooks.OnRetire, a.identity); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	<-a.publishDone
+	a.retireWork.Wait()
+	if a.retireErr != nil {
+		errs = append(errs, a.retireErr)
+	}
 	for _, child := range dependents {
 		<-child.done
 	}
 	a.work.Wait()
+	a.managedWork.Wait()
 	e.cleanupSlots <- struct{}{}
 	defer func() { <-e.cleanupSlots }()
 	cleanupCtx := context.WithValue(context.Background(), cleanupKey{}, a)
 	cleanupCtx = context.WithValue(cleanupCtx, actorKey{}, a)
-	var errs []error
-	if hookErr != nil {
-		errs = append(errs, hookErr)
-	}
 	for _, child := range dependents {
 		if child.cleanupErr != nil {
 			errs = append(errs, child.cleanupErr)
@@ -597,7 +671,7 @@ func (e *Engine) IsActive(identity contract.Identity) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	i := e.instances[identity.Entry]
-	return i != nil && i.activation != nil && i.activation.identity == identity && i.activation.committed && !i.activation.retiring
+	return i != nil && i.activation != nil && i.activation.identity == identity && i.activation.ready && !i.activation.retiring
 }
 
 // Fail reports an activation/session failure without automatically retrying it.
@@ -688,21 +762,28 @@ func (e *Engine) Remove(ctx context.Context, entryID string) error {
 
 // Enable starts a previously stopped entry. Failed entries require Retry.
 func (e *Engine) Enable(ctx context.Context, entryID string) error {
+	i, err := e.Resume(entryID)
+	if err != nil {
+		return err
+	}
+	return i.Wait(ctx)
+}
+
+// Resume submits the enable intent without waiting for dependencies or Start.
+func (e *Engine) Resume(entryID string) (contract.Instance, error) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	i := e.instances[entryID]
 	if i == nil {
-		e.mu.Unlock()
-		return contract.Fail(contract.Invalid, "unknown entry")
+		return nil, contract.Fail(contract.Invalid, "unknown entry")
 	}
 	if e.closed || i.removing || i.state != contract.Stopped || i.activation != nil {
-		e.mu.Unlock()
-		return contract.Fail(contract.Conflict, "entry is not available for enabling")
+		return nil, contract.Fail(contract.Conflict, "entry is not available for enabling")
 	}
 	if i.entry.Parent != "" {
 		p := e.instances[i.entry.Parent]
 		if p == nil || !p.enabled || p.removing {
-			e.mu.Unlock()
-			return contract.Fail(contract.NotReady, "parent is stopped")
+			return nil, contract.Fail(contract.NotReady, "parent is stopped")
 		}
 	}
 	i.enabled = true
@@ -710,8 +791,7 @@ func (e *Engine) Enable(ctx context.Context, entryID string) error {
 	i.failure = nil
 	i.revisions[i.desired] = &revisionResult{done: make(chan struct{})}
 	e.signalLocked()
-	e.mu.Unlock()
-	return i.Wait(ctx)
+	return i, nil
 }
 
 func invokeRetire(hook func(contract.Identity), identity contract.Identity) (err error) {

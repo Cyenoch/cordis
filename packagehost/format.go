@@ -124,13 +124,23 @@ func ValidateManifest(m contract.Manifest) error {
 			return fmt.Errorf("invalid or duplicate definition %q", d.ID)
 		}
 		defs[d.ID] = true
+		if len(d.ConfigSchema) == 0 {
+			return fmt.Errorf("definition %s requires configSchema", d.ID)
+		}
+		if err := validateConfigSchema(d.ConfigSchema); err != nil {
+			return fmt.Errorf("definition %s configSchema: %w", d.ID, err)
+		}
 		requirements := map[string]bool{}
 		provides := map[string]bool{}
-		for _, r := range d.Requires {
+		for _, consumer := range d.Requires {
+			r := consumer.Requirement
 			if !validSymbol(r.Name, 512) || r.MinMinor > r.MaxMinor || requirements[r.Key()] {
 				return fmt.Errorf("invalid or duplicate requirement %q", r.Key())
 			}
 			requirements[r.Key()] = true
+			if hash, err := hex.DecodeString(consumer.Contract); err != nil || len(hash) != sha256.Size || strings.ToLower(consumer.Contract) != consumer.Contract {
+				return fmt.Errorf("invalid consumer method contract for %s", r.Key())
+			}
 		}
 		for _, s := range d.Provides {
 			if !validSymbol(s.Name, 512) || provides[s.Key()] {
@@ -207,7 +217,7 @@ func ValidateManifest(m contract.Manifest) error {
 			return fmt.Errorf("contribution data: %w", err)
 		}
 	}
-	return validateConfigSchema(m.ConfigSchema)
+	return nil
 }
 
 // Artifact selects exactly the requested target; no runtime fallback is allowed.

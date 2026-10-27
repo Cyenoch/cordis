@@ -29,7 +29,7 @@ func TestParallelEventContinuesAfterLocalError(t *testing.T) {
 			})
 		}}, right)
 	}()
-	host, err := wire.New(wire.Options{Transport: left, Identity: contract.Identity{Activation: "audit"}, Handler: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	host, err := wire.New(wire.Options{FrameBytes: contract.MaxFrameBytes, Transport: left, Identity: contract.Identity{Activation: "audit"}, Handler: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 		return nil, contract.Fail(contract.Invalid, "unexpected")
 	}})
 	if err != nil {
@@ -42,8 +42,11 @@ func TestParallelEventContinuesAfterLocalError(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	raw, _ := json.Marshal(contract.Initialize{Identity: contract.Identity{Activation: "audit"}, Protocol: contract.Protocol{Major: 1}, Definition: "audit", Config: json.RawMessage(`{}`)})
+	raw, _ := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Identity: contract.Identity{Activation: "audit"}, Protocol: contract.Protocol{Major: 1}, Definition: "audit", Config: json.RawMessage(`{}`)})
 	if _, err := host.Call(t.Context(), "initialize", raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.Call(t.Context(), "activation.publish", json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ = json.Marshal(contract.Event{Name: "audit", Input: json.RawMessage(`{}`), Mode: contract.Parallel})

@@ -114,6 +114,9 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	if launch.Identity.Activation == "" || launch.Handle == nil {
 		return nil, errors.New("activation identity and host handler are required")
 	}
+	if err := launch.SessionFactory.Validate(launch.FrameBytes); err != nil {
+		return nil, err
+	}
 	path, err := Executable(executable)
 	if err != nil {
 		return nil, err
@@ -204,18 +207,35 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	parentCloseErr := errors.Join(stdinR.Close(), stdoutW.Close(), stderrW.Close())
 	transport := &wire.Transport{Reader: stdoutR, Writer: stdinW, Closers: []io.Closer{stdoutR, stdinW}}
 	var endpoint contract.Session
-	if launch.OpenSession != nil {
-		endpoint, err = launch.OpenSession(transport, launch.Identity, launch.Handle)
+	if launch.SessionFactory != nil {
+		endpoint, err = launch.SessionFactory.Open(transport, launch.Identity, launch.Handle, launch.FrameBytes)
 	} else {
-		endpoint, err = wire.New(wire.Options{Transport: transport, Identity: launch.Identity, Handler: wire.Handler(launch.Handle), Limits: options.Limits})
+		endpoint, err = wire.New(wire.Options{Transport: transport, Identity: launch.Identity, Handler: wire.Handler(launch.Handle), Limits: options.Limits, FrameBytes: launch.FrameBytes})
 	}
 	if err == nil && endpoint == nil {
 		err = errors.New("session factory returned a nil session")
 	}
+	if err == nil && launch.SessionFactory.IsCustom() {
+		if _, ok := endpoint.(contract.PluginSession); !ok {
+			err = errors.New("custom session requires PluginSession")
+		}
+	} else if err == nil {
+		if _, ok := endpoint.(contract.PluginSession); ok {
+			err = errors.New("generic factory returned a custom PluginSession")
+		}
+	}
 	if err != nil {
+		closed := make(chan error, 1)
+		go func() {
+			closeErr := transport.Close()
+			if endpoint != nil {
+				closeErr = errors.Join(closeErr, endpoint.Close())
+			}
+			closed <- closeErr
+		}()
 		killErr := tree.kill()
 		waitErr := cmd.Wait()
-		return nil, errors.Join(err, killErr, waitErr, tree.close(), cleanupPipes(), cleanupDirectory())
+		return nil, errors.Join(err, killErr, waitErr, <-closed, tree.close(), cleanupPipes(), cleanupDirectory())
 	}
 	s := &Session{endpoint: endpoint, stop: make(chan struct{}), done: make(chan struct{})}
 	exited := make(chan error, 1)
@@ -228,6 +248,11 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 		var buffer [4096]byte
 		for {
 			n, readErr := stderrR.Read(buffer[:])
+			if n > 0 && launch.Stderr != nil {
+				if err := launch.Stderr(append([]byte(nil), buffer[:n]...)); err != nil {
+					readErr = errors.Join(readErr, err)
+				}
+			}
 			total += int64(n)
 			if total > stderrLimit && exceeded.CompareAndSwap(false, true) {
 				close(stderrExceeded)

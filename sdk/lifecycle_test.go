@@ -60,7 +60,7 @@ func TestCanceledInitializationDrainsStartBeforeCleaningLateResources(t *testing
 			return err
 		}}
 		go func() { serveDone <- sdk.ServeTransport(t.Context(), definition, right) }()
-		host, err := wire.New(wire.Options{
+		host, err := wire.New(wire.Options{FrameBytes: contract.MaxFrameBytes,
 			Transport: left,
 			Identity:  contract.Identity{Activation: "cancel-start"},
 			Limits:    wire.Limits{Grace: time.Minute},
@@ -77,7 +77,7 @@ func TestCanceledInitializationDrainsStartBeforeCleaningLateResources(t *testing
 			}
 			host.Wait()
 		}()
-		input, err := json.Marshal(contract.Initialize{
+		input, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes,
 			Identity: contract.Identity{Activation: "cancel-start"}, Protocol: contract.Protocol{Major: 1},
 			Definition: "resource", Config: json.RawMessage(`{}`),
 		})
@@ -143,7 +143,7 @@ func TestCanceledInitializationDrainsStartBeforeCleaningLateResources(t *testing
 		if err := host.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if err := <-serveDone; err != nil && !errors.Is(err, net.ErrClosed) {
+		if err := <-serveDone; !errors.Is(err, context.Canceled) {
 			t.Fatalf("SDK transport exit: %v", err)
 		}
 	})

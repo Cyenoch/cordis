@@ -12,74 +12,151 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"time"
+	"runtime"
+	"runtime/debug"
+	"syscall"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/packagehost"
-	native "github.com/Cyenoch/cordis/runtime/native"
-	wasm "github.com/Cyenoch/cordis/runtime/wasm"
-	"github.com/Cyenoch/cordis/schema"
 )
 
+const sdkModule = "github.com/Cyenoch/cordis"
+
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	if err := execute(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		var usage *usageError
-		if errors.As(err, &usage) {
-			os.Exit(2)
-		}
-		os.Exit(1)
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := exitCode(execute(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr), os.Stderr)
+	stop()
+	os.Exit(code)
 }
 
 type usageError struct{ message string }
 
 func (e *usageError) Error() string { return e.message }
 
-// Subcommand-local stdlib flag sets deliberately avoid hidden env/config layering.
-func execute(ctx context.Context, args []string, out, errOut io.Writer) (result error) {
+func exitCode(err error, errOut io.Writer) int {
+	if err == nil {
+		return 0
+	}
+	fmt.Fprintln(errOut, err)
+	var usage *usageError
+	if errors.As(err, &usage) {
+		return 2
+	}
+	return 1
+}
+
+var commandUsage = map[string]string{
+	"help":     "help [COMMAND]",
+	"init":     "init -module MODULE [-sdk-version VERSION] [-id ID] [-publisher NAME] [-runtime native|wasm] DIRECTORY",
+	"build":    "build -go-package PACKAGE -goos OS -goarch ARCH [FLAGS] DIRECTORY",
+	"pack":     "pack DIRECTORY ARCHIVE.zip",
+	"sign":     "sign ARCHIVE.zip KEY_ID PRIVATE_KEY_FILE",
+	"keygen":   "keygen PRIVATE_KEY_FILE",
+	"inspect":  "inspect ARCHIVE.zip",
+	"validate": "validate ARCHIVE.zip",
+	"generate": "generate -output FILE|- [-package NAME] [-format FORMAT] CONTRACT...",
+	"run":      "run -dev-unsigned [FLAGS] ARCHIVE.zip",
+	"version":  "version",
+}
+
+// Subcommand-local stdlib flag sets avoid hidden environment/config layering.
+func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return &usageError{message: "commands: pack, sign, keygen, inspect, validate, generate, run"}
+		return printHelp(out)
+	}
+	switch args[0] {
+	case "-h", "-help", "--help":
+		if len(args) != 1 {
+			return &usageError{message: "help [COMMAND]"}
+		}
+		return printHelp(out)
+	case "help":
+		if len(args) == 1 {
+			return printHelp(out)
+		}
+		if len(args) == 2 {
+			switch args[1] {
+			case "-h", "--help", "-help", "help":
+				return printHelp(out)
+			case "-version", "--version":
+				return printVersion(out)
+			}
+		}
+		if len(args) != 2 || commandUsage[args[1]] == "" {
+			return &usageError{message: "help [COMMAND]"}
+		}
+		return execute(ctx, []string{args[1], "-help"}, in, out, errOut)
+	case "-version", "--version":
+		args = append([]string{"version"}, args[1:]...)
+	}
+	usage, ok := commandUsage[args[0]]
+	if !ok {
+		return &usageError{message: "unknown command: " + args[0]}
 	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
-	flags.SetOutput(errOut)
-	writeJSON := func(value any) error { enc := json.NewEncoder(out); enc.SetIndent("", "  "); return enc.Encode(value) }
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() {}
+	version := flags.Bool("version", false, "print build and module version")
+	parse := func() (bool, error) {
+		err := flags.Parse(args[1:])
+		if errors.Is(err, flag.ErrHelp) {
+			if _, err := fmt.Fprintln(out, "Usage: cordis "+usage); err != nil {
+				return true, err
+			}
+			flags.SetOutput(out)
+			flags.PrintDefaults()
+			return true, nil
+		}
+		if err != nil {
+			return true, &usageError{message: args[0] + ": " + err.Error()}
+		}
+		if *version {
+			return true, printVersion(out)
+		}
+		return false, nil
+	}
 	switch args[0] {
+	case "init":
+		return initCommand(flags, parse, out)
+	case "build":
+		return buildCommand(ctx, flags, parse, out)
+	case "generate":
+		return generateCommand(flags, parse, out)
+	case "run":
+		return runCommand(ctx, flags, parse, in, out, errOut)
+	}
+	if done, err := parse(); done {
+		return err
+	}
+	count := map[string]int{"pack": 2, "inspect": 1, "validate": 1, "keygen": 1, "sign": 3, "version": 0}
+	if flags.NArg() != count[args[0]] {
+		return &usageError{message: usage}
+	}
+	switch args[0] {
+	case "version":
+		return printVersion(out)
 	case "pack":
-		if len(args) != 3 {
-			return &usageError{message: "pack DIRECTORY ARCHIVE.zip"}
-		}
-		pkg, err := packagehost.Pack(ctx, args[1], args[2])
+		pkg, err := packagehost.Pack(ctx, flags.Arg(0), flags.Arg(1))
 		if err != nil {
 			return err
 		}
-		return writeJSON(pkg.Ref)
+		return writeJSON(out, pkg.Ref)
 	case "inspect", "validate":
-		if len(args) != 2 {
-			return &usageError{message: args[0] + " ARCHIVE.zip"}
-		}
-		pkg, err := packagehost.Inspect(ctx, args[1])
+		pkg, err := packagehost.Inspect(ctx, flags.Arg(0))
 		if err != nil {
 			return err
 		}
-		return writeJSON(struct {
+		return writeJSON(out, struct {
 			Ref      contract.PackageRef `json:"ref"`
 			Manifest contract.Manifest   `json:"manifest"`
 			Trust    string              `json:"trust"`
 		}{Ref: pkg.Ref, Manifest: pkg.Manifest, Trust: "not evaluated; inspection never authorizes execution"})
 	case "keygen":
-		if len(args) != 2 {
-			return &usageError{message: "keygen PRIVATE_KEY_FILE"}
-		}
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return err
 		}
-		file, err := os.OpenFile(args[1], os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		file, err := os.OpenFile(flags.Arg(0), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
 			return err
 		}
@@ -87,135 +164,71 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) (result 
 		if err := errors.Join(writeErr, file.Close()); err != nil {
 			return err
 		}
-		return writeJSON(map[string]string{"publicKey": hex.EncodeToString(pub)})
+		return writeJSON(out, map[string]string{"publicKey": hex.EncodeToString(pub)})
 	case "sign":
-		if len(args) != 4 {
-			return &usageError{message: "sign ARCHIVE.zip KEY_ID PRIVATE_KEY_FILE"}
-		}
-		raw, err := os.ReadFile(args[3])
+		raw, err := os.ReadFile(flags.Arg(2))
 		if err != nil {
 			return err
 		}
 		key, err := hex.DecodeString(string(raw))
 		if err != nil || len(key) != ed25519.PrivateKeySize {
-			return fmt.Errorf("invalid Ed25519 private key file")
+			return fmt.Errorf("invalid Ed25519 private key file %q", flags.Arg(2))
 		}
-		pkg, err := packagehost.Sign(ctx, args[1], args[2], ed25519.PrivateKey(key))
+		pkg, err := packagehost.Sign(ctx, flags.Arg(0), flags.Arg(1), ed25519.PrivateKey(key))
 		if err != nil {
 			return err
 		}
-		return writeJSON(pkg.Ref)
-	case "generate":
-		name := flags.String("package", "pluginapi", "generated Go package")
-		if err := flags.Parse(args[1:]); err != nil {
-			return &usageError{message: err.Error()}
-		}
-		if flags.NArg() != 1 {
-			return &usageError{message: "generate [-package NAME] CONTRACT.json"}
-		}
-		data, err := os.ReadFile(flags.Arg(0))
-		if err != nil {
-			return err
-		}
-		definition, err := schema.Parse(data)
-		if err != nil {
-			return err
-		}
-		return schema.Generate(out, *name, definition)
-	case "run":
-		worker := flags.String("worker", "", "worker binary for WASM")
-		dev := flags.Bool("dev-unsigned", false, "explicitly trust only this archive digest for this run")
-		service := flags.String("service", "", "service name to call")
-		definitionID := flags.String("definition", "", "package definition (default: manifest default)")
-		major := flags.Uint("major", 0, "service major (default: unique declared major)")
-		minMinor := flags.Uint("min-minor", 0, "minimum compatible minor")
-		maxMinor := flags.Uint("max-minor", uint(^uint32(0)), "maximum compatible minor")
-		input := flags.String("input", "{}", "JSON call input")
-		config := flags.String("config", "{}", "JSON plugin configuration")
-		if err := flags.Parse(args[1:]); err != nil {
-			return &usageError{message: err.Error()}
-		}
-		if flags.NArg() != 1 || !*dev {
-			return &usageError{message: "run requires -dev-unsigned and one local archive; no persisted/global trust is granted"}
-		}
-		pkg, err := packagehost.Inspect(ctx, flags.Arg(0))
-		if err != nil {
-			return err
-		}
-		root, err := os.MkdirTemp("", "cordis-run-")
-		if err != nil {
-			return err
-		}
-		defer func() { result = errors.Join(result, os.RemoveAll(root)) }()
-		host, err := cordis.Open(cordis.Options{Directory: filepath.Join(root, "store"), Trust: packagehost.TrustPolicy{DevDigests: map[string]bool{pkg.Ref.Digest: true}, Publishers: map[string][]string{pkg.Manifest.Publisher: {pkg.Ref.ID}}},
-			Runtimes: map[string]contract.Runtime{"native": native.New(), "wasm": wasm.New(*worker)}})
-		if err != nil {
-			return err
-		}
-		defer func() {
-			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			result = errors.Join(result, host.Close(closeCtx))
-		}()
-		pkg, err = host.Install(ctx, flags.Arg(0))
-		if err != nil {
-			return err
-		}
-		if err := host.Select(ctx, pkg.Ref); err != nil {
-			return err
-		}
-		selected := *definitionID
-		if selected == "" {
-			selected = pkg.Manifest.DefaultDefinition
-		}
-		required, err := selectService(pkg.Manifest, selected, *service, *major, *minMinor, *maxMinor)
-		if err != nil {
-			return err
-		}
-		instance, err := host.Enable(ctx, contract.Entry{ID: "cli.instance", Package: pkg.Ref.ID, Definition: selected, Config: json.RawMessage(*config)})
-		if err != nil {
-			return err
-		}
-		if err := instance.Wait(ctx); err != nil {
-			return err
-		}
-		if *service == "" {
-			return writeJSON(instance.Status())
-		}
-		result, err := host.Call(ctx, "", required, json.RawMessage(*input))
-		if err != nil {
-			return err
-		}
-		return writeJSON(result)
-	case "help", "-h", "--help":
-		_, err := fmt.Fprintln(out, "cordis: pack | sign | keygen | inspect | validate | generate | run")
-		return err
-	default:
-		return &usageError{message: "unknown command: " + args[0]}
+		return writeJSON(out, pkg.Ref)
 	}
+	return nil
 }
 
-func selectService(manifest contract.Manifest, definition, name string, major, minMinor, maxMinor uint) (contract.Requirement, error) {
-	if major > uint(^uint32(0)) || maxMinor > uint(^uint32(0)) || minMinor > maxMinor {
-		return contract.Requirement{}, &usageError{message: "service versions require uint32 values and min-minor <= max-minor"}
+func printHelp(out io.Writer) error {
+	_, err := fmt.Fprintln(out, "cordis: init | build | pack | sign | keygen | inspect | validate | generate | run | version\nUsage: cordis help [COMMAND]")
+	return err
+}
+
+func writeJSON(out io.Writer, value any) error {
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(value)
+}
+
+func cordisModule(info *debug.BuildInfo) (debug.Module, bool) {
+	if info.Main.Path == sdkModule {
+		return info.Main, true
 	}
-	for _, candidate := range manifest.Definitions {
-		if candidate.ID != definition {
-			continue
+	for _, dep := range info.Deps {
+		if dep.Path == sdkModule {
+			return *dep, true
 		}
-		if name == "" {
-			return contract.Requirement{}, nil
+	}
+	return debug.Module{}, false
+}
+
+func printVersion(out io.Writer) error {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return fmt.Errorf("Cordis build metadata unavailable")
+	}
+	module, ok := cordisModule(info)
+	if !ok {
+		return fmt.Errorf("Cordis module metadata unavailable")
+	}
+	if _, err := fmt.Fprintf(out, "cordis %s %s %s/%s\nmodule %s\n", module.Version, info.GoVersion, runtime.GOOS, runtime.GOARCH, module.Path); err != nil {
+		return err
+	}
+	if module.Replace != nil {
+		if _, err := fmt.Fprintf(out, "replace %s %s\n", module.Replace.Path, module.Replace.Version); err != nil {
+			return err
 		}
-		matches := []contract.Service{}
-		for _, service := range candidate.Provides {
-			if service.Name == name && (major == 0 || uint(service.Major) == major) && uint(service.Minor) >= minMinor && uint(service.Minor) <= maxMinor {
-				matches = append(matches, service)
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" || setting.Key == "vcs.modified" || setting.Key == "vcs.time" {
+			if _, err := fmt.Fprintf(out, "%s %s\n", setting.Key, setting.Value); err != nil {
+				return err
 			}
 		}
-		if len(matches) != 1 {
-			return contract.Requirement{}, &usageError{message: "service version is absent or ambiguous; specify -definition, -major and a compatible minor range"}
-		}
-		return contract.Requirement{Name: name, Major: matches[0].Major, MinMinor: uint32(minMinor), MaxMinor: uint32(maxMinor)}, nil
 	}
-	return contract.Requirement{}, &usageError{message: "unknown definition: " + definition}
+	return nil
 }

@@ -11,7 +11,7 @@ codePaths:
 
 # 外部插件生命周期验收
 
-`examples/plugins/chain` 是独立作者 module。主链包含 provider A、依赖 A 的 middle B、依赖 B 的 consumer C，同一产物还提供创建可选子功能的 optional-parent；入口为 `sdk.ServeDefinitions`。链上服务为 major 1、minor 2，requirement 接受 minor 闭区间 `[1,3]`，用于验证非零 minor 的范围匹配。
+`examples/plugins/chain` 是独立作者 module。主链包含 provider A、依赖 A 的 middle B、依赖 B 的 consumer C，同一产物还提供创建可选子功能的 optional-parent；入口为 `sdk.Main`。定义、配置和服务范围来自同一 TOML 契约，`examples/pluginmeta` 从该作者源生成宿主元数据，避免维护第二份 Manifest。链上服务为 major 1、minor 2，requirement 接受 minor 闭区间 `[1,3]`，用于验证非零 minor 的范围匹配。
 
 验收使用真实签名 ZIP 和独立进程会话，不用 mock Runtime、宿主、guest 或 WASI worker 代替。native 是受信任可执行代码，不是操作系统权限沙箱。
 

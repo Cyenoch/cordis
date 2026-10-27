@@ -8,7 +8,7 @@ func (e *Engine) Preflight(entry contract.Entry, definition contract.Definition)
 	if entry.ID == "" || definition.Start == nil {
 		return contract.Fail(contract.Invalid, "entry and start required")
 	}
-	if err := validate(definition, entry.Config); err != nil {
+	if err := validate(definition, normalizeConfig(entry.Config)); err != nil {
 		return err
 	}
 	e.mu.Lock()

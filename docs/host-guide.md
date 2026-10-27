@@ -52,6 +52,7 @@ func Run(ctx context.Context, directory, archivePath, workerPath string,
     trust packagehost.TrustPolicy) (result error) {
     host, err := cordis.Open(cordis.Options{
         Directory: directory,
+        FrameBytes: contract.MaxFrameBytes,
         Trust: trust,
         Runtimes: map[string]contract.Runtime{"wasm": wasm.New(workerPath)},
     })
@@ -83,7 +84,7 @@ func Run(ctx context.Context, directory, archivePath, workerPath string,
     }
     response, err := host.Call(ctx, "", contract.Requirement{
         Name: "example.counter", Major: 1, MinMinor: 0, MaxMinor: 0,
-    }, json.RawMessage(`{"operation":"add","delta":2}`))
+    }, json.RawMessage(`{"method":"execute","input":{"operation":"add","delta":2}}`))
     if err != nil {
         return err
     }
@@ -136,3 +137,11 @@ trust := packagehost.TrustPolicy{
 在仓库根执行 `bash conformance/run.sh` 可运行完整示例及生命周期链；Windows 用 `./conformance/run.ps1`。需要只运行具体链时，参考[生命周期验收](lifecycle-acceptance.md)。
 
 不需要外部进程的机制演示见[组合实操](composition-tutorial.md)与[访问实操](access-tutorial.md)，按用途查方法见[API 导航](api.md)。
+
+## 当前句柄、恢复与显式分派
+
+通过 `host.Instance(id)` 管理恢复或替换后的当前实例，`host.Instances()` 取得独立清单；生成客户端可直接接收 `host.Realm("workspace")`。`Restore` 返回 `(contract.RestoreReport, error)`，逐条区分 registered、existing、disabled、blocked、failed、conflict，不因部分失败强制重建已经运行的条目。
+
+`HandleGuest` 仍是完整替换。只接管部分方法时，在 switch 的 default 分支显式调用 `host.DispatchGuest(ctx, scope, method, input)`；业务错误直接返回，不按 error 猜“未处理”，也不自动执行两遍。默认 dispatcher 包含能力、任务、事件及子实例。
+
+`Options.Sink` 接收宿主本地原始 cause、activation、call 和 stage，安全投影仍用于回传 guest。`DiagnosticStderr` 只有显式启用且有 Sink 才转交 Runtime 的有界 stderr chunk；默认只排空。原文只到显式 Redactor，默认不回显。Sink 失败与原错误合并返回；异步失败通过 `host.DiagnosticErrors()` 保留最早最多 64 项，不递归调用失败 Sink。

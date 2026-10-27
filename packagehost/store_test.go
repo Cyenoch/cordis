@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -499,14 +500,14 @@ func TestStoreNestedDocumentsRemainReopenable(t *testing.T) {
 	if err = s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	config := strings.Repeat("[", 32) + "0" + strings.Repeat("]", 32)
+	config := "{}"
 	entry := contract.Entry{ID: "nested", Package: "demo", Definition: "main", Realm: "root", Config: []byte(config), Enabled: true}
 	if err = s.SaveEntry(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
-	entry.Config = []byte("[" + config + "]")
-	if err = s.SaveEntry(ctx, entry); err == nil {
-		t.Fatal("catalog envelope budget relaxed the configuration leaf limit")
+	entry.Config = []byte(strings.Repeat("[", 33) + "0" + strings.Repeat("]", 33))
+	if err = s.SaveEntry(ctx, entry); err == nil || !strings.Contains(err.Error(), "nesting limit") {
+		t.Fatalf("catalog envelope budget relaxed the configuration leaf limit: %v", err)
 	}
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
@@ -526,6 +527,54 @@ func TestStoreNestedDocumentsRemainReopenable(t *testing.T) {
 	}
 	if err = snapshot.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStoreSaveEntryPersistsOmittedObjectAndExplicitNull(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	key, trust := signingFixture(t)
+	root := t.TempDir()
+	s := openFixture(t, root, trust)
+	m := manifestFixture("demo", "1.0.0")
+	m.Definitions = append(m.Definitions, contract.DefinitionSpec{
+		ID: "nullable", ConfigSchema: json.RawMessage(`{"type":"object","nullable":true}`),
+	})
+	archive, _ := archiveFixture(t, m, key)
+	p, err := s.Install(ctx, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []contract.Entry{
+		{ID: "omitted", Package: "demo", Definition: "main", Realm: "root"},
+		{ID: "explicit-null", Package: "demo", Definition: "nullable", Realm: "root", Config: json.RawMessage(`null`)},
+	} {
+		if err := s.SaveEntry(ctx, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SaveEntry(ctx, contract.Entry{
+		ID: "invalid-null", Package: "demo", Definition: "main", Realm: "root", Config: json.RawMessage(`null`),
+	}); err == nil {
+		t.Fatal("explicit null was silently converted to an object")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = openFixture(t, root, trust)
+	entries, err := s.Entries()
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("persisted entries: %+v, %v", entries, err)
+	}
+	configs := map[string]string{}
+	for _, entry := range entries {
+		configs[entry.ID] = string(entry.Config)
+	}
+	if configs["omitted"] != "{}" || configs["explicit-null"] != "null" {
+		t.Fatalf("configuration semantics changed after reopen: %v", configs)
 	}
 }
 
@@ -777,5 +826,37 @@ func TestStoreCrashRecoveryCatalogIsOnlyCommitPoint(t *testing.T) {
 		if _, err = os.Stat(filepath.Join(root, filepath.FromSlash(name))); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("uncommitted artifact survived %s: %v", name, err)
 		}
+	}
+}
+
+func TestDefinitionSchemasRemainCoveredByPackageIntegrity(t *testing.T) {
+	key, trust := signingFixture(t)
+	m := manifestFixture("demo", "1.0.0")
+	m.Definitions = append(m.Definitions, contract.DefinitionSpec{ID: "other", ConfigSchema: json.RawMessage(`{"type":"string"}`)})
+	for _, index := range []int{0, 1} {
+		t.Run(fmt.Sprint(index), func(t *testing.T) {
+			archive, _ := archiveFixture(t, m, key)
+			s := openFixture(t, t.TempDir(), trust)
+			p, err := s.Install(t.Context(), archive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Select(t.Context(), p.Ref, ChangeOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			changed := p.Manifest
+			changed.Definitions[index].ConfigSchema = json.RawMessage(`{"type":"boolean"}`)
+			raw, err := json.Marshal(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(p.Directory, "plugin.json"), raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if snapshot, err := s.Snapshot(t.Context(), p.Ref); err == nil {
+				snapshot.Close()
+				t.Fatal("changed definition config escaped manifest digest")
+			}
+		})
 	}
 }

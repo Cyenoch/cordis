@@ -76,8 +76,15 @@ func Compile(data json.RawMessage) (*Schema, error) {
 	if err := contract.CheckJSON(data, 32, 10000); err != nil {
 		return nil, field("/schema", "json", err.Error())
 	}
+	data, err := resolveSchema(data, nil)
+	if err != nil {
+		return nil, err
+	}
 	root, err := compile(data, "/schema", 0)
 	if err != nil {
+		return nil, err
+	}
+	if err := normalizeNode(root); err != nil {
 		return nil, err
 	}
 	return &Schema{root: root}, nil

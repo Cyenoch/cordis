@@ -54,8 +54,8 @@ go build -o "$out/measure" ./conformance/cmd/measure
 
 | JSON `phase` | 区间与验证 |
 | --- | --- |
-| `cold_process_start_initialize` | 从 `Runtime.Start` 前至 initialize 返回并完成注册表验证。包含 native 可执行文件复制及启动，或新 worker 启动、WASM 读取/编译/实例化，以及 counter 配置和服务/事件注册。不包含包安装、签名验证、宿主 Engine 发布、构建或最终关闭。`Start` 返回本身不代表 WASM 已编译，因此不能仅计 `Start` 耗时作为就绪延迟。 |
-| `first_subprocess_call` | initialize 后第一次真实 stdio IPC `call`，counter 从 41 加至 42，并验证 payload。 |
+| `cold_process_start_initialize` | 从 `Runtime.Start` 前至 initialize 返回并完成注册表验证。包含 activation.publish 确认（业务准入前置条件）、native 可执行文件复制及启动，或新 worker 启动、WASM 读取/编译/实例化，以及 counter 配置和服务/事件注册。不包含包安装、签名验证、宿主 Engine 发布、构建或最终关闭。`Start` 返回本身不代表 WASM 已编译，因此不能仅计 `Start` 耗时作为就绪延迟。 |
+| `first_subprocess_call` | publish 确认后第一次真实 stdio IPC `call`（生成的 execute 方法信封），counter 从 41 加至 42，并验证 payload。 |
 | `steady_subprocess_calls` | 同一存活会话内的有限次顺序 `add(1)` 调用，逐次验证 43、44……的返回值；总耗时除以调用数，不含第一调用或最终关闭。 |
 
 启用 `-cache-directory` 后，WASM 初始化区间改标为 `cache_first_start_initialize`（本次调用的第一个 worker）和 `cache_reused_start_initialize`（本次调用后续的新 worker）；区间内容仍与上表初始化相同。这些 phase 是执行顺序标签，不是逐次命中/未命中的观测。

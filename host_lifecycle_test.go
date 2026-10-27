@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,7 +29,7 @@ func (fixtureRuntime) Start(context.Context, contract.Launch) (contract.Session,
 }
 func (s *fixtureSession) Call(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
 	if method == "initialize" {
-		return json.RawMessage(`{"minor":0,"features":[],"services":[],"subscriptions":[],"contributions":[]}`), nil
+		return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[],"subscriptions":[],"contributions":[]}`), nil
 	}
 	return json.RawMessage(`{}`), nil
 }
@@ -41,7 +43,7 @@ func lifecycleHost(t *testing.T) (*Host, contract.PackageRef, contract.PackageRe
 	trust := packagehost.TrustPolicy{DevDigests: map[string]bool{}, Publishers: map[string][]string{"test.publisher": {"test.package"}}}
 	for _, version := range []string{"1.0.0", "2.0.0"} {
 		source := t.TempDir()
-		m := contract.Manifest{Schema: contract.PackageSchema, ID: "test.package", Version: version, Publisher: "test.publisher", Protocol: contract.Protocol{Major: 1}, Definitions: []contract.DefinitionSpec{{ID: "main"}}, DefaultDefinition: "main", Runtime: contract.RuntimeSpec{Kind: "wasm", Entry: "plugin.wasm"}}
+		m := contract.Manifest{Schema: contract.PackageSchema, ID: "test.package", Version: version, Publisher: "test.publisher", Protocol: contract.Protocol{Major: 1}, Definitions: []contract.DefinitionSpec{{ID: "main", ConfigSchema: json.RawMessage(`{"type":"object","properties":{}}`)}}, DefaultDefinition: "main", Runtime: contract.RuntimeSpec{Kind: "wasm", Entry: "plugin.wasm"}}
 		raw, err := json.Marshal(m)
 		if err != nil {
 			t.Fatal(err)
@@ -60,7 +62,7 @@ func lifecycleHost(t *testing.T) (*Host, contract.PackageRef, contract.PackageRe
 		archives = append(archives, path)
 		trust.DevDigests[pkg.Ref.Digest] = true
 	}
-	h, err := Open(Options{Directory: t.TempDir(), Trust: trust, Runtimes: map[string]contract.Runtime{"wasm": fixtureRuntime{}}})
+	h, err := Open(Options{FrameBytes: contract.MaxFrameBytes, Directory: t.TempDir(), Trust: trust, Runtimes: map[string]contract.Runtime{"wasm": fixtureRuntime{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +216,7 @@ func TestDisableParentSkipsDisabledUninstalledChild(t *testing.T) {
 }
 
 func TestCloseCancellationWhileDisableIsBlocked(t *testing.T) {
-	h, err := Open(Options{Directory: t.TempDir()})
+	h, err := Open(Options{FrameBytes: contract.MaxFrameBytes, Directory: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +259,7 @@ type typedPayload struct {
 func BenchmarkPublicTypedCall(b *testing.B) {
 	for _, size := range []int{32, 1024} {
 		b.Run(fmt.Sprint(size), func(b *testing.B) {
-			h, err := Open(Options{Directory: b.TempDir()})
+			h, err := Open(Options{FrameBytes: contract.MaxFrameBytes, Directory: b.TempDir()})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -293,5 +295,153 @@ func BenchmarkPublicTypedCall(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+type lifecycleCustomRuntime struct{ session *lifecycleCustomSession }
+
+func (r lifecycleCustomRuntime) Start(_ context.Context, launch contract.Launch) (contract.Session, error) {
+	if !launch.SessionFactory.IsCustom() {
+		return nil, errors.New("custom declaration lost")
+	}
+	return r.session, nil
+}
+
+type lifecycleCustomSession struct {
+	done, publishing, ack, retired chan struct{}
+	once                           sync.Once
+	service                        contract.Service
+	invokes                        atomic.Int32
+}
+
+func (s *lifecycleCustomSession) Call(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errors.New("generic envelope reached custom ABI")
+}
+func (s *lifecycleCustomSession) Done() <-chan struct{} { return s.done }
+func (s *lifecycleCustomSession) Err() error            { return nil }
+func (s *lifecycleCustomSession) Close() error          { s.once.Do(func() { close(s.done) }); return nil }
+func (s *lifecycleCustomSession) Initialize(context.Context, contract.Initialize) (contract.Registration, error) {
+	return contract.Registration{Services: []contract.Service{s.service}}, nil
+}
+func (s *lifecycleCustomSession) Publish(context.Context) error {
+	close(s.publishing)
+	<-s.ack
+	return nil
+}
+func (s *lifecycleCustomSession) Retire(context.Context) error { close(s.retired); return nil }
+func (s *lifecycleCustomSession) Invoke(_ context.Context, in contract.Invocation) (json.RawMessage, error) {
+	if !in.Cleanup {
+		return nil, errors.New("cleanup classification lost in custom mapping")
+	}
+	s.invokes.Add(1)
+	return json.RawMessage(`{}`), nil
+}
+func (s *lifecycleCustomSession) Deliver(context.Context, contract.Event) ([]contract.EventResult, error) {
+	return nil, nil
+}
+func (s *lifecycleCustomSession) Shutdown(context.Context) error {
+	select {
+	case <-s.retired:
+		return nil
+	default:
+		return errors.New("shutdown ran without retirement")
+	}
+}
+func TestHostCustomSessionPublicationAndRetirement(t *testing.T) {
+	h, pkg, _ := lifecycleHost(t)
+	// Add a service through a fresh validated package; the custom ABI has no generic budget handshake.
+	original, err := h.store.Get(pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	m := original.Manifest
+	m.ID = "custom.lifecycle"
+	service := contract.Service{Name: "custom.lifecycle", Major: 1}
+	m.Definitions[0].Provides = []contract.Service{service}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "plugin.wasm"), []byte("custom artifact"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "plugin.zip")
+	packed, err := packagehost.Pack(t.Context(), dir, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Trust remains explicit and package-bound in the same host-owned policy.
+	trust := h.options.Trust
+	trust.DevDigests[packed.Ref.Digest] = true
+	trust.Publishers["test.publisher"] = append(trust.Publishers["test.publisher"], m.ID)
+	if err := h.store.UpdateTrust(trust); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := h.Install(t.Context(), archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Select(t.Context(), installed.Ref); err != nil {
+		t.Fatal(err)
+	}
+	s := &lifecycleCustomSession{done: make(chan struct{}), publishing: make(chan struct{}), ack: make(chan struct{}), retired: make(chan struct{}), service: service}
+	h.options.Runtimes["wasm"] = lifecycleCustomRuntime{s}
+	h.options.FrameBytes = 0
+	h.options.SessionFactory = func(contract.Manifest) *contract.SessionFactory {
+		return &contract.SessionFactory{Protocol: contract.CustomSession, Open: func(io.ReadWriteCloser, contract.Identity, contract.SessionHandler, int) (contract.Session, error) {
+			return s, nil
+		}}
+	}
+	i, err := h.Enable(t.Context(), contract.Entry{ID: "custom", Package: m.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-s.publishing
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := i.Wait(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if status := i.Status(); status.State != contract.Starting || status.Applied != 0 {
+		t.Fatalf("custom publication acknowledged early: %+v", status)
+	}
+	unrelated, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "unrelated"}, contract.Definition{Start: func(context.Context, contract.Scope) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unrelated.Wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	close(s.ack)
+	if err := i.Wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	req := contract.Requirement{Name: service.Name, Major: 1}
+	consumer, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "custom-consumer"}, contract.Definition{Requires: []contract.Requirement{req}, Start: func(_ context.Context, scope contract.Scope) error {
+		return scope.Defer(func(ctx context.Context) error {
+			select {
+			case <-s.retired:
+			default:
+				return errors.New("consumer cleanup preceded custom retire")
+			}
+			_, err := scope.Call(ctx, req, json.RawMessage(`{}`))
+			return err
+		})
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Disable(t.Context(), "custom"); err != nil {
+		t.Fatal(err)
+	}
+	if s.invokes.Load() != 1 {
+		t.Fatalf("custom cleanup calls=%d", s.invokes.Load())
 	}
 }

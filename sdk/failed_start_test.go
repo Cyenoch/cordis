@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -58,7 +58,7 @@ func TestFailedStartReleasesBuiltinOnlyUnderHostShutdownParent(t *testing.T) {
 				}
 				serveDone := make(chan error, 1)
 				go func() { serveDone <- sdk.ServeTransport(t.Context(), definition, right) }()
-				host, err := wire.New(wire.Options{
+				host, err := wire.New(wire.Options{FrameBytes: contract.MaxFrameBytes,
 					Transport: left, Identity: contract.Identity{Activation: "failed-start"},
 					Limits: wire.Limits{Grace: time.Minute},
 					Handler: func(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
@@ -107,11 +107,16 @@ func TestFailedStartReleasesBuiltinOnlyUnderHostShutdownParent(t *testing.T) {
 				defer func() {
 					_ = host.Close()
 					host.Wait()
-					if err := <-serveDone; err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.EOF) {
-						t.Errorf("SDK exit: %v", err)
+					err := <-serveDone
+					if err == nil {
+						t.Error("failed initialization reported a successful SDK exit")
+					} else if outcome == "canceled" && !errors.Is(err, context.Canceled) {
+						t.Errorf("SDK exit lost initialization cancellation: %v", err)
+					} else if outcome == "failed" && !strings.Contains(err.Error(), "start rejected after acquisition") {
+						t.Errorf("SDK exit lost initialization cause: %v", err)
 					}
 				}()
-				input, err := json.Marshal(contract.Initialize{
+				input, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes,
 					Identity: contract.Identity{Activation: "failed-start"}, Protocol: contract.Protocol{Major: 1},
 					Definition: definition.ID, Config: json.RawMessage(`{}`),
 				})

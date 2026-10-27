@@ -60,7 +60,7 @@ func TestAnsweredCancellationDoesNotExpireHealthyEndpoint(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		left, right := net.Pipe()
 		const grace = time.Second
-		endpoint, err := New(Options{
+		endpoint, err := New(Options{FrameBytes: contract.MaxFrameBytes,
 			Transport: left,
 			Identity:  contract.Identity{Activation: "answered"},
 			Limits:    Limits{Grace: grace},
@@ -89,9 +89,13 @@ func TestAnsweredCancellationDoesNotExpireHealthyEndpoint(t *testing.T) {
 				if request.ID == "h:1" {
 					<-responseReady
 				}
+				payload := json.RawMessage(`{}`)
+				if request.Method == "initialize" {
+					payload = testRegistration()
+				}
 				if err := writeLifecycleFrame(right, Frame{
 					Schema: contract.SessionSchema, Kind: "response", Activation: request.Activation,
-					ID: request.ID, Method: request.Method, Payload: json.RawMessage(`{}`),
+					ID: request.ID, Method: request.Method, Payload: payload,
 				}); err != nil {
 					peerDone <- err
 					return
@@ -106,7 +110,7 @@ func TestAnsweredCancellationDoesNotExpireHealthyEndpoint(t *testing.T) {
 		ctx := &lifecycleContext{Context: base, gates: []*lifecycleGate{nil, before, after}}
 		callDone := make(chan error, 1)
 		go func() {
-			_, err := endpoint.Call(ctx, "initialize", json.RawMessage(`{}`))
+			_, err := endpoint.Call(ctx, "initialize", testInitialize("answered"))
 			callDone <- err
 		}()
 		<-before.entered
@@ -145,7 +149,7 @@ func TestInitializeReplyAdmitsImmediateGuestRequestBeforeCallerResumes(t *testin
 	synctest.Test(t, func(t *testing.T) {
 		left, right := net.Pipe()
 		handled := make(chan string, 1)
-		endpoint, err := New(Options{
+		endpoint, err := New(Options{FrameBytes: contract.MaxFrameBytes,
 			Transport: left,
 			Identity:  contract.Identity{Activation: "initialize"},
 			Handler: func(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
@@ -163,7 +167,7 @@ func TestInitializeReplyAdmitsImmediateGuestRequestBeforeCallerResumes(t *testin
 		ctx := &lifecycleContext{Context: base, gates: []*lifecycleGate{nil, nil, gate}}
 		callDone := make(chan error, 1)
 		go func() {
-			_, err := endpoint.Call(ctx, "initialize", json.RawMessage(`{}`))
+			_, err := endpoint.Call(ctx, "initialize", testInitialize("initialize"))
 			callDone <- err
 		}()
 		decoder := json.NewDecoder(right)
@@ -176,7 +180,7 @@ func TestInitializeReplyAdmitsImmediateGuestRequestBeforeCallerResumes(t *testin
 		go func() {
 			if err := writeLifecycleFrame(right, Frame{
 				Schema: contract.SessionSchema, Kind: "response", Activation: "initialize",
-				ID: initialize.ID, Method: "initialize", Payload: json.RawMessage(`{}`),
+				ID: initialize.ID, Method: "initialize", Payload: testRegistration(),
 			}); err != nil {
 				peerDone <- err
 				return

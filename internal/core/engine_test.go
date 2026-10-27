@@ -45,7 +45,7 @@ func TestDependencyReadinessAndCanceledWaiting(t *testing.T) {
 		i := add(t, e, "consumer", consumer)
 		canceled := add(t, e, "canceled", consumer)
 		synctest.Wait()
-		if starts.Load() != 0 || len(i.Status().WaitingFor) != 1 {
+		if starts.Load() != 0 || len(i.Status().Waiting) != 1 {
 			t.Fatal("consumer initialized before provider readiness")
 		}
 		if err := canceled.Stop(t.Context()); err != nil {

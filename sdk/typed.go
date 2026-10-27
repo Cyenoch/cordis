@@ -9,7 +9,7 @@ import (
 )
 
 // Provide binds a typed handler without exposing protocol encoding to authors.
-func Provide[In, Out any](scope contract.Scope, service contract.Service, handler func(context.Context, In) (Out, error)) error {
+func Provide[In, Out any](scope contract.Registrar, service contract.Service, handler func(context.Context, In) (Out, error)) error {
 	if err := contract.CheckDataType(reflect.TypeFor[In]()); err != nil {
 		return err
 	}
@@ -29,7 +29,7 @@ func Provide[In, Out any](scope contract.Scope, service contract.Service, handle
 	})
 }
 
-func Call[In, Out any](ctx context.Context, scope contract.Scope, required contract.Requirement, input In) (Out, error) {
+func Call[In, Out any](ctx context.Context, scope contract.Caller, required contract.Requirement, input In) (Out, error) {
 	var result Out
 	data, err := contract.Encode(input)
 	if err != nil {

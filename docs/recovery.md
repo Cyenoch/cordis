@@ -66,3 +66,9 @@ go test -tags=integration -race ./packagehost -timeout=5m
 ```
 
 集成负责人已执行的恢复、集成和 race 结果见 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)。上述命令用于复现，不是独立新增的通过记录；提交点、进程锁和目录同步必须按实际 OS/架构及对应源码修订判断，交叉编译不代表平台运行验收。
+
+## 逐条恢复
+
+`report, err := host.Restore(ctx)` 返回每条 entry 的 action、当前 Status 与本地 Error，同时返回可用 `errors.Is/As` 检查的聚合错误。一条登记失败只阻塞其子树，无关树继续。修复 realm 或其他前置条件后可再次 Restore；相同身份、realm、parent、definition 和 PackageRef 的既有登记会复用，不重启正常实例、不隐式 Retry Failed，也不撤销本次宿主内的临时 Stop。
+
+冲突目标明确报告 conflict，不覆盖已有登记。真正关闭并重开 Host 后，Restore 按持久 Enabled 重建 activation：临时 Stop 的条目可启动，Disable 的条目仍跳过。提交后返回的持久错误不表示意图未提交；不要在不检查提交语义时盲目重试。

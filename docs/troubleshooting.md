@@ -23,7 +23,7 @@ go list -m github.com/Cyenoch/cordis
 go env GOOS GOARCH
 ```
 
-宿主侧保留 `PackageRef{ID, Version, Digest}`、entry ID、activation、状态、Desired / Applied、WaitingFor 和稳定错误码。面向用户的错误用脱敏投影；不要把原始请求、完整文件路径或插件 stderr 直接加入日志。
+宿主侧保留 `PackageRef{ID, Version, Digest}`、entry ID、activation、状态、Desired / Applied、Waiting 和稳定错误码。面向用户的错误用脱敏投影；不要把原始请求、完整文件路径或插件 stderr 直接加入日志。
 
 ## 安装与构建
 
@@ -40,7 +40,7 @@ go env GOOS GOARCH
 
 ## 实例一直 waiting
 
-先看 `instance.Status().WaitingFor`，再核对以下信息：
+先看 `instance.Status().Waiting`，再核对以下信息：
 
 1. 依赖 provider 的 entry 是否已启用并 active。包已安装、已选择不表示服务已发布。
 2. requirement 的 name / major 是否一致，provider minor 是否位于 MinMinor / MaxMinor 闭区间。
@@ -59,6 +59,14 @@ go env GOOS GOARCH
 **协议坏帧或启动后立即退出**：检查插件是否往 stdout 写日志、是否直接运行了非 SDK 程序、是否把诊断文本混入 JSON。stdout 只允许 NDJSON；日志写 stderr，不能在 handler 内 `os.Exit` 作为正常返回。
 
 **Native 看不到环境或附带文件**：默认不继承宿主环境，cwd 是私有执行目录，只复制精确 artifact。不要依赖宿主 cwd 或包内旁路文件。确有需要的环境由宿主明确白名单传入；文件数据宜走能力代理。Native 本身仍可使用当前用户的系统权限，默认环境为空不等于沙箱。
+
+## 响应过大，但插件仍可用
+
+普通结果或错误消息的完整编码帧超限时，调用收到 `plugin_failed`，固定说明为 `response exceeds frame byte limit`；会话和其他调用继续。不要解析 message 自动重试：业务写入可能已经完成，先查询实际结果。
+
+核对 Host 的显式 `FrameBytes` 与 Registration 确认值，范围是 4 KiB–1 MiB，缺字段和零值不回退到默认值。预算包含 JSON 信封、转义与 LF；例如 `<` 可以编码成六字节 `\u003c`。分页大小为 1 也不能保证单条大记录装得下，需使用业务投影、摘要或独立读取，而不是截断 JSON。
+
+若 initialize/注册表超限，初始化失败且不发布。若已收到坏帧或写入失败，仍会关闭会话；该路径仅保证触发清理并汇总失败，不能把断链后的远端释放报告为成功。Native/WASI 的预算与运行说明见[运行时参考](runtimes.md)。
 
 ## `denied` 与宿主调用失败
 

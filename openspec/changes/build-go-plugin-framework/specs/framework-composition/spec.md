@@ -198,3 +198,7 @@ builtin 与外部 SDK SHALL 区分仅覆盖初始化的 context 和 activation �
 #### Scenario: 常驻工作与消费者清理
 - **WHEN** provider 的受管工作长期运行，宿主在服务仍可正常调用时开始退役该 provider
 - **THEN** 工作不占服务回调执行位，在消费者清理前已收到取消；provider 自身资源清理等待工作退出，清理绑定仍有效
+
+#### Scenario: 最终发布确认决定启动完成
+- **WHEN** Host 已提交本地发布但当前 activation 的 publish 确认被暂停
+- **THEN** Active、applied 及启动/更新等待者 MUST 不提前成功；确认失败进入失败/退役，Stop 后迟到确认 MUST NOT 推进 applied 或启动受管工作

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
@@ -42,10 +43,10 @@ func TestGenerateRejectsInvalidDeclarations(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct{ name, document, packageName string }{
 		{"unknown definition field", `{"schema":"cordis-go.contract/v1","services":[],"reflect":true}`, "echo"},
-		{"unknown method field", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","major":1,"methods":[{"name":"echo","request":{"type":"string"},"response":{"type":"string"},"stream":true}]}]}`, "echo"},
-		{"unsupported data field", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","major":1,"methods":[{"name":"echo","request":{"type":"string","goType":"any"},"response":{"type":"string"}}]}]}`, "echo"},
-		{"package keyword", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","major":1,"methods":[{"name":"echo","request":{"type":"string"},"response":{"type":"string"}}]}]}`, "type"},
-		{"field collision", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","major":1,"methods":[{"name":"echo","request":{"type":"object","properties":{"x-y":{"type":"string"},"x_y":{"type":"string"}}},"response":{"type":"string"}}]}]}`, "echo"},
+		{"unknown method field", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","version":1,"methods":[{"name":"echo","request":{"type":"string"},"response":{"type":"string"},"stream":true}]}]}`, "echo"},
+		{"unsupported data field", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","version":1,"methods":[{"name":"echo","request":{"type":"string","goType":"any"},"response":{"type":"string"}}]}]}`, "echo"},
+		{"package keyword", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","version":1,"methods":[{"name":"echo","request":{"type":"string"},"response":{"type":"string"}}]}]}`, "type"},
+		{"field collision", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","version":1,"methods":[{"name":"echo","request":{"type":"object","properties":{"x-y":{"type":"string"},"x_y":{"type":"string"}}},"response":{"type":"string"}}]}]}`, "echo"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			definition, err := schema.Parse([]byte(tt.document))
@@ -72,5 +73,54 @@ func TestGeneratePropagatesWriteError(t *testing.T) {
 	definition := schema.Definition{Schema: schema.DefinitionSchema, Services: []schema.Service{{Name: "echo", Major: 1, Methods: []schema.Method{{Name: "echo", Request: json.RawMessage(`{"type":"string"}`), Response: json.RawMessage(`{"type":"string"}`)}}}}}
 	if err := schema.Generate(brokenWriter{}, "echo", definition); !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("write error lost: %v", err)
+	}
+}
+
+func TestGenerateManyRejectsWholePackageCollision(t *testing.T) {
+	t.Parallel()
+	a, err := schema.Parse([]byte(`{"schema":"cordis-go.contract/v1","types":{"Shared":{"type":"string"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := schema.Parse([]byte(`{"schema":"cordis-go.contract/v1","types":{"Shared":{"type":"boolean"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	output.WriteString("existing output")
+	if err := schema.GenerateMany(&output, "combined", a, b); err == nil {
+		t.Fatal("cross-input collision accepted")
+	}
+	if output.String() != "existing output" {
+		t.Fatal("failed generation changed destination")
+	}
+}
+
+func TestGenerateManyFormatsAndNormalizesInputOrder(t *testing.T) {
+	t.Parallel()
+	a, err := schema.Parse([]byte(`{"schema":"cordis-go.contract/v1","definitions":[{"id":"one"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := schema.Parse([]byte(`{"schema":"cordis-go.contract/v1","definitions":[{"id":"two","config":{"type":"boolean"}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first, second bytes.Buffer
+	if err := schema.GenerateMany(&first, "combined", a, b); err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.GenerateMany(&second, "combined", b, a); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first.Bytes(), second.Bytes()) {
+		t.Fatal("input order changes generated package")
+	}
+	formatted, err := format.Source(first.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first.Bytes(), formatted) {
+		t.Fatal("output is not gofmt formatted")
 	}
 }

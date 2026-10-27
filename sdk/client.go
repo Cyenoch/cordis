@@ -26,8 +26,14 @@ type Client struct {
 	services      map[string]contract.Handler
 	serviceInfo   []contract.Service
 	events        map[string][]contract.EventHandler
-	cleanups      []contract.Cleanup
+	cleanups      contract.Group
+	work          []func(context.Context) error
+	workers       sync.WaitGroup
+	workErr       error
+	startErr      error
 	initialized   bool
+	published     bool
+	retiring      bool
 	starting      bool
 	closed        bool
 	closeErr      error
@@ -52,7 +58,7 @@ func ServeTransport(ctx context.Context, definition contract.Definition, transpo
 
 func serve(ctx context.Context, definitions map[string]contract.Definition, transport io.ReadWriteCloser) error {
 	client := &Client{serial: make(chan struct{}, 1), definitions: definitions, services: map[string]contract.Handler{},
-		events: map[string][]contract.EventHandler{}, cleanups: []contract.Cleanup{}, serviceInfo: []contract.Service{},
+		events: map[string][]contract.EventHandler{}, serviceInfo: []contract.Service{},
 		contributions: []contract.Contribution{}, closeDone: make(chan struct{}), endpointReady: make(chan struct{})}
 	client.ctx, client.cancel = context.WithCancel(ctx)
 	endpoint, err := wire.New(wire.Options{Transport: transport, Guest: true, Handler: client.handle})
@@ -78,7 +84,7 @@ func serve(ctx context.Context, definitions map[string]contract.Definition, tran
 	if errors.Is(err, io.EOF) {
 		err = nil
 	}
-	return errors.Join(err, cleanupErr)
+	return errors.Join(err, cleanupErr, client.startErr, client.workErr)
 }
 
 func (c *Client) Identity() contract.Identity { c.mu.Lock(); defer c.mu.Unlock(); return c.identity }
@@ -87,20 +93,16 @@ func (c *Client) Context() context.Context    { return c.ctx }
 func (c *Client) Defer(cleanup contract.Cleanup) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed && !c.starting {
+	if (c.retiring || c.closed) && !c.starting {
 		return contract.Fail(contract.NotReady, "plugin is closing")
 	}
-	if cleanup == nil {
-		return contract.Fail(contract.Invalid, "nil cleanup")
-	}
-	c.cleanups = append(c.cleanups, cleanup)
-	return nil
+	return c.cleanups.Defer(cleanup)
 }
 
 func (c *Client) Provide(service contract.Service, handler contract.Handler) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed || c.initialized {
+	if c.retiring || c.closed || c.initialized {
 		return contract.Fail(contract.NotReady, "services register during initialization only")
 	}
 	if handler == nil || service.Name == "" || service.Major == 0 {
@@ -134,7 +136,7 @@ func (c *Client) InvokeHost(ctx context.Context, capability string, input json.R
 func (c *Client) On(name string, handler contract.EventHandler) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed || c.initialized {
+	if c.retiring || c.closed || c.initialized {
 		return contract.Fail(contract.NotReady, "subscriptions register during initialization only")
 	}
 	if name == "" || handler == nil {
@@ -163,7 +165,7 @@ func (c *Client) Emit(ctx context.Context, name string, input json.RawMessage, m
 func (c *Client) Contribute(value contract.Contribution) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed || c.initialized {
+	if c.retiring || c.closed || c.initialized {
 		return contract.Fail(contract.NotReady, "contributions register during initialization only")
 	}
 	c.contributions = append(c.contributions, value)
@@ -177,12 +179,25 @@ func (c *Client) handle(ctx context.Context, method string, input json.RawMessag
 		return nil, ctx.Err()
 	}
 	switch method {
+	case "activation.publish":
+		return c.publish(input)
+	case "activation.retire":
+		var request struct{}
+		if err := contract.Decode(input, &request); err != nil {
+			return nil, err
+		}
+		c.retire()
+		return json.RawMessage(`{}`), nil
 	case "task.cancel":
 		return c.cancelTask(input)
 	case "health":
-		return json.RawMessage(`{"ready":true}`), nil
+		c.mu.Lock()
+		ready := c.published && !c.retiring && !c.closed
+		c.mu.Unlock()
+		return json.Marshal(struct {
+			Ready bool `json:"ready"`
+		}{ready})
 	case "shutdown":
-		c.cancel()
 		if err := c.close(ctx); err != nil {
 			return nil, err
 		}
@@ -190,10 +205,20 @@ func (c *Client) handle(ctx context.Context, method string, input json.RawMessag
 	case "initialize":
 		return c.start(ctx, input)
 	}
-	callbackCtx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(c.ctx, cancel)
-	defer func() { stop(); cancel() }()
-	ctx = callbackCtx
+	var invocation contract.Invocation
+	cleanup := false
+	if method == "call" {
+		if err := contract.Decode(input, &invocation); err != nil {
+			return nil, err
+		}
+		cleanup = invocation.Cleanup
+	}
+	if !cleanup {
+		callbackCtx, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(c.ctx, cancel)
+		defer func() { stop(); cancel() }()
+		ctx = callbackCtx
+	}
 	select {
 	case c.serial <- struct{}{}:
 		defer func() { <-c.serial }()
@@ -201,17 +226,14 @@ func (c *Client) handle(ctx context.Context, method string, input json.RawMessag
 		return nil, ctx.Err()
 	}
 	c.mu.Lock()
-	ready := c.initialized && !c.closed
+	ready := c.initialized && !c.closed && (cleanup || c.published && !c.retiring)
 	c.mu.Unlock()
 	if !ready {
 		return nil, contract.Fail(contract.NotReady, "plugin is not active")
 	}
 	switch method {
 	case "call":
-		var request contract.Invocation
-		if err := contract.Decode(input, &request); err != nil {
-			return nil, err
-		}
+		request := invocation
 		c.mu.Lock()
 		handler := c.services[request.Service.Key()]
 		compatible := false
@@ -262,7 +284,10 @@ func (c *Client) initialize(ctx context.Context, input json.RawMessage) (json.Ra
 	if err := contract.Decode(input, &init); err != nil {
 		return nil, err
 	}
-	minor, err := init.Protocol.Negotiate(contract.Protocol{Major: 1})
+	if err := contract.ValidateFrameBytes(init.FrameBytes); err != nil {
+		return nil, err
+	}
+	minor, err := init.Protocol.Negotiate(capabilities.Protocol)
 	if err != nil {
 		return nil, err
 	}
@@ -285,13 +310,13 @@ func (c *Client) initialize(ctx context.Context, input json.RawMessage) (json.Ra
 		}
 	}
 	if c.definition.Start != nil {
-		if err := c.definition.Start(ctx, c); err != nil {
+		if err := c.runStart(ctx); err != nil {
 			return nil, err
 		}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed || ctx.Err() != nil {
+	if c.retiring || c.closed || ctx.Err() != nil {
 		return nil, contract.Fail(contract.Canceled, "initialization canceled")
 	}
 	c.initialized = true
@@ -299,48 +324,39 @@ func (c *Client) initialize(ctx context.Context, input json.RawMessage) (json.Ra
 	for name := range c.events {
 		subscriptions = append(subscriptions, name)
 	}
-	return json.Marshal(contract.Registration{Minor: minor, Features: []string{"cancel", "parent", "tasks", "events", "children"}, Services: c.serviceInfo, Subscriptions: subscriptions, Contributions: c.contributions})
+	return json.Marshal(contract.Registration{FrameBytes: init.FrameBytes, Minor: minor, Features: capabilities.Features,
+		Services: c.serviceInfo, Subscriptions: subscriptions, Contributions: c.contributions})
 }
 
 func (c *Client) close(ctx context.Context) error {
+	c.retire()
 	c.mu.Lock()
-	if c.closed {
-		done := c.closeDone
-		c.mu.Unlock()
-		select {
-		case <-done:
-			c.mu.Lock()
-			err := c.closeErr
-			c.mu.Unlock()
-			return err
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	c.closed = true
-	c.mu.Unlock()
-	c.cancel()
-	select {
-	case c.serial <- struct{}{}:
-	case <-ctx.Done():
+	if !c.closed {
+		c.closed = true
 		go func() {
 			c.serial <- struct{}{}
-			result := c.releaseCleanups(context.WithoutCancel(ctx))
+			c.workers.Wait()
+			result := c.cleanups.Close(context.WithoutCancel(ctx))
 			<-c.serial
 			c.mu.Lock()
 			c.closeErr = result
 			close(c.closeDone)
 			c.mu.Unlock()
 		}()
+	}
+	done := c.closeDone
+	c.mu.Unlock()
+	select {
+	case <-done:
+		return c.closeErr
+	default:
+	}
+	select {
+	case <-done:
+		return c.closeErr
+	case <-ctx.Done():
 		return ctx.Err()
 	}
-	result := c.releaseCleanups(ctx)
-	<-c.serial
-	c.mu.Lock()
-	c.closeErr = result
-	close(c.closeDone)
-	c.mu.Unlock()
-	return result
 }
 
 func (c *Client) start(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
@@ -353,34 +369,34 @@ func (c *Client) start(ctx context.Context, input json.RawMessage) (json.RawMess
 		return nil, startCtx.Err()
 	}
 	c.mu.Lock()
-	if c.closed {
+	if c.retiring || c.closed {
 		c.mu.Unlock()
 		<-c.serial
 		return nil, contract.Fail(contract.NotReady, "plugin closing")
 	}
 	c.starting = true
 	c.mu.Unlock()
-	data, err := c.initialize(startCtx, input)
-	c.mu.Lock()
-	c.starting = false
-	c.mu.Unlock()
-	<-c.serial
+	defer func() {
+		c.mu.Lock()
+		c.starting = false
+		c.mu.Unlock()
+		<-c.serial
+	}()
 	// The host must initiate shutdown with its bound cleanup context. Reusing
 	// a failed initialize parent would invalidate deferred service releases.
+	data, err := c.initialize(startCtx, input)
 	if err != nil {
-		return nil, err
+		c.mu.Lock()
+		if !c.initialized && c.startErr == nil {
+			c.startErr = err
+		}
+		c.mu.Unlock()
 	}
-	return data, nil
+	return data, err
 }
 
-func (c *Client) releaseCleanups(ctx context.Context) error {
-	c.mu.Lock()
-	cleanups := c.cleanups
-	c.cleanups = nil
-	c.mu.Unlock()
-	var result error
-	for i := len(cleanups) - 1; i >= 0; i-- {
-		result = errors.Join(result, cleanups[i](ctx))
-	}
-	return result
+func (c *Client) runStart(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	return c.definition.Start(ctx, c)
 }

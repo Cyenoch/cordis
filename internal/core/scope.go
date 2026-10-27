@@ -35,12 +35,8 @@ func (s *Scope) Defer(cleanup contract.Cleanup) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	// A canceled initialization still owns any resources acquired before returning.
-	select {
-	case <-a.startDone:
-		if a.retiring {
-			return contract.Fail(contract.NotReady, "scope is retiring")
-		}
-	default:
+	if a.startFinished && a.retiring {
+		return contract.Fail(contract.NotReady, "scope is retiring")
 	}
 	a.cleanups = append(a.cleanups, cleanup)
 	return nil
@@ -53,7 +49,7 @@ func (s *Scope) Provide(service contract.Service, handler contract.Handler) erro
 	e := a.instance.engine
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if a.retiring || a.committed {
+	if a.retiring || a.startFinished {
 		return contract.Fail(contract.NotReady, "registration snapshot is sealed")
 	}
 	declared := false
@@ -105,6 +101,10 @@ func (e *Engine) Call(ctx context.Context, namespace string, requirement contrac
 }
 func (e *Engine) callLocked(ctx context.Context, p *provider, input json.RawMessage, cleanup bool) (json.RawMessage, error) {
 	target := p.owner
+	if !target.ready && !cleanup {
+		e.mu.Unlock()
+		return nil, contract.Fail(contract.NotReady, "provider publication is not acknowledged")
+	}
 	if target.retiring && !cleanup {
 		e.mu.Unlock()
 		return nil, contract.Fail(contract.NotReady, "provider is retiring")
@@ -199,7 +199,7 @@ func (s *Scope) On(name string, handler contract.EventHandler) error {
 	e := a.instance.engine
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if a.retiring || a.committed {
+	if a.retiring || a.startFinished {
 		return contract.Fail(contract.NotReady, "registration snapshot is sealed")
 	}
 	e.sequence++
@@ -229,7 +229,7 @@ func (e *Engine) Emit(ctx context.Context, namespace, name string, input json.Ra
 	}
 	listeners := []*subscription{}
 	for _, listener := range e.events {
-		if listener.name == name && e.descendantLocked(namespace, listener.owner.instance.entry.Realm) && !listener.owner.retiring {
+		if listener.name == name && e.descendantLocked(namespace, listener.owner.instance.entry.Realm) && listener.owner.ready && !listener.owner.retiring {
 			listeners = append(listeners, listener)
 		}
 	}

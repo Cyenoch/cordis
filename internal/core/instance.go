@@ -13,7 +13,10 @@ func (i *instance) Status() contract.Status {
 	e := i.engine
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	status := contract.Status{Identity: i.identity, State: i.state, Desired: i.desired, Applied: i.applied}
+	status := contract.Status{
+		Identity: i.identity, State: i.state, Desired: i.desired, Applied: i.applied,
+		Enabled: i.entry.Enabled, TemporaryStopped: !i.enabled && i.entry.Enabled,
+	}
 	if i.activation != nil {
 		status.Identity = i.activation.identity
 	}
@@ -22,18 +25,57 @@ func (i *instance) Status() contract.Status {
 	}
 	if i.state == contract.Waiting {
 		for _, req := range i.definition.Requires {
-			if e.resolveLocked(i.entry.Realm, req) == nil {
-				status.WaitingFor = append(status.WaitingFor, req.Key())
+			if p := e.resolveLocked(i.entry.Realm, req); p == nil || !p.owner.ready {
+				reason := contract.WaitReason{Kind: "service", Requirement: &req, Reason: "missing"}
+				reason.Visible = e.visibleServicesLocked(i.entry.Realm, req)
+				if len(reason.Visible) != 0 {
+					reason.Reason = "incompatible"
+				}
+				status.Waiting = append(status.Waiting, reason)
 			}
 		}
 		if i.entry.Parent != "" {
 			parent := e.instances[i.entry.Parent]
-			if parent == nil || parent.activation == nil || !parent.activation.committed || parent.activation.retiring {
-				status.WaitingFor = append(status.WaitingFor, "parent:"+i.entry.Parent)
+			if parent == nil || parent.activation == nil || !parent.activation.ready || parent.activation.retiring {
+				status.Waiting = append(status.Waiting, contract.WaitReason{Kind: "parent", Parent: i.entry.Parent, Reason: "unpublished"})
 			}
 		}
 	}
 	return status
+}
+
+func (e *Engine) visibleServicesLocked(namespace string, req contract.Requirement) []contract.Service {
+	visible := []contract.Service{}
+	seen := map[string]bool{}
+	for {
+		for key, p := range e.services[namespace] {
+			if p.service.Name != req.Name || seen[key] {
+				continue
+			}
+			seen[key] = true
+			if p.owner.ready && !p.owner.retiring {
+				visible = append(visible, p.service)
+			}
+		}
+		r := e.realms[namespace]
+		if namespace == "" || r.isolated[req.Key()] {
+			break
+		}
+		for key := range r.isolated {
+			seen[key] = true
+		}
+		namespace = r.parent
+	}
+	slices.SortFunc(visible, func(a, b contract.Service) int {
+		if a.Major < b.Major {
+			return -1
+		}
+		if a.Major > b.Major {
+			return 1
+		}
+		return 0
+	})
+	return visible
 }
 func (i *instance) Wait(ctx context.Context) error {
 	e := i.engine
@@ -84,7 +126,7 @@ func (i *instance) waitEdgeLocked(ctx context.Context) (func(), error) {
 	if actor == nil {
 		return nil, nil
 	}
-	if !actor.committed && (actor.instance == i || ownedByLocked(e, i, actor.instance.entry.ID)) {
+	if !actor.ready && (actor.instance == i || ownedByLocked(e, i, actor.instance.entry.ID)) {
 		return nil, contract.Fail(contract.Reentrant, "initialization cannot wait for its own publication or owned children")
 	}
 	target := i.activation
@@ -124,7 +166,7 @@ func (i *instance) Update(ctx context.Context, config json.RawMessage) (contract
 }
 
 func (i *instance) configure(config json.RawMessage, commit func() error) (func(context.Context) (contract.UpdateResult, error), error) {
-	config = slices.Clone(config)
+	config = normalizeConfig(config)
 	if err := validate(i.definition, config); err != nil {
 		return nil, err
 	}
@@ -189,19 +231,38 @@ func (i *instance) configure(config json.RawMessage, commit func() error) (func(
 	}, nil
 }
 func (i *instance) Stop(ctx context.Context) error {
+	wait, err := i.stop(ctx)
+	if err != nil {
+		return err
+	}
+	return wait(ctx)
+}
+
+// Stop submits retirement synchronously; the returned waiter owns no admission lock.
+func (e *Engine) Stop(ctx context.Context, entryID string) (func(context.Context) error, error) {
+	e.mu.Lock()
+	i := e.instances[entryID]
+	e.mu.Unlock()
+	if i == nil {
+		return nil, contract.Fail(contract.NotReady, "entry not found")
+	}
+	return i.stop(ctx)
+}
+
+func (i *instance) stop(ctx context.Context) (func(context.Context) error, error) {
 	e := i.engine
 	e.configMu.Lock()
 	e.mu.Lock()
 	if e.instances[i.entry.ID] != i {
 		e.mu.Unlock()
 		e.configMu.Unlock()
-		return contract.Fail(contract.NotReady, "instance was removed")
+		return nil, contract.Fail(contract.NotReady, "instance was removed")
 	}
 	actor, _ := ctx.Value(actorKey{}).(*activation)
 	if actor != nil && (actor.instance == i || ownedByLocked(e, actor.instance, i.entry.ID)) {
 		e.mu.Unlock()
 		e.configMu.Unlock()
-		return contract.Fail(contract.Reentrant, "cannot synchronously stop the caller's ownership tree")
+		return nil, contract.Fail(contract.Reentrant, "cannot synchronously stop the caller's ownership tree")
 	}
 	var release func()
 	var waitErr error
@@ -211,7 +272,7 @@ func (i *instance) Stop(ctx context.Context) error {
 	if waitErr != nil {
 		e.mu.Unlock()
 		e.configMu.Unlock()
-		return waitErr
+		return nil, waitErr
 	}
 	if release != nil {
 		defer release()
@@ -238,35 +299,65 @@ func (i *instance) Stop(ctx context.Context) error {
 		}
 	}
 	stopTree(i)
-	var pending []<-chan struct{}
+	var pending []*activation
+	var stoppedErrors []error
 	for _, child := range e.instances {
 		if child == i || ownedByLocked(e, child, i.entry.ID) {
 			if child.activation != nil {
-				pending = append(pending, child.activation.done)
+				pending = append(pending, child.activation)
+			} else if child.failure != nil {
+				stoppedErrors = append(stoppedErrors, child.failure)
 			}
 		}
 	}
 	e.signalLocked()
 	e.mu.Unlock()
 	e.configMu.Unlock()
-	for _, done := range pending {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("instance cleanup blocked: %w", ctx.Err())
-		case <-done:
-		}
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	var errs []error
-	for _, child := range e.instances {
-		if child == i || ownedByLocked(e, child, i.entry.ID) {
-			if child.failure != nil {
-				errs = append(errs, child.failure)
+	return func(ctx context.Context) error {
+		e.mu.Lock()
+		actor, _ := ctx.Value(actorKey{}).(*activation)
+		if actor != nil {
+			for _, a := range pending {
+				select {
+				case <-a.done:
+					continue
+				default:
+				}
+				if a == actor || e.pathLocked(a, actor, map[*activation]bool{}) {
+					e.mu.Unlock()
+					return contract.Fail(contract.Reentrant, "instance cleanup wait cycle")
+				}
 			}
+			if e.edges[actor] == nil {
+				e.edges[actor] = map[*activation]int{}
+			}
+			for _, a := range pending {
+				e.edges[actor][a]++
+			}
+			defer func() {
+				e.mu.Lock()
+				defer e.mu.Unlock()
+				for _, a := range pending {
+					if e.edges[actor][a] <= 1 {
+						delete(e.edges[actor], a)
+					} else {
+						e.edges[actor][a]--
+					}
+				}
+			}()
 		}
-	}
-	return joinErrors(errs)
+		e.mu.Unlock()
+		errs := slices.Clone(stoppedErrors)
+		for _, a := range pending {
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("instance cleanup blocked: %w", ctx.Err())
+			case <-a.done:
+			}
+			errs = append(errs, a.cleanupErr)
+		}
+		return joinErrors(errs)
+	}, nil
 }
 func ownedByLocked(e *Engine, i *instance, parent string) bool {
 	for i.entry.Parent != "" {

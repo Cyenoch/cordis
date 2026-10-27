@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/examples/pluginmeta"
 	"github.com/Cyenoch/cordis/runtime/native"
 	"github.com/Cyenoch/cordis/runtime/wasm"
 )
@@ -96,22 +97,23 @@ func measure(kind, phase string, iteration, operations int, fn func() error) (sa
 }
 
 func activation(ctx context.Context, adapter contract.Runtime, kind, path string, iteration, calls int, timeout time.Duration) (samples []sample, result error) {
-	service := contract.Service{Name: "example.counter", Major: 1}
-	identity := contract.Identity{Package: "example.counter", Entry: "counter", Activation: contract.NewID()}
-	manifest := contract.Manifest{
-		Schema: contract.PackageSchema, ID: identity.Package, Version: "1.0.0", Publisher: "example",
-		Protocol: contract.Protocol{Major: 1}, DefaultDefinition: "counter",
-		Definitions: []contract.DefinitionSpec{{ID: "counter", Provides: []contract.Service{service}}},
-		Runtime:     contract.RuntimeSpec{Kind: kind, Entry: filepath.Base(path)},
+	manifest := pluginmeta.Counter()
+	service := manifest.Definitions[0].Provides[0]
+	identity := contract.Identity{Package: manifest.ID, Entry: manifest.DefaultDefinition, Activation: contract.NewID()}
+	manifest.Runtime = contract.RuntimeSpec{Kind: kind}
+	if kind == "wasm" {
+		manifest.Runtime.Entry = filepath.Base(path)
+	} else {
+		manifest.Runtime.Artifacts = []contract.Artifact{{OS: runtime.GOOS, Arch: runtime.GOARCH, Path: filepath.Base(path)}}
 	}
-	initialize, err := json.Marshal(contract.Initialize{
+	initialize, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes,
 		Identity: identity, Protocol: manifest.Protocol, Definition: manifest.DefaultDefinition,
 		Config: json.RawMessage(`{"initial":41}`),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode initialization: %w", err)
 	}
-	invocation, err := json.Marshal(contract.Invocation{Service: service, Input: json.RawMessage(`{"operation":"add","delta":1}`)})
+	invocation, err := json.Marshal(contract.Invocation{Service: service, Input: json.RawMessage(`{"method":"execute","input":{"operation":"add","delta":1}}`)})
 	if err != nil {
 		return nil, fmt.Errorf("encode invocation: %w", err)
 	}
@@ -127,7 +129,7 @@ func activation(ctx context.Context, adapter contract.Runtime, kind, path string
 		startup, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		var err error
-		session, err = adapter.Start(startup, contract.Launch{
+		session, err = adapter.Start(startup, contract.Launch{FrameBytes: contract.MaxFrameBytes,
 			Identity: identity, Manifest: manifest, Directory: filepath.Dir(path), Artifact: filepath.Base(path),
 			Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 				return nil, contract.Fail(contract.Denied, "measurement grants no host access")
@@ -148,7 +150,8 @@ func activation(ctx context.Context, adapter contract.Runtime, kind, path string
 			len(registration.Subscriptions) != 1 || registration.Subscriptions[0] != "counter.changed" || len(registration.Contributions) != 0 {
 			return errors.New("counter registration does not match the independent example")
 		}
-		return nil
+		_, err = session.Call(startup, "activation.publish", json.RawMessage(`{}`))
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s activation %d: %w", kind, iteration, err)

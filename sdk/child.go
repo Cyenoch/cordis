@@ -41,7 +41,14 @@ func (i *childInstance) Status() contract.Status {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	status := i.status
-	status.WaitingFor = append([]string(nil), status.WaitingFor...)
+	status.Waiting = append([]contract.WaitReason(nil), status.Waiting...)
+	for n := range status.Waiting {
+		status.Waiting[n].Visible = append([]contract.Service(nil), status.Waiting[n].Visible...)
+		if requirement := status.Waiting[n].Requirement; requirement != nil {
+			copy := *requirement
+			status.Waiting[n].Requirement = &copy
+		}
+	}
 	status.Diagnostics = append([]string(nil), status.Diagnostics...)
 	return status
 }

@@ -82,33 +82,47 @@
             "items": {
               "type": "object",
               "properties": {
-                "name": {
+                "requirement": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "pattern": "^(?!/)(?!.*//)[A-Za-z0-9._/-]+(?<!/)$"
+                    },
+                    "major": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4294967295
+                    },
+                    "minMinor": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4294967295
+                    },
+                    "maxMinor": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4294967295
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "major",
+                    "minMinor",
+                    "maxMinor"
+                  ],
+                  "additionalProperties": false
+                },
+                "contract": {
                   "type": "string",
-                  "minLength": 1,
-                  "maxLength": 512,
-                  "pattern": "^(?!/)(?!.*//)[A-Za-z0-9._/-]+(?<!/)$"
-                },
-                "major": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 4294967295
-                },
-                "minMinor": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 4294967295
-                },
-                "maxMinor": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 4294967295
+                  "pattern": "^[0-9a-f]{64}$"
                 }
               },
               "required": [
-                "name",
-                "major",
-                "minMinor",
-                "maxMinor"
+                "requirement",
+                "contract"
               ],
               "additionalProperties": false
             },
@@ -147,12 +161,16 @@
               "additionalProperties": false
             },
             "maxItems": 10000
+          },
+          "configSchema": {
+            "type": "object"
           }
         },
         "required": [
           "id",
           "requires",
-          "provides"
+          "provides",
+          "configSchema"
         ],
         "additionalProperties": false
       }
@@ -400,7 +418,6 @@
       },
       "maxItems": 10000
     },
-    "configSchema": {},
     "dataVersion": {
       "type": "integer",
       "minimum": 0,

@@ -6,50 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/schema"
 	"github.com/Cyenoch/cordis/sdk"
 )
 
-type request struct {
-	Operation string `json:"operation"`
-	Owner     string `json:"owner,omitempty"`
-}
-
-type response struct {
-	Acquired int    `json:"acquired"`
-	Released int    `json:"released"`
-	Live     int    `json:"live"`
-	Label    string `json:"label"`
-}
-
-type config struct {
-	Label string `json:"label"`
-}
-
-// Set with -ldflags '-X main.rejectInitialization=true' when building the
-// deliberately broken signed version used by lifecycle recovery conformance.
+// Set with -ldflags '-X main.rejectInitialization=true' for recovery conformance.
 var rejectInitialization string
 
-var (
-	serviceA  = contract.Service{Name: "chain.a", Major: 1, Minor: 2}
-	serviceB  = contract.Service{Name: "chain.b", Major: 1, Minor: 2}
-	serviceC  = contract.Service{Name: "chain.c", Major: 1, Minor: 2}
-	requiresA = contract.Requirement{Name: "chain.a", Major: 1, MinMinor: 1, MaxMinor: 3}
-	requiresB = contract.Requirement{Name: "chain.b", Major: 1, MinMinor: 1, MaxMinor: 3}
-)
-
-func main() {
-	if err := sdk.ServeDefinitions(context.Background(), provider(), middle(), consumer(), optionalParent()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-}
+func main() { sdk.Main(provider(), middle(), consumer(), optionalParent()) }
 
 func optionalParent() contract.Definition {
-	return contract.Definition{ID: "optional-parent", Start: func(ctx context.Context, scope contract.Scope) error {
-		child, err := contract.CreateChild(ctx, scope, contract.Child{ID: "optional", Definition: "middle", Config: scope.Config()})
+	return NewOptionalParentDefinition(func(ctx context.Context, scope contract.Scope, _ OptionalParentConfig) error {
+		child, err := contract.CreateChild(ctx, scope, contract.Child{ID: "optional", Definition: MiddleDefinitionSpec().ID, Config: scope.Config()})
 		if err != nil {
 			return err
 		}
@@ -59,171 +31,169 @@ func optionalParent() contract.Definition {
 			}
 			return contract.EventResult{Handled: true, Value: json.RawMessage(`true`)}, nil
 		})
-	}}
+	})
 }
 
-func call(ctx context.Context, scope contract.Scope, required contract.Requirement, input request) (response, error) {
-	data, err := json.Marshal(input)
-	if err != nil {
-		return response{}, err
-	}
-	data, err = scope.Call(ctx, required, data)
-	if err != nil {
-		return response{}, err
-	}
-	var output response
-	if err := contract.Decode(data, &output); err != nil {
-		return response{}, err
-	}
-	return output, nil
+type providerServer struct {
+	scope              contract.Scope
+	label              string
+	leases             map[string]bool
+	acquired, released int
 }
 
 func provider() contract.Definition {
-	return contract.Definition{ID: "provider", Provides: []contract.Service{serviceA},
-		Start: func(_ context.Context, scope contract.Scope) error {
-			var settings config
-			if err := contract.Decode(scope.Config(), &settings); err != nil {
-				return err
+	return NewProviderDefinition(func(_ context.Context, scope contract.Scope, settings ProviderConfig) error {
+		if rejectInitialization == "true" {
+			return contract.Fail(contract.PluginFailed, "intentional version-specific initialization failure")
+		}
+		if settings.Label.Value == "fail-initialize" {
+			return contract.Fail(contract.PluginFailed, "intentional failed initialization")
+		}
+		if err := scope.On("chain.handled", func(context.Context, json.RawMessage) (contract.EventResult, error) {
+			return contract.EventResult{Handled: true, Value: json.RawMessage(`0`)}, nil
+		}); err != nil {
+			return err
+		}
+		if err := scope.On("chain.handled", func(context.Context, json.RawMessage) (contract.EventResult, error) {
+			return contract.EventResult{}, contract.Fail(contract.PluginFailed, "second listener must not run in First")
+		}); err != nil {
+			return err
+		}
+		p := &providerServer{scope: scope, label: settings.Label.Value, leases: map[string]bool{}}
+		if err := scope.Defer(func(context.Context) error {
+			if len(p.leases) != 0 || p.acquired != p.released {
+				return fmt.Errorf("provider leaked resources: acquired=%d released=%d live=%d", p.acquired, p.released, len(p.leases))
 			}
-			if rejectInitialization == "true" {
-				return contract.Fail(contract.PluginFailed, "intentional version-specific initialization failure")
-			}
-			if settings.Label == "fail-initialize" {
-				return contract.Fail(contract.PluginFailed, "intentional failed initialization")
-			}
-			if err := scope.On("chain.handled", func(context.Context, json.RawMessage) (contract.EventResult, error) {
-				return contract.EventResult{Handled: true, Value: json.RawMessage(`0`)}, nil
-			}); err != nil {
-				return err
-			}
-			if err := scope.On("chain.handled", func(context.Context, json.RawMessage) (contract.EventResult, error) {
-				return contract.EventResult{}, contract.Fail(contract.PluginFailed, "second listener must not run in First")
-			}); err != nil {
-				return err
-			}
-			leases := map[string]bool{}
-			var acquired, released int
-			if err := scope.Defer(func(context.Context) error {
-				if len(leases) != 0 || acquired != released {
-					return fmt.Errorf("provider leaked resources: acquired=%d released=%d live=%d", acquired, released, len(leases))
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-			return sdk.Provide(scope, serviceA, func(ctx context.Context, input request) (response, error) {
-				switch input.Operation {
-				case "acquire":
-					if input.Owner == "" || leases[input.Owner] {
-						return response{}, errors.New("invalid or duplicate resource owner")
-					}
-					leases[input.Owner] = true
-					acquired++
-				case "release":
-					if !leases[input.Owner] {
-						return response{}, errors.New("resource not acquired")
-					}
-					delete(leases, input.Owner)
-					released++
-				case "stats":
-				case "wait":
-					client, ok := scope.(*sdk.Client)
-					if !ok {
-						return response{}, errors.New("external SDK client required")
-					}
-					task, err := client.BeginTask(scope.Context(), "blocked")
-					if err != nil {
-						return response{}, err
-					}
-					<-ctx.Done()
-					// The canceled invocation's parent may already be retired on the
-					// wire; task completion is an independent activation control call.
-					finishCtx, cancel := context.WithTimeout(scope.Context(), 3*time.Second)
-					defer cancel()
-					if err := task.Finish(finishCtx, "completed", json.RawMessage(`{"canceled":true}`), ""); err != nil {
-						return response{}, fmt.Errorf("acknowledge cancellation: %w", err)
-					}
-					return response{}, ctx.Err()
-				case "crash":
-					os.Exit(7)
-				case "exit":
-					os.Exit(0)
-				default:
-					return response{}, contract.Fail(contract.Invalid, "unknown operation")
-				}
-				return response{Acquired: acquired, Released: released, Live: len(leases), Label: settings.Label}, nil
-			})
-		}}
+			return nil
+		}); err != nil {
+			return err
+		}
+		return RegisterChainAServer(scope, p)
+	})
+}
+func (p *providerServer) Execute(ctx context.Context, input ChainAExecuteRequest) (ChainAExecuteResponse, error) {
+	owner := input.Owner.Value
+	switch input.Operation {
+	case "acquire":
+		if owner == "" || p.leases[owner] {
+			return ChainAExecuteResponse{}, errors.New("invalid or duplicate resource owner")
+		}
+		p.leases[owner] = true
+		p.acquired++
+	case "release":
+		if !p.leases[owner] {
+			return ChainAExecuteResponse{}, errors.New("resource not acquired")
+		}
+		delete(p.leases, owner)
+		p.released++
+	case "stats":
+	case "wait":
+		task, err := contract.BeginTask(p.scope.Context(), p.scope, "blocked")
+		if err != nil {
+			return ChainAExecuteResponse{}, err
+		}
+		<-ctx.Done()
+		// Task completion has an independent activation control context after the call retires.
+		finishCtx, cancel := context.WithTimeout(p.scope.Context(), 3*time.Second)
+		defer cancel()
+		if err := task.Finish(finishCtx, "completed", json.RawMessage(`{"canceled":true}`), ""); err != nil {
+			return ChainAExecuteResponse{}, fmt.Errorf("acknowledge cancellation: %w", err)
+		}
+		return ChainAExecuteResponse{}, ctx.Err()
+	case "crash":
+		os.Exit(7)
+	case "exit":
+		os.Exit(0)
+	default:
+		return ChainAExecuteResponse{}, contract.Fail(contract.Invalid, "unknown operation")
+	}
+	return ChainAExecuteResponse{Acquired: json.Number(strconv.Itoa(p.acquired)), Released: json.Number(strconv.Itoa(p.released)), Live: json.Number(strconv.Itoa(len(p.leases))), Label: p.label}, nil
+}
+
+type middleServer struct {
+	upstream *ChainAClient
+	leases   map[string]bool
 }
 
 func middle() contract.Definition {
-	return contract.Definition{ID: "middle", Requires: []contract.Requirement{requiresA}, Provides: []contract.Service{serviceB},
-		Start: func(ctx context.Context, scope contract.Scope) error {
-			owner := scope.Identity().Activation
-			if _, err := call(ctx, scope, requiresA, request{Operation: "acquire", Owner: owner}); err != nil {
-				return fmt.Errorf("middle acquire: %w", err)
+	return NewMiddleDefinition(func(ctx context.Context, scope contract.Scope, _ MiddleConfig) error {
+		upstream, err := NewChainAClient(scope, MiddleUpstreamConsumer())
+		if err != nil {
+			return err
+		}
+		owner := scope.Identity().Activation
+		if _, err := upstream.Execute(ctx, ChainAExecuteRequest{Operation: "acquire", Owner: schema.Some(owner)}); err != nil {
+			return fmt.Errorf("middle acquire: %w", err)
+		}
+		m := &middleServer{upstream: upstream, leases: map[string]bool{}}
+		if err := scope.Defer(func(ctx context.Context) error {
+			if len(m.leases) != 0 {
+				return fmt.Errorf("middle still owns %d consumer resources", len(m.leases))
 			}
-			leases := map[string]bool{}
-			if err := scope.Defer(func(ctx context.Context) error {
-				if len(leases) != 0 {
-					return fmt.Errorf("middle still owns %d consumer resources", len(leases))
-				}
-				output, err := call(ctx, scope, requiresA, request{Operation: "release", Owner: owner})
-				if err != nil {
-					return fmt.Errorf("middle cleanup release: %w", err)
-				}
-				if output.Live != 0 || output.Acquired != output.Released {
-					return fmt.Errorf("middle cleanup left provider resources: %+v", output)
-				}
-				return nil
-			}); err != nil {
-				return err
+			out, err := upstream.Execute(ctx, ChainAExecuteRequest{Operation: "release", Owner: schema.Some(owner)})
+			if err != nil {
+				return fmt.Errorf("middle cleanup release: %w", err)
 			}
-			return sdk.Provide(scope, serviceB, func(ctx context.Context, input request) (response, error) {
-				if input.Operation == "acquire" && (input.Owner == "" || leases[input.Owner]) {
-					return response{}, errors.New("invalid or duplicate consumer resource")
-				}
-				if input.Operation == "release" && !leases[input.Owner] {
-					return response{}, errors.New("consumer resource not acquired")
-				}
-				// Forward the inherited context unchanged. During C cleanup this must
-				// retain the host's trusted C -> B -> A cleanup lineage.
-				output, err := call(ctx, scope, requiresA, input)
-				if err != nil {
-					return response{}, fmt.Errorf("middle forward: %w", err)
-				}
-				switch input.Operation {
-				case "acquire":
-					leases[input.Owner] = true
-				case "release":
-					delete(leases, input.Owner)
-				}
-				return output, nil
-			})
-		}}
+			if out.Live != "0" || out.Acquired != out.Released {
+				return fmt.Errorf("middle cleanup left provider resources: %+v", out)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		return RegisterChainBServer(scope, m)
+	})
+}
+func (m *middleServer) Execute(ctx context.Context, input ChainBExecuteRequest) (ChainBExecuteResponse, error) {
+	owner := input.Owner.Value
+	if input.Operation == "acquire" && (owner == "" || m.leases[owner]) {
+		return ChainBExecuteResponse{}, errors.New("invalid or duplicate consumer resource")
+	}
+	if input.Operation == "release" && !m.leases[owner] {
+		return ChainBExecuteResponse{}, errors.New("consumer resource not acquired")
+	}
+	// Keep the inherited context so C -> B -> A cleanup retains its trusted lineage.
+	out, err := m.upstream.Execute(ctx, ChainAExecuteRequest(input))
+	if err != nil {
+		return ChainBExecuteResponse{}, fmt.Errorf("middle forward: %w", err)
+	}
+	switch input.Operation {
+	case "acquire":
+		m.leases[owner] = true
+	case "release":
+		delete(m.leases, owner)
+	}
+	return ChainBExecuteResponse(out), nil
 }
 
+type consumerServer struct{ upstream *ChainBClient }
+
 func consumer() contract.Definition {
-	return contract.Definition{ID: "consumer", Requires: []contract.Requirement{requiresB}, Provides: []contract.Service{serviceC},
-		Start: func(ctx context.Context, scope contract.Scope) error {
-			owner := scope.Identity().Activation
-			if _, err := call(ctx, scope, requiresB, request{Operation: "acquire", Owner: owner}); err != nil {
-				return fmt.Errorf("consumer acquire: %w", err)
+	return NewConsumerDefinition(func(ctx context.Context, scope contract.Scope, _ ConsumerConfig) error {
+		upstream, err := NewChainBClient(scope, ConsumerUpstreamConsumer())
+		if err != nil {
+			return err
+		}
+		owner := scope.Identity().Activation
+		if _, err := upstream.Execute(ctx, ChainBExecuteRequest{Operation: "acquire", Owner: schema.Some(owner)}); err != nil {
+			return fmt.Errorf("consumer acquire: %w", err)
+		}
+		if err := scope.Defer(func(ctx context.Context) error {
+			out, err := upstream.Execute(ctx, ChainBExecuteRequest{Operation: "release", Owner: schema.Some(owner)})
+			if err != nil {
+				return fmt.Errorf("consumer transitive cleanup: %w", err)
 			}
-			if err := scope.Defer(func(ctx context.Context) error {
-				output, err := call(ctx, scope, requiresB, request{Operation: "release", Owner: owner})
-				if err != nil {
-					return fmt.Errorf("consumer transitive cleanup: %w", err)
-				}
-				if output.Live != 1 || output.Released == 0 {
-					return fmt.Errorf("consumer cleanup did not release through B to A: %+v", output)
-				}
-				return nil
-			}); err != nil {
-				return err
+			if out.Live != "1" || out.Released == "0" {
+				return fmt.Errorf("consumer cleanup did not release through B to A: %+v", out)
 			}
-			return sdk.Provide(scope, serviceC, func(ctx context.Context, input request) (response, error) {
-				return call(ctx, scope, requiresB, input)
-			})
-		}}
+			return nil
+		}); err != nil {
+			return err
+		}
+		return RegisterChainCServer(scope, &consumerServer{upstream})
+	})
+}
+func (c *consumerServer) Execute(ctx context.Context, input ChainCExecuteRequest) (ChainCExecuteResponse, error) {
+	out, err := c.upstream.Execute(ctx, ChainBExecuteRequest(input))
+	return ChainCExecuteResponse(out), err
 }

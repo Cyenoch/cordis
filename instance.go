@@ -19,6 +19,14 @@ type hostInstance struct {
 
 func (i *hostInstance) Status() contract.Status {
 	status := i.Instance.Status()
+	i.host.mu.Lock()
+	current := i.host.entries[i.id] == i
+	entry := i.host.entrySpecs[i.id]
+	i.host.mu.Unlock()
+	if current {
+		status.Enabled = entry.Enabled
+		status.TemporaryStopped = entry.Enabled && status.State == contract.Stopped
+	}
 	status.Diagnostics = slices.Clone(i.diagnostics)
 	return status
 }
@@ -37,6 +45,14 @@ func (i *hostInstance) Update(ctx context.Context, config json.RawMessage) (cont
 		h.unlockOperation()
 		return contract.UpdateResult{}, contract.Fail(contract.NotReady, "instance has been replaced")
 	}
+	release, err := h.reserveTree(i.id)
+	if err != nil {
+		h.unlockOperation()
+		return contract.UpdateResult{}, err
+	}
+	if len(config) == 0 {
+		config = json.RawMessage(`{}`)
+	}
 	entry.Config = slices.Clone(config)
 	var commitErr error
 	wait, err := h.engine.Configure(i.id, config, func() error {
@@ -51,6 +67,9 @@ func (i *hostInstance) Update(ctx context.Context, config json.RawMessage) (cont
 		h.mu.Unlock()
 		return nil
 	})
+	// The revision now belongs to core. Later revisions and Stop may supersede
+	// this wait; only registration/replacement operations need a long reservation.
+	release()
 	h.unlockOperation()
 	if err != nil {
 		return contract.UpdateResult{}, err
@@ -69,8 +88,25 @@ func (i *hostInstance) Stop(ctx context.Context) error {
 	if err := h.lockOperation(ctx); err != nil {
 		return err
 	}
-	defer h.unlockOperation()
-	return i.Instance.Stop(ctx)
+	h.mu.Lock()
+	current := h.entries[i.id]
+	h.mu.Unlock()
+	if current != i {
+		h.unlockOperation()
+		return contract.Fail(contract.NotReady, "instance has been replaced")
+	}
+	release, err := h.reserveTree(i.id)
+	if err != nil {
+		h.unlockOperation()
+		return err
+	}
+	defer release()
+	wait, err := h.engine.Stop(ctx, i.id)
+	h.unlockOperation()
+	if err != nil {
+		return err
+	}
+	return wait(ctx)
 }
 
 func orderedEntries(entries []contract.Entry) []contract.Entry {
@@ -109,32 +145,81 @@ func orderedEntries(entries []contract.Entry) []contract.Entry {
 
 // Restore enables the catalog's selected entries only when the host explicitly
 // requests it, after configuring realms, capability handlers and validators.
-func (h *Host) Restore(ctx context.Context) error {
+func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
+	var report contract.RestoreReport
 	if err := h.lockOperation(ctx); err != nil {
-		return err
+		return report, err
 	}
 	entries, err := h.store.Entries()
 	if err != nil {
 		h.unlockOperation()
-		return err
+		return report, err
 	}
-	instances := []contract.Instance{}
+	instances := map[int]contract.Instance{}
+	blocked := map[string]bool{}
 	var result error
 	for _, entry := range orderedEntries(entries) {
 		if !entry.Enabled {
+			report.Entries = append(report.Entries, contract.RestoreEntry{ID: entry.ID, Action: "disabled"})
 			continue
 		}
-		instance, err := h.enable(ctx, entry)
-		if err != nil && instance == nil {
-			h.unlockOperation()
-			return errors.Join(result, err)
+		record := contract.RestoreEntry{ID: entry.ID, Action: "registered"}
+		h.mu.Lock()
+		current, exists := h.entrySpecs[entry.ID]
+		instance := h.entries[entry.ID]
+		ref := h.packages[entry.ID]
+		h.mu.Unlock()
+		if exists {
+			selected, selectErr := h.store.Selected(entry.Package)
+			if selectErr != nil || ref != selected.Ref || current.Package != entry.Package || current.Realm != entry.Realm || current.Parent != entry.Parent || current.Definition != entry.Definition {
+				record.Action = "conflict"
+				record.Error = errors.Join(contract.Fail(contract.Conflict, "restore target differs from current registration"), selectErr)
+				blocked[entry.ID] = true
+			} else {
+				record.Action = "existing"
+				record.Status = instance.Status()
+				if record.Status.State == contract.Failed {
+					record.Error = instance.Wait(ctx)
+				}
+			}
+			report.Entries = append(report.Entries, record)
+			result = errors.Join(result, record.Error)
+			continue
 		}
+		if blocked[entry.Parent] {
+			record.Action = "blocked"
+			record.Error = contract.Fail(contract.NotReady, "restore parent could not be registered")
+			blocked[entry.ID] = true
+			report.Entries = append(report.Entries, record)
+			result = errors.Join(result, record.Error)
+			continue
+		}
+		if h.controlBusy(entry.ID, entry.Parent) || h.packageBusy(entry.Package) {
+			record.Action = "conflict"
+			record.Error = contract.Fail(contract.Conflict, "restore target has a package or ownership tree operation in progress")
+			blocked[entry.ID] = true
+			report.Entries = append(report.Entries, record)
+			result = errors.Join(result, record.Error)
+			continue
+		}
+		instance, err = h.enable(ctx, entry)
+		if err != nil && instance == nil {
+			blocked[entry.ID] = true
+			record.Action = "failed"
+		}
+		record.Error = err
 		result = errors.Join(result, err)
-		instances = append(instances, instance)
+		if instance != nil {
+			instances[len(report.Entries)] = instance
+		}
+		report.Entries = append(report.Entries, record)
 	}
 	h.unlockOperation()
-	for _, instance := range instances {
-		result = errors.Join(result, instance.Wait(ctx))
+	for index, instance := range instances {
+		err := instance.Wait(ctx)
+		report.Entries[index].Status = instance.Status()
+		report.Entries[index].Error = errors.Join(report.Entries[index].Error, err)
+		result = errors.Join(result, err)
 	}
-	return result
+	return report, result
 }

@@ -1,13 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/Cyenoch/cordis/contract"
 )
 
 func TestServiceSelectionUsesDeclaredVersion(t *testing.T) {
-	m := contract.Manifest{Definitions: []contract.DefinitionSpec{{ID: "main", Provides: []contract.Service{{Name: "echo", Major: 1, Minor: 1}, {Name: "echo", Major: 2, Minor: 4}}}}}
+	m := contract.Manifest{Definitions: []contract.DefinitionSpec{{ID: "main", ConfigSchema: json.RawMessage(`{"type":"object"}`), Requires: []contract.Consumer{}, Provides: []contract.Service{{Name: "echo", Major: 1, Minor: 1}, {Name: "echo", Major: 2, Minor: 4}}}}}
 	if _, err := selectService(m, "main", "echo", 0, 0, uint(^uint32(0))); err == nil {
 		t.Fatal("ambiguous major accepted")
 	}

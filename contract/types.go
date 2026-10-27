@@ -131,9 +131,10 @@ type RuntimeSpec struct {
 }
 
 type DefinitionSpec struct {
-	ID       string        `json:"id"`
-	Requires []Requirement `json:"requires"`
-	Provides []Service     `json:"provides"`
+	ID           string          `json:"id"`
+	ConfigSchema json.RawMessage `json:"configSchema"`
+	Requires     []Consumer      `json:"requires"`
+	Provides     []Service       `json:"provides"`
 }
 
 type Capability struct {
@@ -160,7 +161,6 @@ type Manifest struct {
 	OptionalDependencies []Dependency     `json:"optionalDependencies"`
 	Capabilities         []Capability     `json:"capabilities"`
 	Contributions        []Contribution   `json:"contributions"`
-	ConfigSchema         json.RawMessage  `json:"configSchema,omitempty"`
 	DataVersion          uint32           `json:"dataVersion"`
 	// HostMetadata retains the original signed host manifest; it is decoded only
 	// by that host's metadata/session adapter, never interpreted by the core.
@@ -179,13 +179,40 @@ const (
 )
 
 type Status struct {
-	Identity    Identity `json:"identity"`
-	State       State    `json:"state"`
-	Desired     uint64   `json:"desired"`
-	Applied     uint64   `json:"applied"`
-	WaitingFor  []string `json:"waitingFor"`
-	Error       string   `json:"error,omitempty"`
-	Diagnostics []string `json:"diagnostics,omitempty"`
+	Identity         Identity     `json:"identity"`
+	State            State        `json:"state"`
+	Enabled          bool         `json:"enabled"`
+	TemporaryStopped bool         `json:"temporaryStopped"`
+	Desired          uint64       `json:"desired"`
+	Applied          uint64       `json:"applied"`
+	Waiting          []WaitReason `json:"waiting"`
+	Error            string       `json:"error,omitempty"`
+	Diagnostics      []string     `json:"diagnostics,omitempty"`
+}
+
+type WaitReason struct {
+	Kind        string       `json:"kind"`
+	Requirement *Requirement `json:"requirement,omitempty"`
+	Parent      string       `json:"parent,omitempty"`
+	Visible     []Service    `json:"visible"`
+	Reason      string       `json:"reason"`
+}
+
+type InstanceInfo struct {
+	Entry   Entry      `json:"entry"`
+	Package PackageRef `json:"package"`
+	Status  Status     `json:"status"`
+}
+
+type RestoreEntry struct {
+	ID     string `json:"id"`
+	Action string `json:"action"`
+	Status Status `json:"status"`
+	Error  error  `json:"-"`
+}
+
+type RestoreReport struct {
+	Entries []RestoreEntry `json:"entries"`
 }
 
 type UpdateResult struct {
@@ -224,11 +251,12 @@ type Scope interface {
 }
 
 type Definition struct {
-	ID       string
-	Requires []Requirement
-	Provides []Service
-	Validate func(json.RawMessage) error
-	Start    func(context.Context, Scope) error
+	ID           string
+	Requires     []Requirement
+	Provides     []Service
+	Capabilities []Capability
+	Validate     func(json.RawMessage) error
+	Start        func(context.Context, Scope) error
 }
 
 type Entry struct {
@@ -244,9 +272,11 @@ type Entry struct {
 type Invocation struct {
 	Service Service         `json:"service"`
 	Input   json.RawMessage `json:"input"`
+	Cleanup bool            `json:"cleanup"`
 }
 
 type Initialize struct {
+	FrameBytes int             `json:"frameBytes"`
 	Identity   Identity        `json:"identity"`
 	Protocol   Protocol        `json:"protocol"`
 	Definition string          `json:"definition"`
@@ -254,6 +284,7 @@ type Initialize struct {
 }
 
 type Registration struct {
+	FrameBytes    int            `json:"frameBytes"`
 	Minor         uint32         `json:"minor"`
 	Features      []string       `json:"features"`
 	Services      []Service      `json:"services"`
@@ -269,17 +300,57 @@ type Session interface {
 }
 
 type SessionHandler func(context.Context, string, json.RawMessage) (json.RawMessage, error)
-type SessionFactory func(io.ReadWriteCloser, Identity, SessionHandler) (Session, error)
+type SessionProtocol string
+
+const (
+	GenericSession SessionProtocol = "generic"
+	CustomSession  SessionProtocol = "custom"
+	MinFrameBytes                  = 4096
+	MaxFrameBytes                  = 1 << 20
+)
+
+type SessionFactory struct {
+	Protocol SessionProtocol
+	Open     func(io.ReadWriteCloser, Identity, SessionHandler, int) (Session, error)
+}
+
+func ValidateFrameBytes(value int) error {
+	if value < MinFrameBytes || value > MaxFrameBytes {
+		return Fail(Invalid, "frameBytes must be between 4096 and 1048576")
+	}
+	return nil
+}
+
+func (f *SessionFactory) Validate(frameBytes int) error {
+	if f == nil {
+		return ValidateFrameBytes(frameBytes)
+	}
+	if f.Open == nil {
+		return Fail(Invalid, "session factory requires an opener")
+	}
+	switch f.Protocol {
+	case GenericSession:
+		return ValidateFrameBytes(frameBytes)
+	case CustomSession:
+		return nil
+	default:
+		return Fail(Invalid, "unknown session factory protocol")
+	}
+}
+
+func (f *SessionFactory) IsCustom() bool { return f != nil && f.Protocol == CustomSession }
 
 type Launch struct {
-	Identity    Identity
-	Manifest    Manifest
-	Directory   string
-	Artifact    string
-	Worker      string
-	Handle      SessionHandler
-	OpenSession SessionFactory
-	Grace       time.Duration
+	Identity       Identity
+	Manifest       Manifest
+	Directory      string
+	Artifact       string
+	Worker         string
+	Handle         SessionHandler
+	SessionFactory *SessionFactory
+	FrameBytes     int
+	Grace          time.Duration
+	Stderr         func([]byte) error
 }
 
 type Runtime interface {
