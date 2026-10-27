@@ -5,7 +5,7 @@
 - [x] 1.1 核对公开查询、错误惯例与持久读取边界，确认无已有结构化缺省入口，冻结最小方案。
 - [x] 1.2 用真实签名包回归验证安装未选择/重开、选择保留 disabled 状态及失败不误报，再实现单一 sentinel 分支与 API 文档。
 - [x] 1.3 执行相关 integration/race/vet、全仓验证与严格规格检查，独立 Review 公开分类。
-- [ ] 1.4 只提交本写集并发布，提供不可变 commit、版本和 changelog；不修改消费者或 VM。
+- [x] 1.4 只提交本写集并发布，提供不可变 commit、版本和 changelog；不修改消费者或 VM。
 
 ## 验证与发布
 
@@ -37,3 +37,21 @@ darwin/arm64，Go 1.27.3：
 - 无选择不证明已安装；Store 关闭等原错误保持，Open/Snapshot 的持久化与内容失败不被伪装成首次启动。
 - 现有 getter 签名、安装记录、已选择版本和 disabled entry 行为不变；不添加自动选择/恢复或新的状态读取策略。
 - 无权限、生命周期、worker、schema、签名字节、持久格式和依赖更改；消费者 module 升级由其 owner 负责。
+
+## Public Publication
+
+实现提交为 `063f92ae95335e8579ca5056a900ecac2a7451b6`（8 个文件，仅本写集）。随后文档提交 `c3385310882c0b0b4929bb9d688b39274ff4fb13` 将 packages 基线绑定到该实现并记录独立 Review；两提交均已推送公开 `Cyenoch/cordis` main。可消费的固定版本为：
+
+```text
+github.com/Cyenoch/cordis v0.0.0-20261027133504-c3385310882c
+```
+
+- Origin Hash：`c3385310882c0b0b4929bb9d688b39274ff4fb13`
+- Module sum：`h1:X9dlTcaXssTUxHqxATy7SrrKei2kkfHhv3O5Z2xXHDQ=`
+- go.mod sum：`h1:91iVpKZWCSLKhAQegi8uFDqoVt2qyHnvyyy5s45eXbU=`
+
+使用独立临时消费者目录和全新 GOMODCACHE，明确设置 `GOWORK=off`、`GOPROXY=https://proxy.golang.org,direct`、`GOSUMDB=sum.golang.org`（未禁用校验）实际解析、下载并通过 `go mod verify`、`go mod tidy -diff`。没有 replace、宿主目录依赖或全局配置更改。外部消费者直接导入公开 `packagehost.ErrNotSelected`，实际以 race 验证无映射分类经过外层包装仍可匹配，关闭错误优先且不匹配缺省。
+
+在下载的只读 module 中，另执行本次 3 项真实 Store integration/race 回归与 packagehost integration vet，全部通过；新语义可由公开版本消费，不只是工作树编译成功。最终 packages 基线调整后，文档测试、构建/链接检查和全部严格规格检查再次通过。
+
+本记录自身为发布后的纯文档回填，不改变上述已经公开验证的版本。未代替消费者升级或运行消费者/Windows/VM；未将远程 CI、后续消费者结果或产品认证预填为通过。
