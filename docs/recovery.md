@@ -2,11 +2,17 @@
 
 ## 唯一提交依据
 
-`catalog.json` 同时记录 installed、selected、entry 和宿主确认的数据版本下界；原子替换此文件是提交点。`transaction.json` 是操作记录，`catalog.next` 是候选根，二者都不是恢复时的提交依据。不能因为日志中出现了 v2，或 `content/` 已经存在 v2，就将它推断为已安装或已选择。候选根在替换前必须经过与 Open 相同的严格解码及内容校验；catalog 单独预留三层封装深度，manifest 和配置仍分别保持深度 32 的限制，不能因嵌套合法叶文档而写入不可恢复根。
+`catalog.json` 同时记录 installed、selected、entry、签名证明、外部父锚点和宿主确认的数据版本下界；原子替换此文件是包状态的提交点。`transaction.json` 是操作记录，`catalog.next` 是候选根，二者都不是恢复时的提交依据。不能因为日志中出现了 v2，或 `content/` 已经存在 v2，就将它推断为已安装或已选择。候选根在替换前必须经过与 Open 相同的严格解码及内容校验；catalog 单独预留三层封装深度，manifest 和配置仍分别保持深度 32 的限制，不能因嵌套合法叶文档而写入不可恢复根。
 
 `Open` 取得存储独占锁后，先读取并校验 `catalog.json`，再清理 staging、旧 activation snapshots、未被 catalog 引用的 content 以及事务残留。catalog 引用的内容目录缺失时返回错误，不通过日志或候选根拼接、猜测安装状态。宿主应保留故障存储用于诊断，从可信包或宿主备份显式恢复，不手工把 `catalog.next` 改名冒充已提交事务。
 
 仅安装 v2 不改变 v1 的选择，也不启动 v2。重启后宿主必须重新创建 activation 身份，取得新的 `Snapshot` 再启动；enabled entry 是持久期望状态，不表示崩溃前进程仍在运行。显式 `Select(v2)` 才改变选择；停止旧 activation、依赖预检、业务数据迁移确认与旧代码恢复的限制见 [包管理文档](packages.md)。
+
+同 digest 重签刷新只提交 catalog 证明，不原地覆盖 content；进程在 catalog 替换前退出仍使用旧证明，替换后重开使用新证明并按当前信任策略验签。Snapshot 的私有目录带当前证明。`externalParents` 只保存 builtin 父 ID，不是可恢复代码或配置；宿主恢复子 entry 前必须显式重建对应 builtin。不能删除仍被子 entry 引用的锚点来“修复”父图。
+
+兼容性：新 Store 可读取没有 `signatures` / `externalParents` 的旧 catalog；旧包继续按原签名验证，重新安装时记录当前证明。写入新字段后，旧二进制的严格解码会拒绝该 catalog，不支持直接降级打开；升级前应备份完整存储。未改变公开包/会话 v1 schema 或签名字节，runs 是独立的宿主记录文件。
+
+`runs.json` 是独立运行记录的唯一提交依据，`runs.next` 不是。Open 先验证记录，原子持久化遗留 `running -> interrupted`，再返回 Store；恢复写失败则 Open 失败，不报告仍在运行或伪装恢复成功。terminal 只保留最近 256 条，running 不因历史清理被淘汰；超出 10,000 条 running 时拒绝新开始。未提交 runs.next 被清理，不从它拼接历史。运行记录与 catalog 没有跨文件事务，宿主须在启动前 BeginRun、实际停止后 EndRun，不能把记录当作执行授权或业务恢复日志。
 
 ## 中断边界
 
@@ -36,7 +42,9 @@
 - installed 与 enabled entry 保持一致，已安装内容的摘要、完整性与签名可重新校验。
 - 进程锁可重新取得，未提交 staging、孤立 content、旧 snapshot、候选根和事务残留均无泄漏。
 
-`TestStoreRecoveryCancellationBoundary` 在 journal 同步后及 catalog 原子替换后同步取消 context，分别约束安装与选择的未提交取消/已提交成功语义，并重开检查结果。
+`TestStoreRecoveryCancellationBoundary` 在 journal 同步后、catalog.next 同步后和 catalog 原子替换后同步取消 context，分别约束安装与选择的未提交取消/已提交成功语义，并重开检查结果。迁移确认忽略取消的回归也覆盖 catalog.next 已同步时取消。
+
+`TestStoreResignRecoveryHasOneProofCommitPoint` 对相同 digest 重签，在 catalog.next 同步后和 catalog 替换后分别注入真实进程退出/取消；撤销旧密钥后重开验证只有已提交的新证明可执行。`TestRunsProcessExitRecovery` 在 runs.next 同步和 runs 替换边界退出，验证未提交记录丢弃、已提交 running 恢复为 interrupted。`TestRunsRetainRunningAndBoundTerminalHistory` 通过超过 256 次完整开始/结束检查历史淘汰不丢 running，重开后的 interrupted 再次重开仍保留；`TestRunCancellationRespectsAtomicBoundary` 覆盖 BeginRun/EndRun 的取消提交点。
 
 `TestStoreNestedDocumentsRemainReopenable` 用真实签名包保存达到叶文档深度上限的 manifest 和 entry 配置，重开并取得 Snapshot，同时断言超限配置被拒绝。`TestStoreCandidateValidationPreservesCommittedRoot` 约束候选根校验失败不得损坏已提交根。`TestStoreCommittedMigrationSurvivesFailedSelection` 覆盖预先取消、选择提交前取消、信任拒绝、InUse、迁移版本不匹配和目标缺失：确认不改变旧选择，但立即及重开后的旧 Snapshot 均因数据版本被拒绝。`TestStoreConfirmDataVersionIsIndependentAndMonotonic` 覆盖无已安装代码时取消仍确认、同版本幂等和拒绝降低下界。`TestStoreConfirmDataVersionCommitErrorRetainsFact` 用确定性的日志清理失败约束 `CommitError`，确认错误不会丢失进程内或重开后的数据下界。
 

@@ -98,7 +98,10 @@ func (r *contextReader) Read(p []byte) (int, error) {
 }
 
 func extractZIP(ctx context.Context, archive, dest string, l Limits) (err error) {
-	file, err := os.Open(archive)
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	file, err := openRegular(nil, archive)
 	if err != nil {
 		return err
 	}
@@ -109,6 +112,9 @@ func extractZIP(ctx context.Context, archive, dest string, l Limits) (err error)
 	}
 	if !st.Mode().IsRegular() || st.Size() > l.ArchiveBytes {
 		return fmt.Errorf("archive is not regular or exceeds %d bytes", l.ArchiveBytes)
+	}
+	if err = checkZIPDirectory(ctx, file, st.Size(), l.Entries); err != nil {
+		return fmt.Errorf("read zip directory: %w", err)
 	}
 	zr, err := zip.NewReader(file, st.Size())
 	if err != nil {
@@ -222,21 +228,11 @@ func copyDirectory(ctx context.Context, source, dest string, l Limits) error {
 		if e := checkSourceParents(root, name); e != nil {
 			return errors.Join(e, root.Close())
 		}
-		info, e := root.Lstat(name)
+		f, e := openRegular(root, name)
 		if e != nil {
 			return errors.Join(e, root.Close())
 		}
-		if !info.Mode().IsRegular() {
-			return errors.Join(fmt.Errorf("source changed to linked/nonregular file %q", name), root.Close())
-		}
-		f, e := root.Open(name)
-		if e != nil {
-			return errors.Join(e, root.Close())
-		}
-		info, e = f.Stat()
-		if e == nil && !info.Mode().IsRegular() {
-			e = fmt.Errorf("source changed to special file %q", name)
-		}
+		info, e := f.Stat()
 		if e == nil {
 			e = checkLinks(f, info)
 		}
@@ -265,7 +261,7 @@ func checkSourceParents(root *os.Root, name string) error {
 }
 
 func readMetadata(dir, name string) ([]byte, error) {
-	f, err := os.Open(filepath.Join(dir, name))
+	f, err := openRegular(nil, filepath.Join(dir, name))
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +308,7 @@ func hashDirectory(ctx context.Context, dir string, l Limits) ([]IntegrityEntry,
 			return fmt.Errorf("nonregular managed file %q", name)
 		}
 		names = append(names, name)
-		f, err := os.Open(full)
+		f, err := openRegular(nil, full)
 		if err != nil {
 			return err
 		}
@@ -349,10 +345,19 @@ func hashDirectory(ctx context.Context, dir string, l Limits) ([]IntegrityEntry,
 }
 
 func inspect(ctx context.Context, dir, source string, development bool, l Limits, decoders ...MetadataDecoder) (Package, []byte, *Signature, error) {
+	p, input, err := inspectContent(ctx, dir, source, development, l, decoders...)
+	if err != nil {
+		return p, nil, nil, err
+	}
+	sig, err := readSignature(dir)
+	return p, input, sig, err
+}
+
+func inspectContent(ctx context.Context, dir, source string, development bool, l Limits, decoders ...MetadataDecoder) (Package, []byte, error) {
 	var p Package
 	raw, err := readMetadata(dir, ManifestFile)
 	if err != nil {
-		return p, nil, nil, err
+		return p, nil, err
 	}
 	var decoder MetadataDecoder
 	if len(decoders) > 0 {
@@ -360,30 +365,30 @@ func inspect(ctx context.Context, dir, source string, development bool, l Limits
 	}
 	m, err := decodeMetadata(ctx, raw, os.DirFS(dir), decoder)
 	if err != nil {
-		return p, nil, nil, err
+		return p, nil, err
 	}
 	table, err := readMetadata(dir, IntegrityFile)
 	if err != nil {
-		return p, nil, nil, err
+		return p, nil, err
 	}
 	var integrity Integrity
 	if err = contract.Decode(table, &integrity); err != nil {
-		return p, nil, nil, err
+		return p, nil, err
 	}
 	input, err := SignatureInput(integrity.Files)
 	if err != nil {
-		return p, nil, nil, err
+		return p, nil, err
 	}
 	actual, err := hashDirectory(ctx, dir, l)
 	if err != nil {
-		return p, nil, nil, err
+		return p, nil, err
 	}
 	expected, err := SignatureInput(actual)
 	if err != nil {
-		return p, nil, nil, err
+		return p, nil, err
 	}
 	if !equalBytes(input, expected) {
-		return p, nil, nil, fmt.Errorf("package integrity mismatch")
+		return p, nil, fmt.Errorf("package integrity mismatch")
 	}
 	listed := map[string]bool{}
 	for _, entry := range actual {
@@ -398,22 +403,26 @@ func inspect(ctx context.Context, dir, source string, development bool, l Limits
 	}
 	for _, a := range artifacts {
 		if !listed[a] {
-			return p, nil, nil, fmt.Errorf("missing runtime artifact %q", a)
+			return p, nil, fmt.Errorf("missing runtime artifact %q", a)
 		}
 	}
 	digest := sha256.Sum256(input)
 	p = Package{contract.PackageRef{ID: m.ID, Version: m.Version, Digest: hex.EncodeToString(digest[:])}, m, dir, source, development}
+	return p, input, nil
+}
+
+func readSignature(dir string) (*Signature, error) {
 	var sig *Signature
-	raw, err = readMetadata(dir, SignatureFile)
+	raw, err := readMetadata(dir, SignatureFile)
 	if err == nil {
 		sig = &Signature{}
 		if err = contract.Decode(raw, sig); err != nil {
-			return p, nil, nil, err
+			return nil, err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return p, nil, nil, err
+		return nil, err
 	}
-	return p, input, sig, nil
+	return sig, nil
 }
 func equalBytes(a, b []byte) bool {
 	if len(a) != len(b) {

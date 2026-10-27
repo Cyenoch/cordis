@@ -19,14 +19,16 @@ import (
 )
 
 type catalog struct {
-	Revision     uint64                         `json:"revision"`
-	Transaction  string                         `json:"transaction"`
-	Installed    map[string]Package             `json:"installed"`
-	Selected     map[string]contract.PackageRef `json:"selected"`
-	Entries      map[string]contract.Entry      `json:"entries"`
-	DataVersions map[string]uint32              `json:"dataVersions"`
-	Publishers   map[string]string              `json:"publishers"`
-	Pending      []pendingRemoval               `json:"pendingRemoval"`
+	Revision        uint64                         `json:"revision"`
+	Transaction     string                         `json:"transaction"`
+	Installed       map[string]Package             `json:"installed"`
+	Selected        map[string]contract.PackageRef `json:"selected"`
+	Entries         map[string]contract.Entry      `json:"entries"`
+	DataVersions    map[string]uint32              `json:"dataVersions"`
+	Publishers      map[string]string              `json:"publishers"`
+	Pending         []pendingRemoval               `json:"pendingRemoval"`
+	Signatures      map[string]*Signature          `json:"signatures,omitempty"`
+	ExternalParents []string                       `json:"externalParents,omitempty"`
 }
 type pendingRemoval struct {
 	Ref        contract.PackageRef `json:"ref"`
@@ -59,6 +61,7 @@ type Store struct {
 	catalog catalog
 	lock    *os.File
 	closed  bool
+	runs    []RunRecord
 	// commitObserver is set only by internal tests, before starting a mutation.
 	// It runs under mu and must not call Store methods. Production leaves it nil.
 	commitObserver func(commitStage)
@@ -85,12 +88,12 @@ type Removal struct {
 	Reason       string
 }
 
-// CommitError means the atomic catalog root was replaced. Callers must not retry
+// CommitError means the atomic catalog or runs root was replaced. Callers must not retry
 // under the assumption that the mutation did not happen.
 type CommitError struct{ Err error }
 
 func (e *CommitError) Error() string {
-	return "catalog committed but durability/cleanup failed: " + e.Err.Error()
+	return "store mutation committed but durability/cleanup failed: " + e.Err.Error()
 }
 func (e *CommitError) Unwrap() error { return e.Err }
 
@@ -164,6 +167,9 @@ func OpenWithOptions(root string, options Options) (s *Store, err error) {
 	}
 	if err = s.recover(); err != nil {
 		return nil, fmt.Errorf("recover storage: %w", err)
+	}
+	if err = s.recoverRuns(); err != nil {
+		return nil, fmt.Errorf("recover runs: %w", err)
 	}
 	return s, nil
 }
@@ -273,11 +279,27 @@ func validateCatalog(c catalog) error {
 		}
 	}
 	entries := make([]contract.Entry, 0, len(c.Entries))
+	parents := map[string]bool{}
+	for _, id := range c.ExternalParents {
+		if !validName(id) || parents[id] {
+			return fmt.Errorf("invalid or duplicate external parent %q", id)
+		}
+		if _, exists := c.Entries[id]; exists {
+			return fmt.Errorf("external parent %s conflicts with an entry", id)
+		}
+		parents[id] = true
+		entries = append(entries, contract.Entry{ID: id})
+	}
 	for _, entry := range c.Entries {
 		entries = append(entries, entry)
 	}
 	if err := contract.CheckEntryGraph(entries); err != nil {
 		return err
+	}
+	for digest := range c.Signatures {
+		if _, ok := c.Installed[digest]; !ok {
+			return fmt.Errorf("signature proof has no installed package: %s", digest)
+		}
 	}
 	for _, p := range c.Pending {
 		if !validDigest(p.Ref.Digest) || p.Directory != "trash/"+p.Ref.Digest && p.Directory != "content/"+p.Ref.Digest {
@@ -371,6 +393,11 @@ func (s *Store) cloneCatalog() (catalog, error) {
 		c.Publishers[k] = v
 	}
 	c.Pending = append([]pendingRemoval(nil), s.catalog.Pending...)
+	c.ExternalParents = append([]string(nil), s.catalog.ExternalParents...)
+	c.Signatures = make(map[string]*Signature, len(s.catalog.Signatures))
+	for digest, sig := range s.catalog.Signatures {
+		c.Signatures[digest] = sig
+	}
 	return c, nil
 }
 func durableJSON(file string, value any) (err error) {
@@ -412,7 +439,7 @@ func (s *Store) begin(op, digest string) (transaction, error) {
 	s.observeCommit(commitJournalSynced)
 	return tx, nil
 }
-func (s *Store) commit(c catalog, tx transaction) error {
+func (s *Store) commit(ctx context.Context, c catalog, tx transaction) error {
 	c.Revision = s.catalog.Revision + 1
 	c.Transaction = tx.ID
 	raw, err := json.Marshal(c)
@@ -426,6 +453,9 @@ func (s *Store) commit(c catalog, tx transaction) error {
 		return err
 	}
 	s.observeCommit(commitCatalogSynced)
+	if err = ctx.Err(); err != nil {
+		return err
+	}
 	if err := replaceFile(filepath.Join(s.root, "catalog.next"), filepath.Join(s.root, "catalog.json")); err != nil {
 		return err
 	}
@@ -454,7 +484,7 @@ func (s *Store) mutate(ctx context.Context, op string, c catalog) error {
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	return s.commit(c, tx)
+	return s.commit(ctx, c, tx)
 }
 
 func (s *Store) Install(ctx context.Context, archive string) (Package, error) {
@@ -524,16 +554,22 @@ func (s *Store) install(ctx context.Context, source string, dev bool) (p Package
 			return p, fmt.Errorf("publisher change for %s from %s to %s requires explicit approval", p.Ref.ID, old.Manifest.Publisher, p.Manifest.Publisher)
 		}
 	}
-	if old, ok := s.catalog.Installed[p.Ref.Digest]; ok {
-		old.Directory = s.content(old.Ref.Digest)
-		return clonePackageChecked(old)
-	}
 	if err = ctx.Err(); err != nil {
 		return p, err
 	}
 	c, err := s.cloneCatalog()
 	if err != nil {
 		return p, err
+	}
+	c.Signatures[p.Ref.Digest] = sig
+	if _, ok := c.Installed[p.Ref.Digest]; ok {
+		p.Directory = s.content(p.Ref.Digest)
+		stored, e := clonePackageChecked(p)
+		if e != nil {
+			return p, e
+		}
+		c.Installed[p.Ref.Digest] = stored
+		return p, s.mutate(ctx, "refresh-signature", c)
 	}
 	tx, err := s.begin("install", p.Ref.Digest)
 	if err != nil {
@@ -567,7 +603,7 @@ func (s *Store) install(ctx context.Context, source string, dev bool) (p Package
 	if err = ctx.Err(); err != nil {
 		return p, errors.Join(err, os.RemoveAll(p.Directory))
 	}
-	err = s.commit(c, tx)
+	err = s.commit(ctx, c, tx)
 	if err != nil {
 		var committed *CommitError
 		if !errors.As(err, &committed) {
@@ -579,6 +615,8 @@ func (s *Store) install(ctx context.Context, source string, dev bool) (p Package
 }
 func clonePackageChecked(p Package) (Package, error) {
 	m := p.Manifest
+	m.Protocol.RequiredFeatures = append([]string(nil), m.Protocol.RequiredFeatures...)
+	m.HostMetadata = append([]byte(nil), m.HostMetadata...)
 	m.Definitions = append([]contract.DefinitionSpec(nil), m.Definitions...)
 	for i := range m.Definitions {
 		m.Definitions[i].Requires = append([]contract.Requirement(nil), m.Definitions[i].Requires...)
@@ -771,12 +809,19 @@ func (s *Store) prepareSelection(ref contract.PackageRef, opt ChangeOptions) (ca
 	}
 	// Reject corrupt/revoked replacement code before the facade quiesces the old
 	// activation. The eventual execution Snapshot independently verifies again.
-	checked, input, sig, err := inspect(context.Background(), p.Directory, p.Source, p.Development, s.limits, s.decoder)
+	checked, input, err := inspectContent(context.Background(), p.Directory, p.Source, p.Development, s.limits, s.decoder)
 	if err != nil {
 		return catalog{}, err
 	}
 	if checked.Ref != ref {
 		return catalog{}, fmt.Errorf("managed package digest changed")
+	}
+	sig, recorded := s.catalog.Signatures[ref.Digest]
+	if !recorded {
+		sig, err = readSignature(p.Directory)
+		if err != nil {
+			return catalog{}, err
+		}
 	}
 	if _, err = Artifact(checked.Manifest, runtime.GOOS, runtime.GOARCH); err != nil {
 		return catalog{}, err
@@ -962,6 +1007,20 @@ func (s *Store) Snapshot(ctx context.Context, ref contract.PackageRef) (snapshot
 	if err = copyDirectory(ctx, p.Directory, dir, s.limits); err != nil {
 		return nil, err
 	}
+	// Only the private execution copy changes; the catalog is the proof's commit point.
+	if proof, ok := s.catalog.Signatures[ref.Digest]; ok {
+		if proof == nil {
+			err = os.Remove(filepath.Join(dir, SignatureFile))
+			if errors.Is(err, os.ErrNotExist) {
+				err = nil
+			}
+		} else {
+			err = durableJSON(filepath.Join(dir, SignatureFile), proof)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
 	checked, input, sig, err := inspect(ctx, dir, p.Source, p.Development, s.limits, s.decoder)
 	if err != nil {
 		return nil, err
@@ -1029,6 +1088,7 @@ func (s *Store) Uninstall(ctx context.Context, ref contract.PackageRef, opt Chan
 		return result, err
 	}
 	delete(c.Installed, ref.Digest)
+	delete(c.Signatures, ref.Digest)
 	if selected {
 		delete(c.Selected, ref.ID)
 		for id, e := range c.Entries {
@@ -1106,7 +1166,7 @@ func (s *Store) retryPending() error {
 	if err != nil {
 		return err
 	}
-	return s.commit(c, tx)
+	return s.commit(context.Background(), c, tx)
 }
 
 // PendingRemovals returns references still held by the OS or external programs.

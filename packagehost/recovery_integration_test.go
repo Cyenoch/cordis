@@ -4,6 +4,8 @@ package packagehost
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"os"
@@ -27,6 +29,7 @@ type recoveryCrashConfig struct {
 	Operation string
 	Ref       contract.PackageRef
 	Stage     commitStage
+	Owner     contract.Identity
 }
 
 func TestStoreRecoveryProcessExit(t *testing.T) {
@@ -221,10 +224,127 @@ func TestStoreRecoveryCrashChild(t *testing.T) {
 		_, err = s.Install(context.Background(), config.Archive)
 	case "select":
 		err = s.Select(context.Background(), config.Ref, ChangeOptions{})
+	case "begin-run":
+		err = s.BeginRun(context.Background(), config.Owner)
 	default:
 		t.Fatalf("unknown child operation %q", config.Operation)
 	}
 	t.Fatalf("transaction returned instead of exiting at %s: %v", config.Stage, err)
+}
+
+func TestStoreResignRecoveryHasOneProofCommitPoint(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"process-exit", "cancel"} {
+		for _, stage := range []commitStage{commitCatalogSynced, commitCatalogSwapped} {
+			t.Run(mode+"/"+string(stage), func(t *testing.T) {
+				t.Parallel()
+				ctx := context.Background()
+				key, trust := signingFixture(t)
+				root := t.TempDir()
+				archive, p := archiveFixture(t, manifestFixture("demo", "1.0.0"), key)
+				s := openFixture(t, root, trust)
+				if _, err := s.Install(ctx, archive); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
+					t.Fatal(err)
+				}
+				pub, rotated, err := ed25519.GenerateKey(rand.Reader)
+				if err != nil {
+					t.Fatal(err)
+				}
+				trust.Keys["rotated"] = TrustedKey{PublicKey: pub, Publisher: "example"}
+				if _, err = Sign(ctx, archive, "rotated", rotated); err != nil {
+					t.Fatal(err)
+				}
+				if mode == "process-exit" {
+					if err = s.Close(); err != nil {
+						t.Fatal(err)
+					}
+					runRecoveryCrash(t, recoveryCrashConfig{Root: root, Archive: archive, Trust: trust, Operation: "install", Stage: stage})
+				} else {
+					if err = s.UpdateTrust(trust); err != nil {
+						t.Fatal(err)
+					}
+					canceled, cancel := context.WithCancel(ctx)
+					defer cancel()
+					s.commitObserver = func(observed commitStage) {
+						if observed == stage {
+							cancel()
+						}
+					}
+					_, err = s.Install(canceled, archive)
+					if stage == commitCatalogSynced && !errors.Is(err, context.Canceled) || stage == commitCatalogSwapped && err != nil {
+						t.Fatalf("refresh cancellation: %v", err)
+					}
+					if err = s.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				old := trust.Keys["test"]
+				old.Revoked = true
+				trust.Keys["test"] = old
+				s = openFixture(t, root, trust)
+				snapshot, err := s.Snapshot(ctx, p.Ref)
+				if stage == commitCatalogSynced {
+					if err == nil {
+						_ = snapshot.Close()
+						t.Fatal("uncommitted signature refresh became executable")
+					}
+					if !strings.Contains(err.Error(), "signing key") {
+						t.Fatal("unexpected recovery failure", err)
+					}
+				} else {
+					if err != nil {
+						t.Fatal("committed signature refresh lost", err)
+					}
+					if err = snapshot.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if selected, err := s.Selected("demo"); err != nil || selected.Ref != p.Ref {
+					t.Fatal("signature refresh changed selection", selected, err)
+				}
+			})
+		}
+	}
+}
+
+func TestRunsProcessExitRecovery(t *testing.T) {
+	t.Parallel()
+	for _, stage := range []commitStage{commitRunsSynced, commitRunsSwapped} {
+		t.Run(string(stage), func(t *testing.T) {
+			t.Parallel()
+			key, trust := signingFixture(t)
+			root := t.TempDir()
+			s := openFixture(t, root, trust)
+			archive, p := archiveFixture(t, manifestFixture("demo", "1.0.0"), key)
+			if _, err := s.Install(context.Background(), archive); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Select(context.Background(), p.Ref, ChangeOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			owner := runOwner("crashed-activation")
+			runRecoveryCrash(t, recoveryCrashConfig{Root: root, Trust: trust, Operation: "begin-run", Owner: owner, Stage: stage})
+			s = openFixture(t, root, trust)
+			runs, err := s.Runs()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stage == commitRunsSynced {
+				if len(runs) != 0 {
+					t.Fatal("uncommitted run recovered", runs)
+				}
+			} else if len(runs) != 1 || runs[0].Owner != owner || runs[0].State != "interrupted" {
+				t.Fatal("committed run not interrupted", runs)
+			}
+			assertRecoveryPath(t, filepath.Join(root, "runs.next"), false)
+		})
+	}
 }
 
 func TestStoreRecoveryCancellationBoundary(t *testing.T) {
@@ -235,6 +355,7 @@ func TestStoreRecoveryCancellationBoundary(t *testing.T) {
 		committed bool
 	}{
 		{name: "before-commit", stage: commitJournalSynced},
+		{name: "catalog-ready", stage: commitCatalogSynced},
 		{name: "after-commit", stage: commitCatalogSwapped, committed: true},
 	}
 	for _, operation := range []string{"install", "select"} {

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -130,6 +131,173 @@ func TestStoreInstallRecoverySelectionAndData(t *testing.T) {
 	}
 	if _, err = os.Stat(marker); err != nil {
 		t.Fatal("deleted retained data", err)
+	}
+}
+
+func TestStoreManifestCopiesDoNotAliasCatalog(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	key, trust := signingFixture(t)
+	m := manifestFixture("demo", "1.0.0")
+	m.Protocol.RequiredFeatures = []string{"cancel"}
+	m.HostMetadata = json.RawMessage(`{"name":"original"}`)
+	archive, _ := archiveFixture(t, m, key)
+	root := t.TempDir()
+	s := openFixture(t, root, trust)
+	p, err := s.Install(ctx, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutate := func(p Package) {
+		p.Manifest.Protocol.RequiredFeatures[0] = "unsupported"
+		p.Manifest.HostMetadata[0] = '!'
+	}
+	mutate(p)
+	if err := s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, lookup := range []func() (Package, error){
+		func() (Package, error) { return s.Get(p.Ref) },
+		func() (Package, error) { return s.Selected(p.Ref.ID) },
+		func() (Package, error) { return s.Install(ctx, archive) },
+	} {
+		returned, err := lookup()
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(returned)
+	}
+	installed, err := s.Installed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutate(installed[0])
+	if err = s.ConfirmDataVersion(ctx, "dep", 1); err != nil {
+		t.Fatal("caller mutated durable catalog", err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = openFixture(t, root, trust)
+	got, err := s.Get(p.Ref)
+	if err != nil || !reflect.DeepEqual(got.Manifest, m) {
+		t.Fatalf("catalog metadata changed: %+v, %v", got.Manifest, err)
+	}
+}
+
+func TestStoreResignedDigestRefreshesTrustDurably(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	key, trust := signingFixture(t)
+	archive, p := archiveFixture(t, manifestFixture("demo", "1.0.0"), key)
+	root := t.TempDir()
+	s := openFixture(t, root, trust)
+	if _, err := s.Install(ctx, archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	pub, rotated, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := trust.Keys["test"]
+	old.Revoked = true
+	trust.Keys["test"] = old
+	trust.Keys["rotated"] = TrustedKey{PublicKey: pub, Publisher: "example"}
+	if err = s.UpdateTrust(trust); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Snapshot(ctx, p.Ref); err == nil {
+		t.Fatal("revoked original proof allowed execution")
+	}
+	if _, err = Sign(ctx, archive, "rotated", rotated); err != nil {
+		t.Fatal(err)
+	}
+	if refreshed, err := s.Install(ctx, archive); err != nil || refreshed.Ref != p.Ref {
+		t.Fatalf("refresh changed identity or failed: %+v, %v", refreshed.Ref, err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = openFixture(t, root, trust)
+	if err = s.CheckSelect(p.Ref, ChangeOptions{}); err != nil {
+		t.Fatal("preflight used revoked content proof", err)
+	}
+	snapshot, err := s.Snapshot(ctx, p.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, input, sig, err := inspect(ctx, snapshot.Directory, "snapshot", false, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = trust.verify(p.Manifest, p.Ref.Digest, input, sig, false); err != nil {
+		t.Fatal("private snapshot did not carry current proof", err)
+	}
+	if err = snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Sign(ctx, archive, "rotated", key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Install(ctx, archive); err == nil {
+		t.Fatal("invalid refresh signature accepted")
+	}
+	if err = s.CheckSelect(p.Ref, ChangeOptions{}); err != nil {
+		t.Fatal("failed refresh replaced verified proof", err)
+	}
+	trust.Keys["rotated"] = old
+	if err = s.UpdateTrust(trust); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Snapshot(ctx, p.Ref); err == nil {
+		t.Fatal("catalog proof bypassed current revocation")
+	}
+}
+
+func TestStoreUnsignedDigestCanAcquireSignature(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	key, trust := signingFixture(t)
+	archive := filepath.Join(t.TempDir(), "unsigned.zip")
+	p, err := Pack(ctx, sourceFixture(t, manifestFixture("demo", "1.0.0")), archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust.DevDigests = map[string]bool{p.Ref.Digest: true}
+	root := t.TempDir()
+	s := openFixture(t, root, trust)
+	if _, err = s.Install(ctx, archive); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	trust.DevDigests = nil
+	if err = s.UpdateTrust(trust); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Sign(ctx, archive, "test", key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Install(ctx, archive); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = openFixture(t, root, trust)
+	snapshot, err := s.Snapshot(ctx, p.Ref)
+	if err != nil {
+		t.Fatal("signed promotion still required development trust", err)
+	}
+	if snapshot.Package.Development {
+		t.Fatal("signed archive retained development status")
+	}
+	if err = snapshot.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -398,6 +566,7 @@ func TestStoreCommittedMigrationSurvivesFailedSelection(t *testing.T) {
 	}{
 		{name: "already canceled", failure: "canceled"},
 		{name: "canceled before selection commit", failure: "journal"},
+		{name: "canceled at migration catalog ready", failure: "migration-ready"},
 		{name: "revoked replacement", failure: "trust"},
 		{name: "old activation in use", failure: "in-use"},
 		{name: "migration version mismatch", failure: "version"},
@@ -439,6 +608,12 @@ func TestStoreCommittedMigrationSurvivesFailedSelection(t *testing.T) {
 						if journals == 2 {
 							cancel()
 						}
+					}
+				}
+			case "migration-ready":
+				s.commitObserver = func(stage commitStage) {
+					if stage == commitCatalogSynced {
+						cancel()
 					}
 				}
 			case "trust":
