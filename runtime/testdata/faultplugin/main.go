@@ -114,6 +114,12 @@ func main() {
 			value = map[string]int{"pid": child.Process.Pid}
 		case "exit-zero":
 			os.Exit(0)
+		case "exit-after-stderr":
+			// Separate writes let the host observe the final line in a later read.
+			fmt.Fprintln(os.Stderr, "first-diagnostic")
+			time.Sleep(50 * time.Millisecond)
+			fmt.Fprintln(os.Stderr, "final-diagnostic")
+			os.Exit(0)
 		case "loop":
 			for {
 			}

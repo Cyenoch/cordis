@@ -67,8 +67,6 @@ func start(_ context.Context,s contract.Scope,_ MainConfig)error{
 	}
 	for _, kind := range []string{"native", "wasm"} {
 		t.Run(kind, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-			defer cancel()
 			artifact := "plugin"
 			goos, goarch := runtime.GOOS, runtime.GOARCH
 			if kind == "wasm" {
@@ -77,12 +75,15 @@ func start(_ context.Context,s contract.Scope,_ MainConfig)error{
 			} else if runtime.GOOS == "windows" {
 				artifact += ".exe"
 			}
-			cmd := exec.CommandContext(ctx, "go", "build", "-mod=mod", "-o", artifact, ".")
+			cmd := exec.CommandContext(t.Context(), "go", "build", "-mod=mod", "-o", artifact, ".")
 			cmd.Dir = source
 			cmd.Env = append(os.Environ(), "GOWORK=off", "GOOS="+goos, "GOARCH="+goarch)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("build author: %v\n%s", err, out)
 			}
+			// The deadline bounds the lifecycle under test, not the toolchain build.
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
 			specs, err := declaration.Specs()
 			if err != nil {
 				t.Fatal(err)
@@ -154,7 +155,9 @@ func start(_ context.Context,s contract.Scope,_ MainConfig)error{
 			}
 			var adapter contract.Runtime = native.New()
 			if kind == "wasm" {
-				adapter = wasm.New(worker)
+				// Hosts that start one module repeatedly use the compile cache; without
+				// it every activation recompiles the guest from scratch.
+				adapter = wasm.New(worker, wasm.Options{CacheDirectory: t.TempDir()})
 			}
 			h, err := Open(Options{Directory: t.TempDir(), Trust: trust, Runtimes: map[string]contract.Runtime{kind: adapter}, FrameBytes: contract.MaxFrameBytes, Sink: sink, DiagnosticStderr: true})
 			if err != nil {

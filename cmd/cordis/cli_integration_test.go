@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -174,10 +175,14 @@ func TestCLIProcesses(t *testing.T) {
 	})
 	t.Run("missing provider has finite startup and cancellation", func(t *testing.T) {
 		archive := missingProviderArchive(t)
+		// The default must cover a cold WASM compile; waiting it out here adds nothing.
+		if code, out, _ := run(t, "", "run", "-h"); code != 0 || !regexp.MustCompile(`-startup-timeout duration\s+.*\(default 30s\)`).MatchString(out) {
+			t.Fatalf("default startup timeout: code=%d out=%q", code, out)
+		}
 		start := time.Now()
-		code, out, stderr := run(t, "", "run", "-dev-unsigned", archive)
-		if code != 1 || out != "" || !strings.Contains(stderr, "deadline exceeded") || !strings.Contains(stderr, "example.missing") || !strings.Contains(stderr, `"minMinor":1`) || !strings.Contains(stderr, `"maxMinor":3`) || time.Since(start) > 10*time.Second {
-			t.Fatalf("default timeout: code=%d out=%q stderr=%q elapsed=%s", code, out, stderr, time.Since(start))
+		code, out, stderr := run(t, "", "run", "-dev-unsigned", "-startup-timeout", "2s", archive)
+		if code != 1 || out != "" || !strings.Contains(stderr, "(timeout 2s)") || !strings.Contains(stderr, "deadline exceeded") || !strings.Contains(stderr, "example.missing") || !strings.Contains(stderr, `"minMinor":1`) || !strings.Contains(stderr, `"maxMinor":3`) || time.Since(start) > 10*time.Second {
+			t.Fatalf("finite startup timeout: code=%d out=%q stderr=%q elapsed=%s", code, out, stderr, time.Since(start))
 		}
 		if len(stderr) > 64<<10 {
 			t.Fatalf("unbounded diagnostics: %d bytes", len(stderr))

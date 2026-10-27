@@ -45,7 +45,7 @@ func main() {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if d.SDK.Module != sdkModule || d.SDK.Version != "v0.0.0" || d.SDK.Replace == nil || d.SDK.Replace.Path != repo || len(d.SDK.Features) == 0 {
+			if d.SDK.Module != sdkModule || d.SDK.Version != "v0.0.0" || d.SDK.Replace == nil || d.SDK.Replace.Path != filepath.ToSlash(repo) || len(d.SDK.Features) == 0 {
 				t.Fatalf("actual SDK dependency not recorded: %+v", d.SDK)
 			}
 			archive := filepath.Join(t.TempDir(), "built.zip")

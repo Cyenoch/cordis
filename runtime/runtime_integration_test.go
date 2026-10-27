@@ -64,17 +64,21 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			start := func(t *testing.T) contract.Session {
+			start := func(t *testing.T, configure ...func(*contract.Launch)) contract.Session {
 				t.Helper()
 				startup, cancel := context.WithCancel(context.Background())
 				identity := contract.Identity{Package: "faultplugin", Entry: "instance", Activation: contract.NewID(), Digest: "fixture"}
-				session, err := test.runtime.Start(startup, contract.Launch{FrameBytes: contract.MaxFrameBytes,
+				launch := contract.Launch{FrameBytes: contract.MaxFrameBytes,
 					Identity:  identity,
 					Directory: root, Artifact: test.artifact,
 					Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 						return nil, contract.Fail(contract.Denied, "fixture has no host grants")
 					},
-				})
+				}
+				for _, apply := range configure {
+					apply(&launch)
+				}
+				session, err := test.runtime.Start(startup, launch)
 				cancel() // Start ctx is NOT the activation's lifetime.
 				if err != nil {
 					t.Fatalf("start: %v", err)
@@ -177,6 +181,43 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 				awaitReaped(t, session)
 				if session.Err() == nil {
 					t.Fatal("unexpected successful process exit lost activation failure")
+				}
+			})
+			t.Run("final-stderr-before-exit", func(t *testing.T) {
+				var chunks []string
+				session := start(t, func(launch *contract.Launch) {
+					launch.Grace = 2 * time.Second
+					launch.Stderr = func(chunk []byte) error {
+						if len(chunks) == 0 {
+							// A slow diagnostic sink leaves the final write unread when the process exits.
+							time.Sleep(200 * time.Millisecond)
+						}
+						chunks = append(chunks, string(chunk))
+						return nil
+					}
+				})
+				if _, err := session.Call(t.Context(), "exit-after-stderr", nil); err == nil {
+					t.Fatal("exit returned a response")
+				}
+				awaitReaped(t, session)
+				if got := strings.Join(chunks, ""); !strings.Contains(got, "final-diagnostic") {
+					t.Fatalf("stderr written before exit was dropped at teardown: %q", got)
+				}
+			})
+			t.Run("stderr-forwarding-bounded", func(t *testing.T) {
+				forwarded := 0
+				session := start(t, func(launch *contract.Launch) {
+					launch.Stderr = func(chunk []byte) error { forwarded += len(chunk); return nil }
+				})
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				_, err := session.Call(ctx, "stderr", nil)
+				cancel()
+				if err == nil {
+					t.Fatal("stderr flood unexpectedly succeeded")
+				}
+				awaitReaped(t, session)
+				if forwarded > 1024 {
+					t.Fatalf("forwarded %d stderr bytes beyond the 1024-byte limit", forwarded)
 				}
 			})
 			if test.name == "native" {

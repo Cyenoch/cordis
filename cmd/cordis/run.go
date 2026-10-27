@@ -79,7 +79,7 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 	major := flags.Uint("major", 0, "service major (default: unique declared major)")
 	minMinor := flags.Uint("min-minor", 0, "minimum compatible minor")
 	maxMinor := flags.Uint("max-minor", uint(^uint32(0)), "maximum compatible minor")
-	startupTimeout := flags.Duration("startup-timeout", 5*time.Second, "maximum startup wait, independent of business calls")
+	startupTimeout := flags.Duration("startup-timeout", 30*time.Second, "maximum startup wait, independent of business calls")
 	var input, configuration dataInput
 	input.register(flags, "input")
 	configuration.register(flags, "config")

@@ -248,8 +248,9 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 		var buffer [4096]byte
 		for {
 			n, readErr := stderrR.Read(buffer[:])
-			if n > 0 && launch.Stderr != nil {
-				if err := launch.Stderr(append([]byte(nil), buffer[:n]...)); err != nil {
+			if n > 0 && launch.Stderr != nil && total < stderrLimit {
+				forward := buffer[:min(int64(n), stderrLimit-total)]
+				if err := launch.Stderr(append([]byte(nil), forward...)); err != nil {
 					readErr = errors.Join(readErr, err)
 				}
 			}
@@ -324,8 +325,19 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 		}
 		treeErr := tree.close()
 		closeErrors := <-closed
+		// The leader is reaped and the tree killed, so its stderr writers are
+		// closing: drain to EOF so output written before exit is delivered. A
+		// writer that escaped the tree must not hold teardown open past grace.
+		var stderrErr error
+		drain := time.NewTimer(grace)
+		select {
+		case stderrErr = <-stderrDone:
+		case <-drain.C:
+			closeErr := stderrR.Close()
+			stderrErr = errors.Join(closeErr, <-stderrDone)
+		}
+		drain.Stop()
 		pipeErr := cleanupPipes()
-		stderrErr := <-stderrDone
 		// Endpoint handlers are host-owned and may be non-cooperative. Done means
 		// process+pipe reaping, not a false promise to join arbitrary host code.
 		if errors.Is(reason, io.EOF) {

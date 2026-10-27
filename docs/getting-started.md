@@ -142,7 +142,7 @@ text = "Cordis"
 {"text":"hello, Cordis"}
 ```
 
-每次 `run` 都新建临时宿主和实例。启动等待默认有期限，等待诊断写入 stderr，调用结果写入 stdout；需要时用 `-startup-timeout 10s` 调整启动期限。
+每次 `run` 都新建临时宿主和实例。启动等待默认有期限，等待诊断写入 stderr，调用结果写入 stdout；需要时用 `-startup-timeout 1m` 调整启动期限。
 
 :::caution[仅限自己的开发产物]
 `-dev-unsigned` 只许可本次归档的精确摘要，不建立全局信任。Native 插件具有当前用户权限，不是沙箱；不要运行不受信任代码。正式交付需要签名和宿主 TrustPolicy。

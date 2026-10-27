@@ -100,7 +100,7 @@ Native 构建同样必须显式指定 `-goos` 和 `-goarch`，值须与作者源
 | `-service NAME` | 启动后调用的服务；省略则打印实例状态 |
 | `-major N` | 服务主版本；省略时必须能唯一匹配，不能猜测 |
 | `-min-minor N` / `-max-minor N` | 兼容 minor 闭区间 |
-| `-startup-timeout DURATION` | 默认 `5s`，必须大于零；只约束启动，不缩短后续业务调用 deadline |
+| `-startup-timeout DURATION` | 默认 `30s`，与 WASM 默认编译期限一致；必须大于零；只约束启动，不缩短后续业务调用 deadline |
 | `-config JSON` / `-input JSON` | 内联 JSON，默认均为 `{}` |
 | `-config-file PATH` / `-input-file PATH` | 从文件加载；`-` 显式选择 stdin |
 | `-config-format FORMAT` / `-input-format FORMAT` | `toml`、`yaml` 或 `json`；省略时只按已知扩展名选择 |

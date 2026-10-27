@@ -73,9 +73,9 @@ Windows worker 修正 wazero v1.12.0 的 pipe EOF poll：仅在原 `poll_oneoff`
 
 ## 日志、故障与验证
 
-默认最多接收每激活 1 MiB stderr；只计数、持续 drain，不保留/回显日志内容。超过限额使对应激活失败并清理。Native panic 的退出原因保留为 OS exit error，但 stderr 中的秘密不会附到错误；WASM trap 仅给出脱敏错误。协议原始坏帧也不应被宿主诊断回显。
+默认最多接收每激活 1 MiB stderr；只计数、持续 drain，不保留/回显日志内容。`Launch.Stderr` 收到的总量不超过该限额，超过限额使对应激活失败并清理。进程退出后在 grace 内继续读到 EOF，退出前写入的最后输出不会因拆除而丢失。Native panic 的退出原因保留为 OS exit error，但 stderr 中的秘密不会附到错误；WASM trap 仅给出脱敏错误。协议原始坏帧也不应被宿主诊断回显。
 
-真实 fault command 位于 `runtime/testdata/faultplugin`，同一源码分别构建 native/WASI；它执行加法及实例内计数，并能真实 panic、CPU 死循环、阻塞读、发送畸形帧和 stderr 洪泛。integration 测试构建真实 worker/插件，检查两个实例状态和故障隔离、取消后 reap、环境不继承、WASI 路径不可读和 native 私有 cwd：
+真实 fault command 位于 `runtime/testdata/faultplugin`，同一源码分别构建 native/WASI；它执行加法及实例内计数，并能真实 panic、CPU 死循环、阻塞读、发送畸形帧、stderr 洪泛及写出 stderr 后立即退出。integration 测试构建真实 worker/插件，检查两个实例状态和故障隔离、取消后 reap、环境不继承、WASI 路径不可读和 native 私有 cwd：
 
 ```sh
 go test -tags=integration -race ./runtime/... -timeout 5m
