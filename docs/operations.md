@@ -1,7 +1,7 @@
 ---
 title: 上线与维护
 description: 准备可信产物，轮换签名密钥，升级代码和数据，并在故障后核对真实状态。
-codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codeCommit: e6e5f172b7e6dd1099edf8e5f0016432548383a9
 codePaths:
   - host.go
   - instance.go

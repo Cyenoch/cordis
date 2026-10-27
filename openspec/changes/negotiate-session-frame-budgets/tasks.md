@@ -36,7 +36,7 @@
 - [x] 4.1 SDK 只消费已绑定预算并原值写回 Registration，在作者 Validate/Start 及所有反向请求前完成必要校验；测试 Start 调用数、取消、巨大注册表、本地清理及断链远端 disposer 失败可观察，不把触发清理当作释放成功，失败不会发布受管后台工作。
 - [x] 4.2 同步 measure、lifecycle-smoke、faultplugin、SDK integration、Host fakes、示例及 CLI 的 Initialize/Registration/Launch/SessionFactory 使用；用 `rg` 核对设计列出的调用者关键词，编译所有 module 并执行所改命令，不能留下缺字段 fixture 或旧位置 FrameBytes。
 - [x] 4.3 在真实独立 Native 和 WASI 插件以 4KiB 与一个较大显式预算验证双向超大普通结果、单条超限、转义、健康邻居及后续调用；检查 activation/进程未变与副作用只执行一次，运行相关 integration/race 测试。
-- [ ] 4.4 更新作者及排障说明：预算来源、完整帧而非payload、分页局限、初始化失败/普通调用失败、签名与资源清理边界；按命令复现并以最终代码基线维护 docs 元数据，运行 `bun run docs:test`、`bun run docs:sync` 和受影响文档示例检查。
+- [x] 4.4 更新作者及排障说明：预算来源、完整帧而非payload、分页局限、初始化失败/普通调用失败、签名与资源清理边界；按命令复现并以最终代码基线维护 docs 元数据，运行 `bun run docs:test`、`bun run docs:sync` 和受影响文档示例检查。
 
 ## 5. 独立审查与整体集成
 
@@ -71,3 +71,15 @@
 - 后续全量重跑按用户通知主动中断，退出 130，日志 `/tmp/cordis-budget-conformance-interrupted.log`。该轮已输出的包测试及 basic-host 成功不等于完整 conformance 成功；最新单源示例及其他修复后的最终门禁由并行 Integrator 负责，本方 wire/预算写集冻结交接，不再重复启动全量。
 - 交接后再次核对当前状态：`git show HEAD:contract/types.go` 尚不含 FrameBytes，六份预算相关文档仍引用原 0fa22bc 基线，不能将该 SHA 刷成不含实现的 HEAD。冻结 wire 的 `go test -race ./wire -count=1 -timeout=45s`、docs:test（6/6）与 docs:sync 再次通过；sync 的基线差异告警保留。4.4 仍只待实际源码提交后的元数据刷新，不擅自提交或启动重复全量。
 - 整合方于 2026-10-27T11:06:51Z 至 11:08:22Z 在 darwin/arm64、Go 1.27.3 执行最新整合树的 `bash conformance/run.sh`，报告退出 0；本方已核读 `/tmp/cordis-dx-final-conformance.log`，确认全仓 integration/race、basic-host Native/WASI、lifecycle-smoke Native/WASI 及终态成功输出。该轮覆盖单源示例、cleanup 字段、配置链路和 Host 审查修复及真实 Native/WASI preflight/managed/stderr 测试，本方未重复执行。整合方另报告标准 export 的 5 schema/25 向量与结构校验的 4 metaschema/70 向量/1 签名字节哈希通过；本方未重新运行这些 schema 命令，不将结构检查替代实际执行证据。最后非作者复核尚未结束、源码尚未提交，4.4 保持未完成；实际 API 提交 SHA、文档基线刷新及复核由整合方后续补齐，若再有代码修复须重新验收。
+
+
+### Integrator 最终代码基线与文档验收
+
+用户明确授权完成后整合、提交推送。2026-10-27，真实源码提交 `e6e5f172b7e6dd1099edf8e5f0016432548383a9` 已包含 FrameBytes、工厂描述符、严格握手和本 change 的全部调用方及测试。Integrator 已逐页核对并将 23 篇 docs 的 codeCommit 绑定此实际提交；该 SHA 不是旧 HEAD、worker overlay 或未提交源码的替代。4.4 的最后条件据此完成。
+
+最新整合源码在 darwin/arm64、Go 1.27.3 执行 `bash conformance/run.sh` 于 2026-10-27T11:18:22Z–11:19:48Z 完整 exit0，日志 `/tmp/cordis-dx-final-conformance-r2.log`；包含单源 execute 示例协议、真实双向预算、Native/WASI 两条完整生命周期链。独立 measure smoke 六样本通过。结构验证 4 meta/70 vectors/1 SHA、标准导出 5 schema/25 data vectors、vet integration/mod 验证均通过。metadata 刷新后的 docs:test/sync/build 及 strict 结果由同次文档提交记录；无新增兼容 major/fallback，未自动归档。Windows/Linux 的本组完整树仅交叉编译，不能借另一 Windows worker change 的消费者实跑替代。
+
+
+文档 metadata 最终验证：`bun run docs:test` 6/6，`bun run docs:sync` 检查 23 页且 0 need review，`bun run docs:build` 24 页/89 文件通过，`bun run spec:validate` 4 passed/0 failed，diff 检查通过。源码先提交并推送，Go module 服务实际解析为 `v0.0.0-20261027112124-e6e5f172b7e6` 后才运行绑定新基线的生产文档构建；未把尚未推送的 SHA 伪装为可下载版本。
+
+另从全新临时 module、无本地 replace，下载此公开版本并实际编译/运行 config→schema 生成及 Host/SDK/Build/harness 新 API 消费。使用命令级 `GOPROXY=https://proxy.golang.org,direct`、`GOSUMDB=sum.golang.org` 保持校验，输出 `Published module consumer passed without replace`；用户默认 goproxy.cn 的新版本 sumdb 镜像曾暂时 404，未据此关闭校验或修改全局 Go 配置。日志 `/tmp/cordis-dx-public-consumer.log`。

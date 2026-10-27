@@ -1,7 +1,7 @@
 ---
 title: 接入宿主
 description: 在 Go 应用中配置运行时与信任策略，安装、启用、调用插件并可靠关闭宿主。
-codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codeCommit: e6e5f172b7e6dd1099edf8e5f0016432548383a9
 codePaths:
   - go.mod
   - host.go

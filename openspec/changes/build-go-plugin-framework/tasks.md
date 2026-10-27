@@ -444,3 +444,13 @@ namespace 回放另发现每次 write/delete 扫描全部 key 的平方级成本
 最新冻结实现于 2026-10-27T11:18:22Z–11:19:48Z 再次执行 `bash conformance/run.sh`，完整 exit 0；日志 `/tmp/cordis-dx-final-conformance-r2.log`。这次包含真正单源服务协议、Restore 预留回归、全部 integration/race、basic-host Native/WASI 和各 19 项的两条外部生命周期链，取代上一轮作为最终源码门禁。独立测量 smoke `iterations=1,calls=2` 的 Native/WASM 共 6 个样本通过，日志 `/tmp/cordis-dx-final-measure.log`；不以其数值设性能承诺。
 
 最新 `go vet -tags=integration ./...`、`go mod tidy -diff`（无变化）、`go mod verify`、diff 检查及 docs:test 6/6、docs:build 24 页/89 文件通过。Windows/amd64、Linux/amd64 的 root integration/SDK/CLI 测试二进制仅交叉编译通过，产物在临时目录，不代表本组完整 Windows/Linux 执行。Windows worker 的另一非作者只读复核未发现阻塞发布的生产 bug，已提交的独立修复继续由其 change 保存实际平台和消费者证据。
+
+
+### 真实源码与文档基线
+
+用户授权后的整合源码提交为 `e6e5f172b7e6dd1099edf8e5f0016432548383a9`；最后非作者审查发现与 Integrator 的修复/再次验收已在前节区分记录。23 篇参考文档统一核对并绑定此实际含新 API 的提交，随后仅提交 metadata 与验收记录，不把文档提交本身假设成新的源码修订。消息预算 change 的 4.4 可据此真实完成；三个关联 change 分别保留各自任务，未执行 archive 或主 spec 同步。
+
+
+文档 metadata 最终验证：`bun run docs:test` 6/6，`bun run docs:sync` 检查 23 页且 0 need review，`bun run docs:build` 24 页/89 文件通过，`bun run spec:validate` 4 passed/0 failed，diff 检查通过。源码先提交并推送，Go module 服务实际解析为 `v0.0.0-20261027112124-e6e5f172b7e6` 后才运行绑定新基线的生产文档构建；未把尚未推送的 SHA 伪装为可下载版本。
+
+另从全新临时 module、无本地 replace，下载此公开版本并实际编译/运行 config→schema 生成及 Host/SDK/Build/harness 新 API 消费。使用命令级 `GOPROXY=https://proxy.golang.org,direct`、`GOSUMDB=sum.golang.org` 保持校验，输出 `Published module consumer passed without replace`；用户默认 goproxy.cn 的新版本 sumdb 镜像曾暂时 404，未据此关闭校验或修改全局 Go 配置。日志 `/tmp/cordis-dx-public-consumer.log`。

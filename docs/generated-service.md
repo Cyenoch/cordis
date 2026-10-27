@@ -1,7 +1,7 @@
 ---
 title: 生成服务实操
 description: 从一份受限 JSON 契约生成 Go client/server，在真实 Host Scope 上注册和调用。
-codeCommit: 0fa22bc6ba8210c8c9ae24d15be5a3855686041a
+codeCommit: e6e5f172b7e6dd1099edf8e5f0016432548383a9
 codePaths:
   - go.mod
   - host.go
