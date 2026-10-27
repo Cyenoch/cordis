@@ -220,6 +220,39 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 					t.Fatalf("forwarded %d stderr bytes beyond the 1024-byte limit", forwarded)
 				}
 			})
+			t.Run("stderr-sink-failure-keeps-draining", func(t *testing.T) {
+				broken := errors.New("diagnostic sink failure")
+				calls := 0
+				session := start(t, func(launch *contract.Launch) {
+					launch.Stderr = func([]byte) error { calls++; return broken }
+				})
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				_, err := session.Call(ctx, "stderr", nil)
+				cancel()
+				if err == nil {
+					t.Fatal("stderr flood unexpectedly succeeded")
+				}
+				// A stalled reader would leave the guest blocked on a full pipe below the limit.
+				awaitReaped(t, session)
+				if calls != 1 || !errors.Is(session.Err(), broken) || !strings.Contains(session.Err().Error(), "stderr byte limit exceeded") {
+					t.Fatalf("sink failure must stop forwarding but keep draining: calls=%d err=%v", calls, session.Err())
+				}
+			})
+			t.Run("stuck-stderr-callback-bounded", func(t *testing.T) {
+				release := make(chan struct{})
+				session := start(t, func(launch *contract.Launch) {
+					launch.Grace = 200 * time.Millisecond
+					launch.Stderr = func([]byte) error { <-release; return nil }
+				})
+				t.Cleanup(func() { close(release) })
+				if _, err := session.Call(t.Context(), "exit-after-stderr", nil); err == nil {
+					t.Fatal("exit returned a response")
+				}
+				awaitReaped(t, session)
+				if session.Err() == nil || !strings.Contains(session.Err().Error(), "stderr reader did not finish within grace") {
+					t.Fatalf("abandoned stderr callback is not observable: %v", session.Err())
+				}
+			})
 			if test.name == "native" {
 				t.Run("managed-descendant", func(t *testing.T) {
 					session := start(t)

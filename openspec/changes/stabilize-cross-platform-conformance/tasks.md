@@ -6,7 +6,13 @@
 - [x] 1.2 以真实 native/WASM fault fixture 建立 stderr 末尾丢失与转发超限回归，确认旧实现失败后修复拆除顺序与转发限额。
 - [x] 1.3 对齐 `cordis run` 默认启动期限与文档，修正 Windows replace 路径比较、host DX 生命周期期限与 CLI 默认值测试。
 - [x] 1.4 执行本机 integration/race、conformance、vet、规格与文档门禁，由非作者 Review 拆除顺序。
-- [ ] 1.5 推送后核对五个远程平台的 Conformance 结果。
+- [x] 1.5 推送后核对五个远程平台的 Conformance 结果。
+
+## 2. stderr 回调失败与卡住
+
+- [x] 2.1 以回调首次失败与回调永不返回两项真实 native/WASM 回归确认旧实现挂起，修复为失败后停止转发但持续 drain、拆除对未返回回调有界放弃并记录。
+- [x] 2.2 同步规格、设计与运行时文档，重跑本机全量门禁并由非作者 Review 增量。
+- [ ] 2.3 推送后核对五个远程平台的 Conformance 结果。
 
 ## 实际验证记录
 
@@ -33,4 +39,14 @@ Windows、Intel macOS 与 Linux 的结果以推送后的远程 CI 为准，本�
 
 非作者只读审查未发现拆除顺序的新死锁：所有路径在回收进程后才进入排空；Windows `tree.close()` 先等待 job 排空。临时副本中以 setsid 后代保持 stderr 写端，Done 在 grace 300ms 后约 331ms 到达且两行均交付；两项新回归在旧实现上各 6/6 失败。审查确认的阻塞项（CLI 测试仍假定 5s 默认）及规格须写明 grace 上界、注释措辞两项已修正后重新验证。
 
-遗留且非本 change 引入：诊断 sink 永不返回时 `Close` 仍等待读取 goroutine；sink 返回错误后读取停止，持续写 stderr 的插件可能阻塞在满管道上而不触发超限。另行处理。
+该审查指出的两项既有问题——sink 返回错误后读取停止使持续写 stderr 的插件阻塞在满管道上且不触发超限、sink 永不返回时 `Close` 无限等待——在第 2 组任务中修复。
+
+### 远程 CI（第 1 组，提交 ac6fdcc）
+
+Conformance run 40518161692：ubuntu-24.04、ubuntu-24.04-arm、macos-15、macos-15-intel、windows-2025 runtime job 与 contracts 全部成功。
+
+### 第 2 组：stderr 回调失败与卡住（darwin/arm64，Go 1.27.3）
+
+- 新回归 `stderr-sink-failure-keeps-draining` 在旧实现上 native/WASM 均以 `calls=1 err=timeout: peer ignored cancellation` 失败（guest 阻塞在满管道，只因取消超时结束，回调错误丢失）；`stuck-stderr-callback-bounded` 以 `process did not terminate and reap within bound` 失败。修复后 `TestExternalRuntimeIsolation` 连续 5 次、host DX failing-sink 契约 3 次通过。
+- `go vet -tags=integration ./...`、`go mod verify`、`go mod tidy -diff` 通过；`go test -tags=integration -race -count=1 ./... -timeout 10m` 全部通过；`bash conformance/run.sh` 输出 `Full platform acceptance passed.`；`openspec validate --all --strict` 通过。
+- 非作者只读审查未发现阻塞项：确认计时器重置、`stderrDone` 单次发送不泄漏、放弃后仅剩那一次在途回调且读端已关闭不再回调、`calls` 读取经 Done 建立先后关系；在临时副本恢复旧 `process.go` 后两项新回归 4/4 失败；Host 仍经 `keepDiagnosticError` 记录 sink 错误一次。其文档措辞（放弃前先关闭读端再等一个 grace）与错误文本中性化建议已采纳。

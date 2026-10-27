@@ -12,6 +12,8 @@ CI 失败日志中 WASM 路径的 `wait for instance: context deadline exceeded`
 
 拆除顺序改为：进程树回收并 kill 后，用 grace 计时等待 `stderrDone`；到期才关闭 stderr 读端并等待读取 goroutine 返回，然后再执行原 `cleanupPipes()`。被管理的进程树已全部退出，写端随之关闭，正常路径读到 EOF 即结束；只有逃逸出 process group/job 的后代仍持写端时才走强制关闭，最长多等一个 grace。grace 已是宿主为 activation 退出给出的上限，不引入新配置。
 
+回调错误不再中止读取：首个错误后停止转发并保留到读取结束时返回，读取继续计数与 drain，使超限终止及 EOF 仍然生效；宿主 Host 已把该错误记入 `DiagnosticErrors`，诊断不改变会话失败策略。拆除到第一个 grace 仍未读完时关闭读端，再等待一个 grace；读取 goroutine 仍卡在宿主回调内时放弃等待并在 `Err` 记录 `stderr reader did not finish within grace`。被放弃的回调只是那一次在途调用，读端已关闭，之后不会再有新的回调，这与“Done 不承诺 join 任意宿主代码”的既有约束一致。
+
 读取端只把 `min(n, StderrBytes-total)` 字节转发给 `Launch.Stderr`，之后继续读取以保持排空和超限终止，但不再转发。这样排空到 EOF 不会扩大宿主诊断量，同时使“限额采集”成为实际边界。
 
 CLI 默认启动期限取 30s，与 `wasm.Options.CompileTimeout` 默认值相同：本地 run 不应比 runtime 自身更早放弃一个默认配置下合法的冷编译。不在 CLI 增加持久编译缓存，因为那会引入新的用户级可写状态与信任边界；宿主需要更快的重复启动时使用已有 `CacheDirectory`。
@@ -27,4 +29,4 @@ CLI 默认启动期限取 30s，与 `wasm.Options.CompileTimeout` 默认值相�
 
 ## Validation
 
-先以真实 native 与 WASM fault fixture 建立回归：慢 stderr 回调下进程在两次写入后退出，断言最后一行被交付；以 1024 字节限额灌入 stderr，断言转发不超过限额。两项在旧实现上实际失败，修复后通过。随后运行受影响包的 integration/race、全仓 conformance、vet、规格严格验证和文档检查，由非作者 Review 拆除顺序。Windows 与 Intel macOS 结果以推送后的远程 CI 为准，本机不声称覆盖。
+先以真实 native 与 WASM fault fixture 建立回归：慢 stderr 回调下进程在两次写入后退出，断言最后一行被交付；以 1024 字节限额灌入 stderr，断言转发不超过限额；回调首次即失败时仍因超限终止并保留回调错误；回调永不返回时会话在有界时间内结束并报告。四项在旧实现上实际失败，修复后通过。随后运行受影响包的 integration/race、全仓 conformance、vet、规格严格验证和文档检查，由非作者 Review 拆除顺序。Windows 与 Intel macOS 结果以推送后的远程 CI 为准，本机不声称覆盖。

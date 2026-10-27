@@ -6,6 +6,7 @@ Conformance 自首个提交起在 ubuntu-24.04、macos-15、macos-15-intel 与 w
 
 - activation 拆除时先关闭 stderr 读端，再等待读取结束；进程退出前写入、尚未被读取的最后一段 stderr 被丢弃。慢机器上 `cleaned` 诊断因此缺失，本机以慢诊断 sink 可确定复现。
 - `StderrBytes` 只触发终止，读取端在拆除期间继续把超限输出转发给宿主诊断出口，违背“限额采集”。
+- stderr 回调返回错误后读取端停止 drain，持续写 stderr 的插件阻塞在满管道上，超限终止永远不会触发；回调永不返回时 `Close` 无限等待。
 - `cordis run` 默认启动期限 5s，短于 WASM runtime 自身 30s 的默认编译期限；每次 run 都冷编译 guest，CI 与普通机器上 WASM 插件因此无法启动。
 - Windows 构建测试把 go.mod 中写入的 `D:/...` 与 `D:\...` 比较；host DX 测试把工具链构建计入 30s 生命周期期限，且每次 WASM 激活都重新编译。
 
@@ -13,6 +14,7 @@ Conformance 自首个提交起在 ubuntu-24.04、macos-15、macos-15-intel 与 w
 
 - 进程拆除在进程树回收后于 grace 内把 stderr 读到 EOF 再关闭管道；逃逸出进程树的写端最多拖延 grace，随后关闭读端。
 - 转发给 `Launch.Stderr` 的字节数不超过 `StderrBytes`，超限部分继续读取但丢弃，终止语义不变。
+- 回调失败后停止转发但继续 drain 并保留错误；回调在强制关闭读端后再超过 grace 仍未返回时，拆除不再等待并记录明确错误。
 - `cordis run -startup-timeout` 默认值改为 30s，与 WASM 默认编译期限一致；仍有限、可配置且必须为正。
 - 修正两个测试：按 go.mod 原文比较 replace 路径；host DX 测试的期限只覆盖生命周期，WASM 使用公开的 `CacheDirectory`。
 

@@ -246,13 +246,14 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	go func() {
 		var total int64
 		var buffer [4096]byte
+		// A failed callback stops forwarding, never draining: a stalled reader
+		// would block the guest on a full pipe before the limit could trip.
+		var forwardErr error
 		for {
 			n, readErr := stderrR.Read(buffer[:])
-			if n > 0 && launch.Stderr != nil && total < stderrLimit {
+			if n > 0 && launch.Stderr != nil && forwardErr == nil && total < stderrLimit {
 				forward := buffer[:min(int64(n), stderrLimit-total)]
-				if err := launch.Stderr(append([]byte(nil), forward...)); err != nil {
-					readErr = errors.Join(readErr, err)
-				}
+				forwardErr = launch.Stderr(append([]byte(nil), forward...))
 			}
 			total += int64(n)
 			if total > stderrLimit && exceeded.CompareAndSwap(false, true) {
@@ -262,7 +263,7 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 				if errors.Is(readErr, io.EOF) || errors.Is(readErr, os.ErrClosed) {
 					readErr = nil
 				}
-				stderrDone <- readErr
+				stderrDone <- errors.Join(readErr, forwardErr)
 				return
 			}
 		}
@@ -327,14 +328,21 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 		closeErrors := <-closed
 		// The leader is reaped and the tree killed, so its stderr writers are
 		// closing: drain to EOF so output written before exit is delivered. A
-		// writer that escaped the tree must not hold teardown open past grace.
+		// writer that escaped the tree must not hold teardown open past grace,
+		// and neither may a host stderr callback that never returns.
 		var stderrErr error
 		drain := time.NewTimer(grace)
 		select {
 		case stderrErr = <-stderrDone:
 		case <-drain.C:
 			closeErr := stderrR.Close()
-			stderrErr = errors.Join(closeErr, <-stderrDone)
+			drain.Reset(grace)
+			select {
+			case err := <-stderrDone:
+				stderrErr = errors.Join(closeErr, err)
+			case <-drain.C:
+				stderrErr = errors.Join(closeErr, errors.New("stderr reader did not finish within grace"))
+			}
 		}
 		drain.Stop()
 		pipeErr := cleanupPipes()
