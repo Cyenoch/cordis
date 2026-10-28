@@ -1,5 +1,5 @@
 ---
-codeCommit: e6e5f172b7e6dd1099edf8e5f0016432548383a9
+codeCommit: b14906720f6c0d804483253039e09a8b343be9c4
 codePaths:
   - wire
   - sdk
@@ -15,10 +15,10 @@ codePaths:
 
 `wire/lifecycle_test.go` 使用 `testing/synctest` 覆盖两个时序：
 
-- 调用者观察到取消时，响应已经匹配。该调用返回取消，但不能给已响应请求新增取消 tombstone；取消宽限期后，同会话后续 health 请求仍成功。
-- initialize 响应后立即到达 guest 请求，而初始化调用者 goroutine 尚未恢复。宿主必须接收并响应 guest 请求，不能等待初始化调用者恢复才推进。
+- peer 写入响应后立即取消调用。调用可能返回成功或取消，但已确认的取消不能在宽限期后关闭会话，后续 health 请求仍成功。
+- initialize 响应与下一条 guest 请求在同一次写入中到达。宿主必须接收并响应该请求，不能依赖初始化调用者先恢复调度。
 
-第一个场景只用包私有响应 channel 的调度强制原本不确定的 select 时序。两者都通过 `net.Pipe` 发送真实协议帧并断言可观察响应，不使用生产测试 hook 或源码文本断言。
+两者都通过 `net.Pipe` 发送真实协议帧并断言可观察响应，不依赖私有 channel 篡改、context 方法调用次数、生产测试 hook 或源码文本断言。`wire/inflight_test.go` 另外保护取消后的准入与资源上限：退出中的 handler 不阻塞健康调用，原始 peer 反复 request/cancel 也不能无限堆积 handler。
 
 VortexGo 专有会话还区分退役与清理确认：只有 pending ID、方法及 ABI 已匹配的 `plugin.shutdown` 响应可在退役后完成；未知、重复、错配响应及其他旧激活消息仍拒绝。这部分由宿主仓库维护，不是通用 SDK 的方法名，也不扩大普通请求的授权。
 

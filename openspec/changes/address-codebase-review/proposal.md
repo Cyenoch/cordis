@@ -38,6 +38,6 @@
 
 ## Impact
 
-写集按 tasks 分组：`wire`；根包与 `internal/core`；`packagehost`；`access`；`config`、`schema` 与 `cmd/cordis`；`runtime`、`cmd/cordis-worker` 与 `sdk`；以及各组对应的 docs 与测试。缺陷修复不改变公开 Go 签名。
+写集按 tasks 分组：`wire`；根包与 `internal/core`；`packagehost`；`access`；`config`、`schema` 与 `cmd/cordis`；`runtime`、`cmd/cordis-worker` 与 `sdk`；以及各组对应的 docs 与测试。公开 Go 签名的精简按下述未发布前提直接调整。
 
 公开契约变化经独立审查：使用包级 `access.PublicError`，`Store.CheckSelect` 直接增加 ctx，删除无用途 API 和不可能的 error 返回，不留转调包装。用户明确项目尚未正式使用，不保留旧 catalog transaction 字段或升级胶水。`contract.Error` 支持按 Code 匹配，未知字段错误提供类型信息。通用 Runtime 启动前拒绝与 SDK 不一致的在途预算，不新增协议字段。

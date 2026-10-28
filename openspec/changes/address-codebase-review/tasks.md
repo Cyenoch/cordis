@@ -61,4 +61,4 @@
 ## 9. 收尾验证
 
 - [x] 9.1 运行 `go vet -tags=integration ./...`、`go mod tidy -diff`、`go test -tags=integration -race -count=1 ./...`、`bash conformance/run.sh`、`openspec validate --all --strict` 与文档检查，由非作者 Review 各组增量；平台、测试替换映射及未验证边界见 design.md。
-- [ ] 9.2 推送后核对五个远程平台的 Conformance 结果。
+- [x] 9.2 推送后核对五个远程平台的 Conformance 结果：实现提交 b14906720f6c0d804483253039e09a8b343be9c4 的 run 40646182374，Linux amd64/arm64、macOS amd64/arm64、Windows amd64 全部成功，contracts job 同样成功。后续文档提交不改变已验收 Go 源码。

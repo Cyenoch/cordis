@@ -71,6 +71,7 @@
 - **Windows 11 arm64 / Go 1.27.3**：最终隔离源码副本执行 `go test -tags=integration ./... -skip '^TestDocumentationTutorials$' -count=1 -timeout=5m` 和全仓 vet 均通过。此架构不支持 Go race；文档教程内部要求 race，故明确未运行该项，不将它记为完整 Windows Conformance。stdin 优先关闭、存储同步、worker 与真实 native/WASM 相关集成测试均包含在已运行测试中。
 - **规格与文档**：`openspec validate --all --strict` 7 项通过；另两个既有 change 的归档 INFO 提示不属于本次新增失败。站点 24 页构建、89 文件链接/锚点检查、6 项 JS 测试通过。Python 验证 4 个 metaschema、70 个结构向量、1 个签名字节/hash 向量；代码级与验签行为由 Go conformance 运行。
 - **未改动**：go.mod/go.sum、v1 JSON schema、签名字节和只读 third_party/cordis；未创建分支。未验证真实断电、全磁盘故障组合或不合作 builtin 的强制终止；框架不提供后者保证。
+- **远程五平台**：实现提交 `b14906720f6c0d804483253039e09a8b343be9c4` 的 [Conformance run 40646182374](https://github.com/Cyenoch/cordis/actions/runs/40646182374) 全部成功：ubuntu-24.04、ubuntu-24.04-arm、macos-15-intel、macos-15、windows-2025，另 contracts job 成功。Windows amd64 实际运行了含 race 的完整 PowerShell 验收，不再仅依靠 arm64 本地非 race 结果。相同提交及文档基线更新提交 `f9089ea` 的 Documentation build/deploy 也成功。
 
 ### 测试删改对应关系
 
