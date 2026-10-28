@@ -1,7 +1,7 @@
 ---
 title: 授权、任务与存储实操
 description: 配置受限宿主能力，发布贡献，持久化命名空间，并把任务从插件移交给宿主。
-codeCommit: e6e5f172b7e6dd1099edf8e5f0016432548383a9
+codeCommit: b14906720f6c0d804483253039e09a8b343be9c4
 codePaths:
   - go.mod
   - host.go

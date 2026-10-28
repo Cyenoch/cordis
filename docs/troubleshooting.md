@@ -1,7 +1,7 @@
 ---
 title: 故障排查
 description: 从等待依赖、启动失败、权限拒绝、取消与存储错误定位问题，避免重复提交和错误恢复。
-codeCommit: e6e5f172b7e6dd1099edf8e5f0016432548383a9
+codeCommit: b14906720f6c0d804483253039e09a8b343be9c4
 codePaths:
   - host.go
   - instance.go
