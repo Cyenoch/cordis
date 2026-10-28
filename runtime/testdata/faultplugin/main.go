@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -133,10 +134,13 @@ func main() {
 			fmt.Fprintln(os.Stdout, "not-json-runtime-test-secret")
 			continue
 		case "stderr":
-			for range 100000 {
-				fmt.Fprintln(os.Stderr, "runtime-test-secret")
+			message := strings.Repeat("runtime-test-secret\n", 256)
+			for range 256 {
+				if _, err := fmt.Fprint(os.Stderr, message); err != nil {
+					panic(err)
+				}
 			}
-			continue
+			value = true
 		case "shutdown":
 			return
 		default:

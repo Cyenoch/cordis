@@ -3,6 +3,7 @@ package sdk
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sync"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -41,15 +42,15 @@ func (i *childInstance) Status() contract.Status {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	status := i.status
-	status.Waiting = append([]contract.WaitReason(nil), status.Waiting...)
+	status.Waiting = slices.Clone(status.Waiting)
 	for n := range status.Waiting {
-		status.Waiting[n].Visible = append([]contract.Service(nil), status.Waiting[n].Visible...)
+		status.Waiting[n].Visible = slices.Clone(status.Waiting[n].Visible)
 		if requirement := status.Waiting[n].Requirement; requirement != nil {
 			copy := *requirement
 			status.Waiting[n].Requirement = &copy
 		}
 	}
-	status.Diagnostics = append([]string(nil), status.Diagnostics...)
+	status.Diagnostics = slices.Clone(status.Diagnostics)
 	return status
 }
 

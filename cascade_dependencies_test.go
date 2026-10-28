@@ -16,6 +16,48 @@ func dependencyHost(t *testing.T) (*Host, contract.PackageRef, contract.PackageR
 	return dependencyHostRuntime(t, false)
 }
 
+func TestUninstallCascadeRetiresActiveReverseDependencies(t *testing.T) {
+	h, target, _, dependent := dependencyHost(t)
+	for _, entry := range []contract.Entry{{ID: "target", Package: target.ID}, {ID: "dependent", Package: dependent.ID}} {
+		i, err := h.Enable(t.Context(), entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := i.Wait(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.Uninstall(t.Context(), target, false); err == nil {
+		t.Fatal("uninstall ignored active reverse dependency")
+	}
+	if _, err := h.UninstallCascade(t.Context(), target, false, func(_ context.Context, plan CascadePlan) error {
+		if len(plan.Entries) != 2 {
+			t.Fatalf("cascade omitted active reverse dependency: %+v", plan)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Instances()) != 0 {
+		t.Fatal("cascade retained active registrations", h.Instances())
+	}
+	entries, err := h.Store().Entries()
+	if err != nil || len(entries) != 2 {
+		t.Fatal(entries, err)
+	}
+	for _, entry := range entries {
+		if entry.Enabled {
+			t.Fatal("cascade did not persist disable intent", entry)
+		}
+	}
+	if _, err := h.Store().Selected(target.ID); err == nil {
+		t.Fatal("uninstalled target remained selected")
+	}
+	if _, err := h.Store().Get(dependent); err != nil {
+		t.Fatal("cascade uninstalled dependent code", err)
+	}
+}
+
 func TestCascadeParentSkipsDisabledUninstalledChild(t *testing.T) {
 	h, parentPackage, _, childPackage := dependencyHost(t)
 	parent, err := h.Enable(t.Context(), contract.Entry{ID: "target", Package: parentPackage.ID, Config: json.RawMessage(`{}`)})

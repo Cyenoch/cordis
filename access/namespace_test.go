@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Cyenoch/cordis/access"
+	"github.com/Cyenoch/cordis/contract"
 )
 
 func TestNamespaceRejectsCrossPluginAndQuotaWithoutMutation(t *testing.T) {
@@ -120,6 +121,121 @@ func TestNamespaceDurabilityAndHostConfirmedMigration(t *testing.T) {
 	}
 	if err := afterNamespaceDelete.Configure(owner.Package, access.NamespaceConfig{Name: "state", QuotaBytes: 100}); err != nil {
 		t.Fatalf("namespace deletion did not persist: %v", err)
+	}
+}
+
+func TestNamespaceConfigurePreservesMigratedVersionAfterReopen(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"log", "compact"} {
+		t.Run(mode, func(t *testing.T) {
+			policy := access.NewPolicy()
+			owner := identity("migrated")
+			activate(t, policy, owner)
+			directory := t.TempDir()
+			store, err := access.OpenNamespaceStore(policy, directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := access.NamespaceConfig{Name: "state", QuotaBytes: 100, DataVersion: 1}
+			if err := store.Configure(owner.Package, config); err != nil {
+				t.Fatal(err)
+			}
+			approve := func(context.Context, string, string) error { return nil }
+			if err := store.Migrate(t.Context(), "state", 2, approve,
+				func(_ context.Context, version uint32, values map[string][]byte) (map[string][]byte, error) {
+					if version != 1 {
+						t.Fatalf("initial data version = %d, want 1", version)
+					}
+					values["key"] = []byte("migrated")
+					return values, nil
+				}); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "compact" {
+				if err := store.Compact(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			store, err = access.OpenNamespaceStore(policy, directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, version := range []uint32{1, 99} {
+				config.DataVersion = version
+				if err := store.Configure(owner.Package, config); err != nil {
+					t.Fatalf("reconfigure migrated namespace: %v", err)
+				}
+			}
+			config.QuotaBytes = 200
+			if err := store.Configure(owner.Package, config); err != nil {
+				t.Fatal(err)
+			}
+			store, err = access.OpenNamespaceStore(policy, directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Migrate(t.Context(), "state", 3, approve,
+				func(_ context.Context, version uint32, values map[string][]byte) (map[string][]byte, error) {
+					if version != 2 || string(values["key"]) != "migrated" {
+						t.Fatalf("reopened migration source = %d, %q; want 2, migrated", version, values["key"])
+					}
+					return values, nil
+				}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestNamespaceConfigureQuotaPersistsWithoutChangingBinding(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		quota int64
+	}{{name: "increase", quota: 12}, {name: "decrease-to-usage", quota: 5}} {
+		t.Run(test.name, func(t *testing.T) {
+			policy := access.NewPolicy()
+			owner := identity("quota")
+			activate(t, policy, owner)
+			directory := t.TempDir()
+			store, err := access.OpenNamespaceStore(policy, directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := access.NamespaceConfig{Name: "state", QuotaBytes: 10, DataVersion: 1}
+			if err := store.Configure(owner.Package, config); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Write(t.Context(), owner, "state", "k", []byte("1234")); err != nil {
+				t.Fatal(err)
+			}
+			config.QuotaBytes = test.quota
+			if err := store.Configure(owner.Package, config); err != nil {
+				t.Fatalf("update quota: %v", err)
+			}
+			config.QuotaBytes = 4
+			requireAccessCode(t, store.Configure(owner.Package, config), contract.Conflict)
+			requireAccessCode(t, store.Configure("other.package", config), contract.Conflict)
+			config.Name = "other"
+			requireAccessCode(t, store.Configure(owner.Package, config), contract.Conflict)
+			if err := store.Write(t.Context(), owner, "state", "k", []byte("1234")); err != nil {
+				t.Fatalf("rejected configuration changed live quota: %v", err)
+			}
+			store, err = access.OpenNamespaceStore(policy, directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := store.Read(t.Context(), owner, "state", "k")
+			if err != nil || string(got) != "1234" {
+				t.Fatalf("reconfiguration changed data: %q, %v", got, err)
+			}
+			if err := store.Write(t.Context(), owner, "state", "k", make([]byte, int(test.quota)-1)); err != nil {
+				t.Fatalf("write up to updated quota: %v", err)
+			}
+			if err := store.Write(t.Context(), owner, "state", "k", make([]byte, int(test.quota))); !errors.Is(err, access.ErrQuota) {
+				t.Fatalf("write exceeding updated quota = %v", err)
+			}
+		})
 	}
 }
 

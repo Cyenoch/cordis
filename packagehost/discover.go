@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 )
 
 // Source identifies one archive or one explicit development package directory.
@@ -93,12 +92,7 @@ func inspectSource(ctx context.Context, source Source, limits Limits, decoder Me
 	}
 	defer func() { err = errors.Join(err, os.RemoveAll(dir)) }()
 	if source.Directory {
-		if err = copyDirectory(ctx, source.Path, dir, limits); err != nil {
-			return p, err
-		}
-		if _, err = os.Stat(filepath.Join(dir, IntegrityFile)); errors.Is(err, os.ErrNotExist) {
-			err = generateIntegrity(ctx, dir, limits)
-		}
+		err = stageDirectory(ctx, source.Path, dir, limits)
 	} else {
 		err = extractZIP(ctx, source.Path, dir, limits)
 	}

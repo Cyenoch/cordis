@@ -11,7 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,10 +25,11 @@ import (
 // Options never inherit the parent's environment. Environment contains only
 // values explicitly selected by the host. Lifetime is independent of Start ctx.
 type Options struct {
-	Environment    map[string]string
-	Lifetime       context.Context
-	Limits         wire.Limits
-	Grace          time.Duration
+	Environment map[string]string
+	Lifetime    context.Context
+	Limits      wire.Limits
+	Grace       time.Duration
+	// StderrBytes caps bytes forwarded per activation; excess is drained.
 	StderrBytes    int64
 	CopyExecutable bool
 }
@@ -44,7 +45,7 @@ type Session struct {
 }
 
 func (s *Session) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
-	if method == "shutdown" || method == "plugin.shutdown" {
+	if method == "shutdown" {
 		s.expectedStop.Store(true)
 	}
 	return s.endpoint.Call(ctx, method, input)
@@ -117,6 +118,9 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	if err := launch.SessionFactory.Validate(launch.FrameBytes); err != nil {
 		return nil, err
 	}
+	if !launch.SessionFactory.IsCustom() && options.Limits.Inflight != 0 && options.Limits.Inflight != wire.DefaultLimits().Inflight {
+		return nil, contract.Fail(contract.Invalid, "generic v1 sessions require 64 inflight requests")
+	}
 	path, err := Executable(executable)
 	if err != nil {
 		return nil, err
@@ -145,7 +149,7 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 		}
 		environment = append(environment, key+"="+value)
 	}
-	sort.Strings(environment)
+	slices.Sort(environment)
 	cwd, err := os.MkdirTemp("", "cordis-activation-")
 	if err != nil {
 		return nil, fmt.Errorf("create private working directory: %w", err)
@@ -205,7 +209,7 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	}
 	// The child owns duplicated handles; parent copies must not hold pipes open.
 	parentCloseErr := errors.Join(stdinR.Close(), stdoutW.Close(), stderrW.Close())
-	transport := &wire.Transport{Reader: stdoutR, Writer: stdinW, Closers: []io.Closer{stdoutR, stdinW}}
+	transport := &wire.Transport{Reader: stdoutR, Writer: stdinW, Closers: []io.Closer{stdinW, stdoutR}}
 	var endpoint contract.Session
 	if launch.SessionFactory != nil {
 		endpoint, err = launch.SessionFactory.Open(transport, launch.Identity, launch.Handle, launch.FrameBytes)
@@ -241,23 +245,18 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 	stderrDone := make(chan error, 1)
-	stderrExceeded := make(chan struct{})
-	var exceeded atomic.Bool
 	go func() {
-		var total int64
+		remaining := stderrLimit
 		var buffer [4096]byte
 		// A failed callback stops forwarding, never draining: a stalled reader
-		// would block the guest on a full pipe before the limit could trip.
+		// would block the guest on a full pipe even after the forwarding budget.
 		var forwardErr error
 		for {
 			n, readErr := stderrR.Read(buffer[:])
-			if n > 0 && launch.Stderr != nil && forwardErr == nil && total < stderrLimit {
-				forward := buffer[:min(int64(n), stderrLimit-total)]
-				forwardErr = launch.Stderr(append([]byte(nil), forward...))
-			}
-			total += int64(n)
-			if total > stderrLimit && exceeded.CompareAndSwap(false, true) {
-				close(stderrExceeded)
+			if n > 0 && launch.Stderr != nil && forwardErr == nil && remaining > 0 {
+				forward := buffer[:min(int64(n), remaining)]
+				forwardErr = launch.Stderr(slices.Clone(forward))
+				remaining -= int64(len(forward))
 			}
 			if readErr != nil {
 				if errors.Is(readErr, io.EOF) || errors.Is(readErr, os.ErrClosed) {
@@ -283,8 +282,6 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 			reason = endpoint.Err()
 		case waitErr = <-exited:
 			reaped = true
-		case <-stderrExceeded:
-			reason = errors.New("activation stderr byte limit exceeded")
 		case <-lifetimeDone:
 			reason = options.Lifetime.Err()
 		}

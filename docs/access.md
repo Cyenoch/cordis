@@ -18,6 +18,10 @@ codePaths:
 
 宿主为每次启动生成全新 `contract.Identity`，用经过验证的 manifest 声明调用 `Policy.Activate(identity, manifest.Capabilities)`。同一 `(Package, Entry)` 的新激活原子撤销旧激活；已用过的 activation ID 不能再次使用。guest 请求中的身份不能代替会话绑定身份。
 
+每个 Policy 在整个生命周期保留所有已用 activation ID，内存随该 Policy 使用过的 activation 数量线性增长；撤销不会删除防复用记录，不做静默 LRU 淘汰，也没有记录上限或裁剪开关。历史随 Host/Policy 生命周期结束、相关引用释放后回收；不能靠重建 Policy 在仍有旧会话时绕过身份隔离。
+
+`NewBroker`、`NewContributionStore`、`NewTaskManager` 和 `NewNamespaceStore` 必须传入非 nil Policy，否则 panic；这些组件必须通过构造函数初始化，零值不可用。`OpenNamespaceStore` 遇到 nil Policy 返回 `invalid_message`。所有接受 context 的访问层 API 要求非 nil context，不需要取消时使用 `context.Background()`；已取消 context 的拒绝与提交点检查仍有效。
+
 - `NewPolicy()`：零值也可用，实例不可复制。
 - `Policy.Grant(identity, capability, scope)`：仅能给已声明能力发放宿主 handle；同能力重新授权先撤销旧 grant。
 - `Grant.Revoke()`：关闭该 grant 后续调用，取消已准入调用，不影响其他 grant。
@@ -27,7 +31,7 @@ codePaths:
 
 `Broker.Register(capability, authorize, handler)` 同时要求非 nil 的范围检查和处理器。`authorize(ctx, identity, declaration, grantedScope, input)` 必须检查声明范围与授权范围，不能信任 input 自报权限。处理器只接收数据与取消 context；宿主凭据留在处理器闭包内，不向 guest 复制连接对象、认证头、环境变量或其他插件数据。
 
-`Broker.Call(ctx, identity, capability, input)` 每次检查声明、当前激活、当前 grant 和 scope。范围检查在锁外执行；执行完后再次检查同一个 grant，再在与撤销共用的临界区准入。撤销前已准入的处理器会收到取消；不合作的处理器仍可能产生外部副作用，但迟到结果不被返回为成功。host handler 原始错误保留错误链交给宿主；跨 guest 边界前必须用 `Sink.PublicError(err)` 投影，不能直接发送 `err.Error()`。
+`Broker.Call(ctx, identity, capability, input)` 每次检查声明、当前激活、当前 grant 和 scope。范围检查在锁外执行；执行完后再次检查同一个 grant，再在与撤销共用的临界区准入。撤销前已准入的处理器会收到取消；不合作的处理器仍可能产生外部副作用，但迟到结果不被返回为成功。host handler 原始错误保留错误链交给宿主；跨 guest 边界前必须用 `access.PublicError(err)` 投影，不能直接发送 `err.Error()`。
 
 ## 贡献批次与 core 发布
 
@@ -62,6 +66,8 @@ checkpoint、持久任务 journal、业务恢复和补偿由宿主负责。任�
 
 宿主通过 `Configure(packageID, NamespaceConfig{Name,QuotaBytes,DataVersion})` 建立一对一 package/namespace 绑定。`Read/Write/Delete(ctx, identity, namespace, key, ...)` 只允许当前激活操作其包的 namespace，不接受 guest 任意文件路径。namespace/package/key 必须是合法 UTF-8，不能由 JSON 替换字符造成键合并。配额按所有 key 与 value 的字节数合计；替换扣除旧值、删除释放额度。超额返回 `ErrQuota`，缺 key 返回 `ErrNotFound`，均不转换成默认空数据。停止插件不删除持久数据。
 
+每次重开后可按清单重复 `Configure`：已有绑定按 `(Package, Name)` 匹配，`DataVersion` 只初始化新空间，已有数据版本保持不变，包括迁移、压缩后的版本。配额可提高或降低到不小于当前已用字节数；变化追加 `configure` 记录，重开后仍生效。配额低于已用量返回 `conflict`，不改配额、数据或持久记录；换包占用同名空间、同包换名仍返回 `conflict`。调整配额不是迁移，不会运行迁移 callback。
+
 持久实现追加带序号和 SHA-256 校验的 `namespaces.log`，同步新增记录，不为小写入重写整个 namespace。`Compact(ctx)` 是显式维护：把当前绑定和值写到私有临时文件，同步后原子替换并同步目录；不在普通写路径自动触发全量压缩。配额 int64 在持久配置中使用十进制字符串，完整范围可恢复。单条编码记录上限 64 MiB，超过返回 ErrQuota。打开时验证每条记录的完整性、序号、绑定及配额；损坏或不完整尾部明确报错，不静默丢弃数据。
 
 完整记录同步后失败返回 `*CommittedError`，此时数据已可见，不要当作未提交盲目重试。提交前错误会回滚文件和内存；如果文件回滚也失败，返回 `*RecoveryError`，此 store 拒绝继续操作，必须重开并处理恢复错误。相同 activation 的写入和撤权串行，但慢磁盘不持有全局权限锁，不阻塞无关 owner 的撤权。
@@ -72,11 +78,13 @@ checkpoint、持久任务 journal、业务恢复和补偿由宿主负责。任�
 
 `NewSink(SinkOptions{Write, Redact, MaxBytes})` 要求真实 writer；默认上限 4096 字节，最小 512。`Emit(ctx, DiagnosticInput)` 默认只产生有限身份标签、阶段、调用关联、稳定错误码和固定摘要，不复制原始 `Err`、`Payload` 或 `Summary`；普通插件日志不能作为可信状态。带路径或控制字符的身份标签会变成 `[redacted]`。
 
-宿主可显式提供 `Redact(ctx,input)`，对自己的秘密、路径和业务字段脱敏后返回摘要。输出按 UTF-8 边界和最终 JSON 大小限制；redactor 或 writer 失败会传播，且 redactor 失败不使用原始数据 fallback。`PublicError` 只保留允许的错误 code，并将消息替换为固定安全摘要。
+宿主可显式提供 `Redact(ctx,input)`，对自己的秘密、路径和业务字段脱敏后返回摘要。输出按 UTF-8 边界和最终 JSON 大小限制；最大标签占满预算时去掉 package、entry、digest 和 call，保留 activation 与 stage；redactor 或 writer 失败会传播，且 redactor 失败不使用原始数据 fallback。`access.PublicError(err)` 无需 Sink，只保留允许的错误 code，并将消息替换为固定安全摘要。
 
 ## 行为测试
 
 `access/*_test.go` 覆盖撤销与准入交错、按当前能力撤权及其他 owner/grant 隔离、取消及迟到结果、整批校验失败不可见、core gate 可见性、旧激活拒绝、任务唯一终态与接管存活、取消 callback 延迟时完成/接管拒绝、任务 flood 与结果字节边界、同 activation 长期完成/释放循环、终态计数与结果额度回收、活跃任务不可删、旧 handle/token 不修改新任务、退休 ledger 清理及宿主 handle 保留、跨 namespace/配额拒绝、真实持久化/确认迁移和诊断 secret 不泄露。集成负责人统一记录单测、集成与 race 的实际结果；当前修订和平台范围以 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md) 为准。
+
+`policy_test.go` 集中覆盖 grant/当前能力撤权的在途取消、新调用拒绝、迟到结果拒绝及范围检查期间撤权，替代 `broker_test.go` 的两项重复撤销测试；同文件另覆盖整次 `Revoke` 和同 entry 替换。命名空间测试覆盖迁移后重配、配额持久调整与拒绝、压缩重开保留版本；诊断测试覆盖最大标签和 JSON 最坏转义下的大小边界、无 Sink 投影。
 
 ## Typed namespace 与未知提交
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"slices"
 
 	"github.com/tetratelabs/wazero/api"
 	wasisys "github.com/tetratelabs/wazero/experimental/sys"
@@ -24,9 +25,9 @@ func readStdin(memory api.Memory, iovs, count, result uint32, read func([]byte) 
 		return wasisys.EINVAL
 	}
 	var capacity uint64
-	for pos := 0; pos < len(table); pos += 8 {
-		offset := binary.LittleEndian.Uint32(table[pos:])
-		size := binary.LittleEndian.Uint32(table[pos+4:])
+	for vector := range slices.Chunk(table, 8) {
+		offset := binary.LittleEndian.Uint32(vector)
+		size := binary.LittleEndian.Uint32(vector[4:])
 		if size == 0 {
 			continue
 		}
@@ -42,9 +43,9 @@ func readStdin(memory api.Memory, iovs, count, result uint32, read func([]byte) 
 		}
 	}
 	var total uint32
-	for pos := 0; pos < len(table); pos += 8 {
-		offset := binary.LittleEndian.Uint32(table[pos:])
-		size := binary.LittleEndian.Uint32(table[pos+4:])
+	for vector := range slices.Chunk(table, 8) {
+		offset := binary.LittleEndian.Uint32(vector)
+		size := binary.LittleEndian.Uint32(vector[4:])
 		if size == 0 {
 			continue
 		}

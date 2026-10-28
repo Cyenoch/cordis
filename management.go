@@ -48,8 +48,6 @@ func (h *Host) Instances() []contract.InstanceInfo {
 	h.mu.Unlock()
 	for n, instance := range instances {
 		result[n].Status = instance.Status()
-		result[n].Status.Enabled = result[n].Entry.Enabled
-		result[n].Status.TemporaryStopped = result[n].Entry.Enabled && result[n].Status.State == contract.Stopped
 	}
 	slices.SortFunc(result, func(a, b contract.InstanceInfo) int {
 		if a.Entry.ID < b.Entry.ID {
@@ -61,6 +59,22 @@ func (h *Host) Instances() []contract.InstanceInfo {
 		return 0
 	})
 	return result
+}
+
+func (h *Host) entrySnapshot() ([]contract.Entry, error) {
+	entries, err := h.store.Entries()
+	if err != nil {
+		return nil, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for id, entry := range h.entrySpecs {
+		if _, builtin := h.builtins[id]; builtin {
+			entry.Config = slices.Clone(entry.Config)
+			entries = append(entries, entry)
+		}
+	}
+	return entries, nil
 }
 
 func (h *Host) reserveTree(root string) (func(), error) {
@@ -90,9 +104,6 @@ func (h *Host) reserveTrees(roots []string) (func(), error) {
 			return nil, contract.Fail(contract.Conflict, "entry ownership tree has an operation in progress")
 		}
 	}
-	if h.controls == nil {
-		h.controls = map[string]bool{}
-	}
 	for _, id := range ids {
 		h.controls[id] = true
 	}
@@ -117,17 +128,10 @@ func (h *Host) Remove(ctx context.Context, id string) error {
 		return err
 	}
 	defer release()
-	entries, err := h.store.Entries()
+	entries, err := h.entrySnapshot()
 	if err != nil {
 		return err
 	}
-	h.mu.Lock()
-	for key, entry := range h.entrySpecs {
-		if _, builtin := h.builtins[key]; builtin {
-			entries = append(entries, entry)
-		}
-	}
-	h.mu.Unlock()
 	owned := ownedEntries(entries, map[string]bool{id: true})
 	if err := h.disable(ctx, id); err != nil {
 		return err
@@ -171,9 +175,6 @@ func (h *Host) reservePackage(id string) (func(), error) {
 	defer h.mu.Unlock()
 	if h.packageOps[id] {
 		return nil, contract.Fail(contract.Conflict, "package operation is in progress")
-	}
-	if h.packageOps == nil {
-		h.packageOps = map[string]bool{}
 	}
 	h.packageOps[id] = true
 	return func() { h.mu.Lock(); delete(h.packageOps, id); h.mu.Unlock() }, nil

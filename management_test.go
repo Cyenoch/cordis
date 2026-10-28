@@ -4,65 +4,61 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/Cyenoch/cordis/packagehost"
-	"os"
-	"path/filepath"
-	"strconv"
-	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/packagehost"
 	"github.com/Cyenoch/cordis/schema"
 )
 
 func TestResumeWaitDoesNotBlockLateProviderOrUnrelatedManagement(t *testing.T) {
-	h, err := Open(Options{Directory: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := h.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
-	})
-	req := contract.Requirement{Name: "late", Major: 1, MinMinor: 1, MaxMinor: 3}
-	consumer, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "consumer"}, contract.Definition{Requires: []contract.Requirement{req}, Start: func(context.Context, contract.Scope) error { return nil }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := consumer.Stop(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	result := make(chan error, 1)
-	go func() { result <- h.Resume(t.Context(), "consumer") }()
-	deadline := time.Now().Add(2 * time.Second)
-	for consumer.Status().State == contract.Stopped && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if consumer.Status().State != contract.Waiting {
-		t.Fatal(consumer.Status())
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-	defer cancel()
-	provider, err := h.AddBuiltin(ctx, contract.Entry{ID: "provider"}, contract.Definition{Provides: []contract.Service{{Name: "late", Major: 1, Minor: 2}}, Start: func(_ context.Context, s contract.Scope) error {
-		return s.Provide(contract.Service{Name: "late", Major: 1, Minor: 2}, func(context.Context, json.RawMessage) (json.RawMessage, error) { return json.RawMessage(`{}`), nil })
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := provider.Wait(ctx); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-result:
+	synctest.Test(t, func(t *testing.T) {
+		h, err := Open(Options{Directory: t.TempDir()})
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-ctx.Done():
-		t.Fatal("Resume blocked provider admission")
-	}
+		t.Cleanup(func() {
+			if err := h.Close(context.Background()); err != nil {
+				t.Error(err)
+			}
+		})
+		req := contract.Requirement{Name: "late", Major: 1, MinMinor: 1, MaxMinor: 3}
+		consumer, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "consumer"}, contract.Definition{Requires: []contract.Requirement{req}, Start: func(context.Context, contract.Scope) error { return nil }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := consumer.Stop(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		result := make(chan error, 1)
+		go func() { result <- h.Resume(t.Context(), "consumer") }()
+		synctest.Wait()
+		if consumer.Status().State != contract.Waiting {
+			t.Fatal(consumer.Status())
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		provider, err := h.AddBuiltin(ctx, contract.Entry{ID: "provider"}, contract.Definition{Provides: []contract.Service{{Name: "late", Major: 1, Minor: 2}}, Start: func(_ context.Context, s contract.Scope) error {
+			return s.Provide(contract.Service{Name: "late", Major: 1, Minor: 2}, func(context.Context, json.RawMessage) (json.RawMessage, error) { return json.RawMessage(`{}`), nil })
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := provider.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			t.Fatal("Resume blocked provider admission")
+		}
+	})
 }
 
 func TestRestoreIsPartialRepeatableAndDoesNotUndoTemporaryStop(t *testing.T) {
@@ -129,6 +125,11 @@ func TestBlockedDisableAllowsUnrelatedAdmissionAndCloseCancellation(t *testing.T
 	done := make(chan error, 1)
 	go func() { done <- h.Disable(t.Context(), "slow") }()
 	<-entered
+	status, err := h.Status("slow")
+	if err != nil || status.State != contract.Quiescing || status.Enabled || status.TemporaryStopped || i.Status().Enabled {
+		close(release)
+		t.Fatal("persistent disable disagrees with core status", status, err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	other, err := h.AddBuiltin(ctx, contract.Entry{ID: "other"}, contract.Definition{Start: func(context.Context, contract.Scope) error { return nil }})
@@ -157,6 +158,48 @@ func TestBlockedDisableAllowsUnrelatedAdmissionAndCloseCancellation(t *testing.T
 	if err := h.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestTemporaryStopStatusMatchesCoreDuringCleanup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, err := Open(Options{Directory: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := h.Close(context.Background()); err != nil {
+				t.Error(err)
+			}
+		}()
+		entered, release := make(chan struct{}), make(chan struct{})
+		defer close(release)
+		i, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "temporary"}, contract.Definition{Start: func(_ context.Context, s contract.Scope) error {
+			return s.Defer(func(context.Context) error { close(entered); <-release; return nil })
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := i.Wait(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- i.Stop(ctx) }()
+		<-entered
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+		status, err := h.Status("temporary")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, status := range []contract.Status{status, i.Status(), h.Instances()[0].Status} {
+			if status.State != contract.Quiescing || !status.Enabled || !status.TemporaryStopped {
+				t.Fatalf("temporary stop disagrees with core status: %+v", status)
+			}
+		}
+	})
 }
 
 func TestDefinitionPreflightDoesNotCommitOrRetireInvalidUpdates(t *testing.T) {
@@ -451,77 +494,43 @@ func (s *blockedShutdownSession) Call(ctx context.Context, method string, raw js
 	return s.fixtureSession.Call(ctx, method, raw)
 }
 
-// Fail only journal removal after the candidate catalog has been fully written.
-type journalCleanupFailureContext struct {
-	context.Context
-	root string
-	once sync.Once
-	err  error
-}
-
-func (c *journalCleanupFailureContext) Err() error {
-	if _, err := os.Stat(filepath.Join(c.root, "catalog.next")); err == nil {
-		c.once.Do(func() {
-			journal := filepath.Join(c.root, "transaction.json")
-			if c.err = os.Remove(journal); c.err != nil {
-				return
-			}
-			if c.err = os.Mkdir(journal, 0700); c.err != nil {
-				return
-			}
-			c.err = os.WriteFile(filepath.Join(journal, "block"), []byte("fixture"), 0600)
-		})
-	}
-	return errors.Join(c.Context.Err(), c.err)
-}
 func TestCanceledDisableCannotResumeDurablyDisabledEntry(t *testing.T) {
-	for _, failCommit := range []bool{false, true} {
-		t.Run(strconv.FormatBool(failCommit), func(t *testing.T) {
-			h, pkg, _ := lifecycleHost(t)
-			entered, release := make(chan struct{}), make(chan struct{})
-			h.options.Runtimes["wasm"] = blockedShutdownRuntime{entered, release}
-			i, err := h.Enable(t.Context(), contract.Entry{ID: "disabled", Package: pkg.ID})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := i.Wait(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			var disabling context.Context = ctx
-			if failCommit {
-				disabling = &journalCleanupFailureContext{Context: ctx, root: h.options.Directory}
-			}
-			done := make(chan error, 1)
-			go func() { done <- h.Disable(disabling, "disabled") }()
-			<-entered
-			cancel()
-			err = <-done
-			var committed *packagehost.CommitError
-			if !errors.Is(err, context.Canceled) || errors.As(err, &committed) != failCommit {
-				close(release)
-				t.Fatalf("disable lost cancellation or committed failure: %v", err)
-			}
-			if err := os.RemoveAll(filepath.Join(h.options.Directory, "transaction.json")); err != nil {
-				close(release)
-				t.Fatal(err)
-			}
-			close(release)
-			if err := i.(*hostInstance).Instance.Stop(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if err := h.Resume(t.Context(), "disabled"); err == nil {
-				t.Fatal("durably disabled entry resumed")
-			}
-			status, _ := h.Status("disabled")
-			if status.Enabled || status.State != contract.Stopped || i.Status().Enabled {
-				t.Fatal(status)
-			}
-			if err := h.Disable(t.Context(), "disabled"); err != nil {
-				t.Fatal(err)
-			}
-		})
+	h, pkg, _ := lifecycleHost(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	h.options.Runtimes["wasm"] = blockedShutdownRuntime{entered, release}
+	i, err := h.Enable(t.Context(), contract.Entry{ID: "disabled", Package: pkg.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := i.Wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.Disable(ctx, "disabled") }()
+	<-entered
+	cancel()
+	err = <-done
+	close(release)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if err := i.(*hostInstance).Instance.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Resume(t.Context(), "disabled"); err == nil {
+		t.Fatal("durably disabled entry resumed")
+	}
+	status, err := h.Status("disabled")
+	if err != nil || status.Enabled || status.TemporaryStopped || status.State != contract.Stopped || i.Status().Enabled {
+		t.Fatal(status, err)
+	}
+	if listed := h.Instances(); len(listed) != 1 || listed[0].Status.Enabled || listed[0].Status.TemporaryStopped {
+		t.Fatal("instance list overrode persistent disable", listed)
+	}
+	if err := h.Disable(t.Context(), "disabled"); err != nil {
+		t.Fatal(err)
 	}
 }
 

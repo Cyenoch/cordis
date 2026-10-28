@@ -17,9 +17,13 @@ func (e *Engine) Supervise(ctx context.Context, id string, budget uint32, delay 
 	}
 	e.mu.Lock()
 	i := e.instances[id]
-	if i == nil || i.supervising {
+	if i == nil {
 		e.mu.Unlock()
-		return contract.Fail(contract.Conflict, "entry missing or already supervised")
+		return contract.Fail(contract.NotReady, "entry does not exist")
+	}
+	if i.supervising {
+		e.mu.Unlock()
+		return contract.Fail(contract.Conflict, "entry already supervised")
 	}
 	i.supervising = true
 	e.mu.Unlock()

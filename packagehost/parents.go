@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 )
 
 // RegisterParent persists only a host-owned parent ID, never builtin code or
@@ -24,13 +23,10 @@ func (s *Store) RegisterParent(ctx context.Context, id string) error {
 	if slices.Contains(s.catalog.ExternalParents, id) {
 		return ctx.Err()
 	}
-	c, err := s.cloneCatalog()
-	if err != nil {
-		return err
-	}
+	c := s.cloneCatalog()
 	c.ExternalParents = append(c.ExternalParents, id)
-	sort.Strings(c.ExternalParents)
-	return s.mutate(ctx, "register-parent", c)
+	slices.Sort(c.ExternalParents)
+	return s.mutate(ctx, c)
 }
 
 // UnregisterParent refuses to orphan any entry, including a disabled child.
@@ -47,10 +43,7 @@ func (s *Store) UnregisterParent(ctx context.Context, id string) error {
 	if index < 0 {
 		return ctx.Err()
 	}
-	c, err := s.cloneCatalog()
-	if err != nil {
-		return err
-	}
+	c := s.cloneCatalog()
 	c.ExternalParents = slices.Delete(c.ExternalParents, index, index+1)
-	return s.mutate(ctx, "unregister-parent", c)
+	return s.mutate(ctx, c)
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -253,7 +254,7 @@ func (c *Client) handle(ctx context.Context, method string, input json.RawMessag
 			return nil, err
 		}
 		c.mu.Lock()
-		handlers := append([]contract.EventHandler{}, c.events[event.Name]...)
+		handlers := slices.Clone(c.events[event.Name])
 		c.mu.Unlock()
 		results := []contract.EventResult{}
 		var failures []error
@@ -284,22 +285,15 @@ func (c *Client) initialize(ctx context.Context, input json.RawMessage) (json.Ra
 	if err := contract.Decode(input, &init); err != nil {
 		return nil, err
 	}
-	if err := contract.ValidateFrameBytes(init.FrameBytes); err != nil {
-		return nil, err
-	}
 	minor, err := init.Protocol.Negotiate(capabilities.Protocol)
 	if err != nil {
 		return nil, err
 	}
 	definition, exists := c.definitions[init.Definition]
-	if init.Identity.Activation != c.endpoint.Identity().Activation || !exists {
-		return nil, contract.Fail(contract.Invalid, "initialization identity mismatch")
+	if !exists {
+		return nil, contract.Fail(contract.Invalid, "unknown plugin definition")
 	}
 	c.mu.Lock()
-	if c.initialized || c.identity.Activation != "" {
-		c.mu.Unlock()
-		return nil, contract.Fail(contract.Invalid, "plugin already initialized")
-	}
 	c.definition = definition
 	c.identity = init.Identity
 	c.config = init.Config

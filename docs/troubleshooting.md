@@ -90,7 +90,7 @@ context 取消只能阻止后续准入和结果提交，不能回滚已写入的
 
 ## 停止超时或实例停在 quiescing
 
-进程内 Start、handler、cleanup 必须合作响应取消。Go 无法安全强杀任意 callback；blocked 错误不代表资源已经释放，provider 的依赖资源会继续保留。检查自己创建的 goroutine 是否有退出条件、Defer 是否等待它们、清理是否复用了已取消的业务 ctx。
+进程内 Start、handler、cleanup 必须合作响应取消。Go 无法安全强杀任意 callback；blocked 错误不代表资源已经释放，provider 的依赖资源会继续保留。清理不共用固定全局槽位，无关实例可以继续清理，但 `Host.Close` 仍等待自身拥有的全部资源。检查自己创建的 goroutine 是否有退出条件、Defer 是否等待它们、清理是否复用了已取消的业务 ctx。
 
 外部 Runtime 可以终止受管进程，但 Native 自行脱离进程组的后代不属于权限沙箱保证。用独立、有期限的清理 context，记录实际失败，不忽略 Close 错误后声称完成。
 

@@ -2,11 +2,21 @@ package schema_test
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/Cyenoch/cordis/schema"
 )
+
+func TestMissingConsumerRangeRetainsFieldLocation(t *testing.T) {
+	source := `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","version":1,"methods":[{"name":"echo","request":{"type":"string"},"response":{"type":"string"}}]}],"definitions":[{"id":"client","requires":[{"name":"source","service":"echo","maxMinor":0}]}]}`
+	_, err := schema.Parse([]byte(source))
+	var field *schema.FieldError
+	if !errors.As(err, &field) || field.Path != "/definitions/0/requires/0/minMinor" || field.Keyword != "required" {
+		t.Fatalf("missing consumer range lost its field location: %v", err)
+	}
+}
 
 func TestDeclarationSpecsAndFingerprint(t *testing.T) {
 	t.Parallel()

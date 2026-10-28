@@ -136,55 +136,29 @@ func TestCanceledParentChildInTransitKeepsSessionHealthy(t *testing.T) {
 }
 
 func TestSendAdmissionObservesEachDeadline(t *testing.T) {
-	e, peer := auditEndpoint(t, Limits{Inflight: 1, Grace: time.Second})
-	for i := 1; i <= 6; i++ {
-		auditWrite(t, peer, Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "audit", ID: fmt.Sprintf("g:%d", i), Method: "health", Payload: json.RawMessage(`{}`), DeadlineMS: 30000})
-		until := time.Now().Add(time.Second)
-		for {
-			e.mu.Lock()
-			n, seq := len(e.incoming), e.remoteSequence
-			e.mu.Unlock()
-			if n == 0 && seq == uint64(i) {
-				break
-			}
-			if time.Now().After(until) {
-				t.Fatal("fixture response failed to enqueue")
-			}
-			time.Sleep(time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		e, peer := auditEndpoint(t, Limits{Inflight: 1, Grace: time.Second})
+		// Fill the response queue while the peer never reads from its pipe.
+		for i := 1; i <= 6; i++ {
+			auditWrite(t, peer, Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "audit", ID: fmt.Sprintf("g:%d", i), Method: "health", Payload: json.RawMessage(`{}`), DeadlineMS: 30000})
+			synctest.Wait()
 		}
-	}
-	longCtx, longCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer longCancel()
-	longDone := make(chan error, 1)
-	go func() { _, err := e.Call(longCtx, "health", nil); longDone <- err }()
-	until := time.Now().Add(time.Second)
-	for {
-		e.mu.Lock()
-		n := len(e.pending)
-		e.mu.Unlock()
-		if n == 1 {
-			break
+		longCtx, longCancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer longCancel()
+		longDone := make(chan error, 1)
+		go func() { _, err := e.Call(longCtx, "health", nil); longDone <- err }()
+		synctest.Wait()
+		const timeout = 100 * time.Millisecond
+		shortCtx, shortCancel := context.WithTimeout(t.Context(), timeout)
+		defer shortCancel()
+		start := time.Now()
+		if _, err := e.Call(shortCtx, "health", nil); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("short call: %v", err)
 		}
-		if time.Now().After(until) {
-			t.Fatal("fixture call not admitted")
+		if elapsed := time.Since(start); elapsed != timeout {
+			t.Errorf("short call returned after %v, want %v", elapsed, timeout)
 		}
-		time.Sleep(time.Millisecond)
-	}
-	shortCtx, shortCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer shortCancel()
-	shortDone := make(chan error, 1)
-	go func() { _, err := e.Call(shortCtx, "health", nil); shortDone <- err }()
-	returned := false
-	select {
-	case err := <-shortDone:
-		returned = true
-		t.Logf("short call returned: %v", err)
-	case <-time.After(250 * time.Millisecond):
-		t.Error("100ms call remains blocked on issueMu after 250ms while earlier send has a 10s deadline")
-	}
-	e.Close()
-	<-longDone
-	if !returned {
-		<-shortDone
-	}
+		e.Close()
+		<-longDone
+	})
 }

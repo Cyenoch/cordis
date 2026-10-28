@@ -38,10 +38,16 @@ type Broker struct {
 	handlers map[string]capabilityHandler
 }
 
-func NewBroker(policy *Policy) *Broker { return &Broker{policy: policy} }
+// NewBroker creates a broker. It panics if policy is nil.
+func NewBroker(policy *Policy) *Broker {
+	if policy == nil {
+		panic("access: broker requires a policy")
+	}
+	return &Broker{policy: policy}
+}
 
 func (b *Broker) Register(capability string, authorize ScopeHandler, handler HostHandler) error {
-	if b.policy == nil || capability == "" || authorize == nil || handler == nil {
+	if capability == "" || authorize == nil || handler == nil {
 		return contract.Fail(contract.Invalid, "incomplete capability handler")
 	}
 	b.mu.Lock()
@@ -89,13 +95,10 @@ func Register[I, O any](
 
 // Call takes owner from the trusted session binding; do not decode it from input.
 // Host errors are returned to the host caller, never automatically logged. A wire
-// boundary must project errors through Sink.PublicError before sending to guests.
+// boundary must project errors through PublicError before sending to guests.
 func (b *Broker) Call(
 	ctx context.Context, owner contract.Identity, capability string, input json.RawMessage,
 ) (json.RawMessage, error) {
-	if b.policy == nil || ctx == nil {
-		return nil, contract.Fail(contract.Invalid, "broker not configured")
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("host call: %w", err)
 	}

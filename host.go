@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"runtime"
 	"sync"
 	"time"
@@ -43,7 +42,7 @@ type Host struct {
 	contributions    *access.ContributionStore
 	tasks            *access.TaskManager
 	options          Options
-	entries          map[string]contract.Instance
+	entries          map[string]*hostInstance
 	entrySpecs       map[string]contract.Entry
 	packages         map[string]contract.PackageRef
 	builtins         map[string]contract.Definition
@@ -69,8 +68,9 @@ func Open(options Options) (*Host, error) {
 	}
 	policy := access.NewPolicy()
 	h := &Host{store: store, policy: policy, broker: access.NewBroker(policy), contributions: access.NewContributionStore(policy),
-		tasks: access.NewTaskManager(policy), operations: make(chan struct{}, 1), options: options, entries: map[string]contract.Instance{},
-		entrySpecs: map[string]contract.Entry{}, packages: map[string]contract.PackageRef{}, builtins: map[string]contract.Definition{}, batches: map[string]*access.Batch{}, sessions: map[string]contract.Session{}, dynamic: map[string]ownedChild{}, definitions: map[string]contract.Definition{}}
+		tasks: access.NewTaskManager(policy), operations: make(chan struct{}, 1), options: options, entries: map[string]*hostInstance{},
+		entrySpecs: map[string]contract.Entry{}, packages: map[string]contract.PackageRef{}, builtins: map[string]contract.Definition{}, batches: map[string]*access.Batch{}, sessions: map[string]contract.Session{}, dynamic: map[string]ownedChild{}, definitions: map[string]contract.Definition{},
+		staged: map[string][]contract.Contribution{}, admissions: map[string]bool{}, controls: map[string]bool{}, packageOps: map[string]bool{}}
 	if h.options.Grace == 0 {
 		h.options.Grace = time.Second
 	}
@@ -191,7 +191,7 @@ func (h *Host) changeOptions() (packagehost.ChangeOptions, error) {
 		if _, builtin := h.builtins[id]; builtin {
 			continue
 		}
-		state := instance.(*hostInstance).Instance.Status().State
+		state := instance.Instance.Status().State
 		if state == contract.Stopped || state == contract.Failed {
 			continue
 		}
@@ -229,12 +229,8 @@ func (h *Host) enableEntry(ctx context.Context, entry contract.Entry, owner *con
 		return nil, err
 	}
 	h.mu.Lock()
-	closed := h.closed
 	_, exists := h.entries[entry.ID]
 	h.mu.Unlock()
-	if closed {
-		return nil, contract.Fail(contract.NotReady, "host is closed")
-	}
 	if exists {
 		return nil, contract.Fail(contract.Conflict, "entry already exists; disable before enabling")
 	}
@@ -279,42 +275,38 @@ func (h *Host) enableEntry(ctx context.Context, entry contract.Entry, owner *con
 	definition.Start = func(startCtx context.Context, scope contract.Scope) error {
 		return h.diagnose(startCtx, scope.Identity(), "", "initialize", h.startExternal(startCtx, scope, pkg, entry, adapter))
 	}
-	if err := h.engine.Preflight(entry, definition); err != nil {
-		return nil, err
-	}
 	var commitErr error
-	if owner == nil {
-		if err := h.registerBuiltinParent(ctx, entry.Parent); err != nil {
-			return nil, err
-		}
-		commitErr = h.store.SaveEntry(ctx, entry)
-	}
-	if commitErr != nil && !catalogCommitted(commitErr) {
-		return nil, commitErr
-	}
 	identity := contract.Identity{Package: pkg.Ref.ID, Entry: entry.ID, Digest: pkg.Ref.Digest}
 	var instance contract.Instance
 	if owner == nil {
-		instance, err = h.engine.Add(entry, definition, identity)
+		instance, err = h.engine.AddWithCommit(entry, definition, identity, func() error {
+			if err := h.registerBuiltinParent(ctx, entry.Parent); err != nil {
+				return err
+			}
+			commitErr = h.store.SaveEntry(ctx, entry)
+			if commitErr != nil && !catalogCommitted(commitErr) {
+				return commitErr
+			}
+			return nil
+		})
 	} else {
 		instance, err = h.engine.AddOwned(entry, definition, identity, *owner)
 	}
 	if err != nil {
 		return nil, err
 	}
-	instance = &hostInstance{Instance: instance, host: h, id: entry.ID, diagnostics: diagnostics}
 	h.mu.Lock()
 	if owner != nil {
-		instance = instance.(*hostInstance).Instance
 		h.dynamic[entry.ID] = ownedChild{owner: *owner, instance: instance}
 		h.mu.Unlock()
 		return instance, nil
 	}
-	h.entries[entry.ID] = instance
+	wrapped := &hostInstance{Instance: instance, host: h, id: entry.ID, diagnostics: diagnostics}
+	h.entries[entry.ID] = wrapped
 	h.entrySpecs[entry.ID] = entry
 	h.packages[entry.ID] = pkg.Ref
 	h.mu.Unlock()
-	return instance, commitErr
+	return wrapped, commitErr
 }
 
 func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg packagehost.Package, entry contract.Entry, adapter contract.Runtime) error {
@@ -346,10 +338,7 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 	if err != nil {
 		return err
 	}
-	if err := h.policy.Activate(owner, pkg.Manifest.Capabilities); err != nil {
-		return err
-	}
-	if err := scope.Defer(func(context.Context) error { h.onRetire(owner); return nil }); err != nil {
+	if err := h.activatePolicy(scope, pkg.Manifest.Capabilities); err != nil {
 		return err
 	}
 	for _, capability := range pkg.Manifest.Capabilities {
@@ -390,7 +379,7 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 	launch.Handle = func(callCtx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 		value, err := h.handleGuest(callCtx, scope, method, input)
 		if err != nil {
-			return nil, h.options.Sink.PublicError(h.diagnose(callCtx, owner, method, "guest-call", err))
+			return nil, access.PublicError(h.diagnose(callCtx, owner, method, "guest-call", err))
 		}
 		return value, nil
 	}
@@ -518,6 +507,10 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 		return err
 	}
 	h.mu.Lock()
+	if err := scope.Context().Err(); err != nil {
+		h.mu.Unlock()
+		return err
+	}
 	h.batches[owner.Activation] = batch
 	h.mu.Unlock()
 	go func() {
@@ -657,31 +650,28 @@ func (h *Host) Disable(ctx context.Context, id string) error {
 }
 
 func (h *Host) disable(ctx context.Context, id string) error {
-	all, err := h.store.Entries()
+	all, err := h.entrySnapshot()
 	if err != nil {
 		return err
 	}
-	h.mu.Lock()
-	for id, entry := range h.entrySpecs {
-		if _, builtin := h.builtins[id]; builtin {
-			all = append(all, entry)
-		}
-	}
-	h.mu.Unlock()
 	owned := ownedEntries(all, map[string]bool{id: true})
 	if len(owned) == 0 {
 		return contract.Fail(contract.NotReady, "entry does not exist")
 	}
+	return h.disableEntries(ctx, owned)
+}
+
+func (h *Host) disableEntries(ctx context.Context, entries []contract.Entry) error {
 	var result error
-	for n := len(owned) - 1; n >= 0; n-- {
+	for n := len(entries) - 1; n >= 0; n-- {
+		entry := entries[n]
 		h.mu.Lock()
-		_, live := h.entries[owned[n].ID]
+		_, live := h.entries[entry.ID]
 		h.mu.Unlock()
 		var err error
 		if live {
-			err = h.disableOne(ctx, owned[n].ID)
+			err = h.retireOne(ctx, entry.ID, true)
 		} else {
-			entry := owned[n]
 			if !entry.Enabled {
 				continue
 			}
@@ -689,14 +679,14 @@ func (h *Host) disable(ctx context.Context, id string) error {
 			err = h.store.SaveEntry(ctx, entry)
 		}
 		result = errors.Join(result, err)
-		if err != nil && (!h.engine.Missing(owned[n].ID) || !live && !catalogCommitted(err)) {
+		if err != nil && (!h.engine.Missing(entry.ID) || !live && !catalogCommitted(err)) {
 			return result
 		}
 	}
 	return result
 }
 
-func (h *Host) disableOne(ctx context.Context, id string) error {
+func (h *Host) retireOne(ctx context.Context, id string, disable bool) error {
 	h.mu.Lock()
 	instance := h.entries[id]
 	entry := h.entrySpecs[id]
@@ -706,17 +696,25 @@ func (h *Host) disableOne(ctx context.Context, id string) error {
 		return contract.Fail(contract.NotReady, "entry does not exist")
 	}
 	var persistErr error
-	entry.Enabled = false
-	if !builtin {
-		persistErr = h.store.SaveEntry(ctx, entry)
-		if persistErr != nil && !catalogCommitted(persistErr) {
-			return persistErr
+	if disable {
+		entry.Enabled = false
+		if !builtin {
+			persistErr = h.store.SaveEntry(ctx, entry)
+			if persistErr != nil && !catalogCommitted(persistErr) {
+				return persistErr
+			}
 		}
+		h.mu.Lock()
+		h.entrySpecs[id] = entry
+		h.mu.Unlock()
 	}
-	h.mu.Lock()
-	h.entrySpecs[id] = entry
-	h.mu.Unlock()
-	wait, err := h.engine.Stop(ctx, id)
+	var wait func(context.Context) error
+	var err error
+	if disable {
+		wait, err = h.engine.Disable(ctx, id)
+	} else {
+		wait, err = h.engine.Stop(ctx, id)
+	}
 	if err != nil {
 		return errors.Join(persistErr, err)
 	}
@@ -804,7 +802,7 @@ func (h *Host) replace(ctx context.Context, ref contract.PackageRef, options pac
 	}
 	actual.DataVersion = options.DataVersion
 	actual.MigrationCommitted = options.MigrationCommitted
-	if err := h.store.CheckSelect(ref, actual); err != nil {
+	if err := h.store.CheckSelect(ctx, ref, actual); err != nil {
 		return err
 	}
 	if err := h.checkRuntime(ref); err != nil {
@@ -812,7 +810,7 @@ func (h *Host) replace(ctx context.Context, ref contract.PackageRef, options pac
 	}
 	var retirementErrors error
 	for n := len(entries) - 1; n >= 0; n-- {
-		if err := h.disableOne(ctx, entries[n].ID); err != nil {
+		if err := h.retireOne(ctx, entries[n].ID, false); err != nil {
 			if !h.engine.Missing(entries[n].ID) {
 				return errors.Join(retirementErrors, err)
 			}
@@ -852,6 +850,10 @@ func (h *Host) replace(ctx context.Context, ref contract.PackageRef, options pac
 	return result
 }
 
+// Close drains activations before releasing the store. Cancellation ends only
+// this wait: Go cannot forcibly stop a non-cooperative builtin callback or its
+// cleanup. Its ownership/dependency tree remains pending until it returns;
+// unrelated activation cleanups do not share a global concurrency limit.
 func (h *Host) Close(ctx context.Context) error {
 	select {
 	case h.operations <- struct{}{}:
@@ -908,27 +910,23 @@ func (h *Host) addBuiltin(entry contract.Entry, definition contract.Definition) 
 	if err != nil {
 		return nil, err
 	}
-	instance = &hostInstance{Instance: instance, host: h, id: entry.ID}
+	wrapped := &hostInstance{Instance: instance, host: h, id: entry.ID}
 	h.mu.Lock()
-	h.entries[entry.ID] = instance
+	h.entries[entry.ID] = wrapped
 	h.entrySpecs[entry.ID] = entry
 	h.builtins[entry.ID] = original
 	h.mu.Unlock()
-	return instance, nil
+	return wrapped, nil
 }
 
 func (h *Host) Status(id string) (contract.Status, error) {
 	h.mu.Lock()
 	instance := h.entries[id]
-	entry := h.entrySpecs[id]
 	h.mu.Unlock()
 	if instance == nil {
-		return contract.Status{}, fmt.Errorf("entry %q not found", id)
+		return contract.Status{}, contract.Fail(contract.NotReady, "entry does not exist")
 	}
-	status := instance.Status()
-	status.Enabled = entry.Enabled
-	status.TemporaryStopped = entry.Enabled && status.State == contract.Stopped
-	return status, nil
+	return instance.Status(), nil
 }
 
 // Resume re-enables an existing, fully stopped entry. Disable removes the entry;

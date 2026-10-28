@@ -1,7 +1,6 @@
 package packagehost
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,7 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
+	"strings"
 
 	"github.com/Cyenoch/cordis/config"
 	"github.com/Cyenoch/cordis/contract"
@@ -122,7 +122,7 @@ func LoadAuthor(sourceDir string) (*Author, error) {
 		}
 		m.Definitions = append(m.Definitions, specs...)
 	}
-	sort.Slice(m.Definitions, func(i, j int) bool { return m.Definitions[i].ID < m.Definitions[j].ID })
+	slices.SortFunc(m.Definitions, func(a, b contract.DefinitionSpec) int { return strings.Compare(a.ID, b.ID) })
 	if m.DefaultDefinition == "" && len(m.Definitions) == 1 {
 		m.DefaultDefinition = m.Definitions[0].ID
 	}
@@ -279,7 +279,7 @@ func authorFingerprint(a *Author) (string, error) {
 		}
 		hashes = append(hashes, hash)
 	}
-	sort.Strings(hashes)
+	slices.Sort(hashes)
 	data, err := json.Marshal(struct {
 		Manifest  contract.Manifest `json:"manifest"`
 		Contracts []string          `json:"contracts"`
@@ -287,12 +287,7 @@ func authorFingerprint(a *Author) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Compact raw configuration schemas before hashing, independent of indentation.
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, data); err != nil {
-		return "", err
-	}
-	return hashBytes(compact.Bytes()), nil
+	return hashBytes(data), nil
 }
 
 func hashBytes(data []byte) string {

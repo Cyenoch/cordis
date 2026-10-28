@@ -15,7 +15,10 @@ var (
 )
 
 func integerToken(text string, yaml bool) ([]byte, error) {
-	unsigned := strings.TrimPrefix(strings.TrimPrefix(text, "+"), "-")
+	unsigned := text
+	if len(unsigned) > 0 && (unsigned[0] == '+' || unsigned[0] == '-') {
+		unsigned = unsigned[1:]
+	}
 	base := 10
 	digits := unsigned
 	if len(unsigned) >= 2 && unsigned[0] == '0' {

@@ -110,13 +110,8 @@ func Parse(source string, data []byte, format Format) (*Document, error) {
 	}
 	doc := &Document{Source: source, Positions: make(map[string]Position)}
 	var out bytes.Buffer
-	if err := root.writeJSON(&out, doc, "", 0); err != nil {
-		return nil, err
-	}
+	root.writeJSON(&out, doc, "")
 	doc.JSON = out.Bytes()
-	if err := contract.CheckJSON(doc.JSON, maxDepth, maxCollection); err != nil {
-		return nil, doc.Locate("", err)
-	}
 	return doc, nil
 }
 
@@ -143,13 +138,9 @@ func (d *Document) Decode(target any) error {
 		return nil
 	}
 	path := ""
-	for _, prefix := range []string{"unknown contract field ", "json: unknown field "} {
-		if _, quoted, ok := strings.Cut(err.Error(), prefix); ok {
-			if name, unquoteErr := strconv.Unquote(quoted); unquoteErr == nil {
-				path = d.uniqueField(name)
-			}
-			break
-		}
+	var unknown *contract.UnknownFieldError
+	if errors.As(err, &unknown) {
+		path = d.uniqueField(unknown.Field)
 	}
 	var typeError *json.UnmarshalTypeError
 	if path == "" && errors.As(err, &typeError) && typeError.Field != "" {

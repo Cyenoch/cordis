@@ -3,17 +3,53 @@ package wire
 import (
 	"context"
 	"encoding/json"
-	"github.com/Cyenoch/cordis/contract"
 	"runtime"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/Cyenoch/cordis/contract"
 )
+
+func TestUnansweredCancellationDoesNotKeepWaitingGoroutines(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e, peer := auditEndpoint(t, Limits{Inflight: 4, Grace: time.Hour})
+		requests := make(chan Frame)
+		go func() {
+			decoder := json.NewDecoder(peer)
+			for {
+				var frame Frame
+				if decoder.Decode(&frame) != nil {
+					return
+				}
+				if frame.Kind == "request" {
+					requests <- frame
+				}
+			}
+		}()
+		synctest.Wait()
+		before := runtime.NumGoroutine()
+		for range 4 {
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan struct{})
+			go func() { defer close(done); _, _ = e.Call(ctx, "health", nil) }()
+			<-requests
+			cancel()
+			<-done
+			synctest.Wait()
+		}
+		if growth := runtime.NumGoroutine() - before; growth != 0 {
+			t.Errorf("unanswered cancellations kept %d waiting goroutines", growth)
+		}
+		e.Close()
+		e.Wait()
+	})
+}
 
 func TestAcknowledgedCancellationReleasesSupervision(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e, peer := auditEndpoint(t, Limits{Inflight: 1, Grace: time.Hour})
-		requests := make(chan struct{})
+		requests := make(chan Frame)
 		go func() {
 			dec := json.NewDecoder(peer)
 			for {
@@ -22,7 +58,7 @@ func TestAcknowledgedCancellationReleasesSupervision(t *testing.T) {
 					return
 				}
 				if f.Kind == "request" {
-					requests <- struct{}{}
+					requests <- f
 					continue
 				}
 				if f.Kind == "cancel" {
@@ -32,7 +68,6 @@ func TestAcknowledgedCancellationReleasesSupervision(t *testing.T) {
 				}
 			}
 		}()
-		before := runtime.NumGoroutine()
 		for range 500 {
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 1)
@@ -42,18 +77,20 @@ func TestAcknowledgedCancellationReleasesSupervision(t *testing.T) {
 			<-done
 			synctest.Wait()
 		}
-		e.mu.Lock()
-		history := len(e.cancelOrder)
-		awaiting := 0
-		for _, c := range e.canceled {
-			if c.awaiting {
-				awaiting++
-			}
+		time.Sleep(2 * time.Hour)
+		done := make(chan error, 1)
+		go func() { _, err := e.Call(t.Context(), "health", nil); done <- err }()
+		select {
+		case request := <-requests:
+			auditWrite(t, peer, Frame{
+				Schema: contract.SessionSchema, Kind: "response", Activation: "audit",
+				ID: request.ID, Method: request.Method, Payload: json.RawMessage(`{}`),
+			})
+		case <-e.Done():
+			t.Fatalf("acknowledged cancellation expired endpoint: %v", e.Err())
 		}
-		e.mu.Unlock()
-		growth := runtime.NumGoroutine() - before
-		if growth > 20 {
-			t.Errorf("500 fully acknowledged sequential cancellations: history=%d, awaiting=%d, extra live goroutines=%d", history, awaiting, growth)
+		if err := <-done; err != nil {
+			t.Fatalf("health after acknowledged cancellations: %v", err)
 		}
 	})
 }

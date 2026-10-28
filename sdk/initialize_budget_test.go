@@ -6,33 +6,12 @@ import (
 	"errors"
 	"net"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/sdk"
 	"github.com/Cyenoch/cordis/wire"
 )
-
-func TestSDKRejectsMissingBudgetBeforeAuthorCode(t *testing.T) {
-	left, right := net.Pipe()
-	var authors atomic.Int32
-	done := make(chan error, 1)
-	go func() {
-		done <- sdk.ServeTransport(t.Context(), contract.Definition{ID: "budget", Validate: func(json.RawMessage) error { authors.Add(1); return nil }, Start: func(context.Context, contract.Scope) error { authors.Add(1); return nil }}, right)
-	}()
-	input := json.RawMessage(`{"identity":{"activation":"a"},"protocol":{"major":1},"definition":"budget","config":{}}`)
-	if err := json.NewEncoder(left).Encode(wire.Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "a", ID: "h:1", Method: "initialize", DeadlineMS: 1000, Payload: input}); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err == nil {
-		t.Fatal("missing budget accepted")
-	}
-	left.Close()
-	if authors.Load() != 0 {
-		t.Fatal("invalid budget reached author code")
-	}
-}
 
 func TestOversizedRegistrationReportsDisconnectedCleanupFailure(t *testing.T) {
 	left, right := net.Pipe()

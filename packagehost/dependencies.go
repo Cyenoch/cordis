@@ -1,7 +1,7 @@
 package packagehost
 
 import (
-	"sort"
+	"slices"
 
 	"github.com/Cyenoch/cordis/contract"
 )
@@ -26,10 +26,7 @@ func (s *Store) ReverseDependencies(ref contract.PackageRef, enabled []string, a
 	if _, err := s.get(ref); err != nil {
 		return nil, err
 	}
-	c, err := s.cloneCatalog()
-	if err != nil {
-		return nil, err
-	}
+	c := s.cloneCatalog()
 	switch action {
 	case SelectPackage:
 		c.Selected[ref.ID] = ref
@@ -57,6 +54,6 @@ func (s *Store) ReverseDependencies(ref contract.PackageRef, enabled []string, a
 	for id := range blocked {
 		result = append(result, id)
 	}
-	sort.Strings(result)
+	slices.Sort(result)
 	return result, nil
 }

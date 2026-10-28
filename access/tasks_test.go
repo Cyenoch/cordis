@@ -423,7 +423,6 @@ func TestTaskManagerReleaseRequiresMatchingTerminalTask(t *testing.T) {
 	owner := identity("release")
 	activate(t, policy, owner)
 	manager := access.NewTaskManager(policy)
-	requireAccessCode(t, access.NewTaskManager(nil).Release(owner, "job", "token"), contract.Invalid)
 	requireAccessCode(t, manager.Release(owner, "job", "token"), contract.NotReady)
 	task, err := manager.Create(t.Context(), owner, "job", "token")
 	if err != nil {

@@ -184,11 +184,7 @@ func (e *Engine) pathLocked(from, to *activation, seen map[*activation]bool) boo
 	return false
 }
 func invokeHandler(handler contract.Handler, ctx context.Context, input json.RawMessage) (output json.RawMessage, err error) {
-	defer func() {
-		if value := recover(); value != nil {
-			err = fmt.Errorf("service callback panic: %v", value)
-		}
-	}()
+	defer recoverCallback("service callback", &err)
 	return handler(ctx, input)
 }
 func (s *Scope) On(name string, handler contract.EventHandler) error {
@@ -260,13 +256,13 @@ func (e *Engine) Emit(ctx context.Context, namespace, name string, input json.Ra
 			case limit <- struct{}{}:
 			case <-ctx.Done():
 				group.Wait()
-				return results, errors.Join(joinErrors(errs), ctx.Err())
+				return results, errors.Join(errors.Join(errs...), ctx.Err())
 			}
 			group.Add(1)
 			go func(n int) { defer group.Done(); defer func() { <-limit }(); run(n) }(n)
 		}
 		group.Wait()
-		return results, joinErrors(errs)
+		return results, errors.Join(errs...)
 	}
 	for n := range listeners {
 		run(n)
@@ -279,4 +275,3 @@ func (e *Engine) Emit(ctx context.Context, namespace, name string, input json.Ra
 	}
 	return results, nil
 }
-func joinErrors(errs []error) error { return errors.Join(errs...) }

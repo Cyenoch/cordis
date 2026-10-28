@@ -122,7 +122,7 @@ func namespaceHost(broker *Broker, owner contract.Identity) wire.Handler {
 			return nil, err
 		}
 		result, err := broker.Call(ctx, owner, call.Capability, call.Input)
-		return result, (*Sink)(nil).PublicError(err)
+		return result, PublicError(err)
 	}
 }
 

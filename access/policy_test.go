@@ -20,6 +20,28 @@ func requireAccessCode(t *testing.T, err error, code contract.Code) {
 	}
 }
 
+func TestConstructorsRequirePolicy(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		construct func()
+	}{
+		{name: "broker", construct: func() { access.NewBroker(nil) }},
+		{name: "contributions", construct: func() { access.NewContributionStore(nil) }},
+		{name: "tasks", construct: func() { access.NewTaskManager(nil) }},
+		{name: "namespace", construct: func() { access.NewNamespaceStore(nil) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("constructor accepted nil policy")
+				}
+			}()
+			test.construct()
+		})
+	}
+}
+
 func TestPolicyGrantRevocationDoesNotRevokeOtherCapabilities(t *testing.T) {
 	t.Parallel()
 	policy := access.NewPolicy()
@@ -53,148 +75,230 @@ func TestPolicyGrantRevocationDoesNotRevokeOtherCapabilities(t *testing.T) {
 	}
 }
 
-func TestPolicyRevokeCapabilityCancelsOnlyMatchingCalls(t *testing.T) {
+func TestPolicyRetirementCancelsAdmittedCalls(t *testing.T) {
 	t.Parallel()
-	policy := access.NewPolicy()
-	owner := identity("first")
-	other := identity("other")
-	other.Entry = "other-entry"
-	for _, current := range []contract.Identity{owner, other} {
-		if err := policy.Activate(current, []contract.Capability{{ID: "one"}, {ID: "two"}}); err != nil {
-			t.Fatal(err)
-		}
-		for _, capability := range []string{"one", "two"} {
-			if _, err := policy.Grant(current, capability, nil); err != nil {
+	for _, action := range []string{"revoke", "replace"} {
+		t.Run(action, func(t *testing.T) {
+			policy := access.NewPolicy()
+			owner := identity("first")
+			activate(t, policy, owner)
+			if _, err := policy.Grant(owner, "network", nil); err != nil {
 				t.Fatal(err)
 			}
-		}
-	}
-	type call struct {
-		owner      contract.Identity
-		capability string
-	}
-	type admitted struct {
-		call
-		ctx context.Context
-	}
-	type outcome struct {
-		call
-		err error
-	}
-	entered := make(chan admitted, 3)
-	finished := make(chan outcome, 3)
-	release := make(chan struct{})
-	releaseCalls := sync.OnceFunc(func() { close(release) })
-	defer releaseCalls()
-	var handled atomic.Int32
-	broker := access.NewBroker(policy)
-	for _, capability := range []string{"one", "two"} {
-		if err := broker.Register(capability, allowScope, func(
-			ctx context.Context, owner contract.Identity, input json.RawMessage,
-		) (json.RawMessage, error) {
-			handled.Add(1)
-			if string(input) != "null" {
-				entered <- admitted{call: call{owner: owner, capability: capability}, ctx: ctx}
+			broker := access.NewBroker(policy)
+			entered := make(chan context.Context, 1)
+			release := make(chan struct{})
+			releaseCall := sync.OnceFunc(func() { close(release) })
+			defer releaseCall()
+			if err := broker.Register("network", allowScope, func(ctx context.Context, _ contract.Identity, _ json.RawMessage) (json.RawMessage, error) {
+				entered <- ctx
 				<-release
+				return json.RawMessage(`true`), nil
+			}); err != nil {
+				t.Fatal(err)
 			}
-			return json.RawMessage(`true`), nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	target := call{owner: owner, capability: "one"}
-	for _, request := range []call{target, {owner: owner, capability: "two"}, {owner: other, capability: "one"}} {
-		go func() {
-			_, err := broker.Call(t.Context(), request.owner, request.capability, json.RawMessage(`{}`))
-			finished <- outcome{call: request, err: err}
-		}()
-	}
-	contexts := make(map[call]context.Context)
-	for range 3 {
-		select {
-		case admission := <-entered:
-			contexts[admission.call] = admission.ctx
-		case <-t.Context().Done():
-			t.Fatal("calls did not enter handlers")
-		}
-	}
-	for range 2 {
-		if err := policy.RevokeCapability(owner, "one"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for request, ctx := range contexts {
-		if request == target {
-			if !errors.Is(ctx.Err(), context.Canceled) {
-				t.Fatalf("revoked call not canceled: %v", ctx.Err())
+			finished := make(chan error, 1)
+			go func() {
+				_, err := broker.Call(t.Context(), owner, "network", json.RawMessage(`{}`))
+				finished <- err
+			}()
+			callCtx := <-entered
+			if action == "revoke" {
+				if err := policy.Revoke(owner); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				replacement := identity("replacement")
+				activate(t, policy, replacement)
+				if err := policy.Check(replacement); err != nil {
+					t.Fatalf("replacement is not active: %v", err)
+				}
 			}
-		} else if err := ctx.Err(); err != nil {
-			t.Fatalf("unrelated call canceled: %#v, %v", request, err)
-		}
-	}
-	status, err := policy.Calls(owner)
-	if err != nil || len(status) != 2 {
-		t.Fatalf("calls = %#v, %v", status, err)
-	}
-	for _, current := range status {
-		if current.Canceled != (current.Capability == "one") {
-			t.Fatalf("incorrect cancellation status: %#v", current)
-		}
-	}
-	_, err = broker.Call(t.Context(), owner, "one", json.RawMessage(`null`))
-	requireAccessCode(t, err, contract.Denied)
-	if handled.Load() != 3 {
-		t.Fatal("new call entered revoked handler")
-	}
-	releaseCalls()
-	for range 3 {
-		result := <-finished
-		if result.call == target {
-			requireAccessCode(t, result.err, contract.Canceled)
-		} else if result.err != nil {
-			t.Fatalf("unrelated result rejected: %#v, %v", result.call, result.err)
-		}
+			if !errors.Is(callCtx.Err(), context.Canceled) {
+				t.Fatalf("retired call not canceled: %v", callCtx.Err())
+			}
+			status := policy.Calls(owner)
+			if len(status) != 1 || !status[0].Canceled {
+				t.Fatalf("retired calls = %#v", status)
+			}
+			_, err := broker.Call(t.Context(), owner, "network", json.RawMessage(`{}`))
+			requireAccessCode(t, err, contract.Denied)
+			releaseCall()
+			requireAccessCode(t, <-finished, contract.Denied)
+			if status := policy.Calls(owner); len(status) != 0 {
+				t.Fatalf("returned call retained lease: %#v", status)
+			}
+		})
 	}
 }
 
-func TestPolicyRevokeCapabilityDuringScopeCheckClosesAdmission(t *testing.T) {
+func TestPolicyGrantRevocationCancelsOnlyMatchingCalls(t *testing.T) {
 	t.Parallel()
-	policy := access.NewPolicy()
-	owner := identity("first")
-	activate(t, policy, owner)
-	if _, err := policy.Grant(owner, "network", nil); err != nil {
-		t.Fatal(err)
+	for _, mode := range []string{"handle", "capability"} {
+		t.Run(mode, func(t *testing.T) {
+			policy := access.NewPolicy()
+			owner := identity("first")
+			other := identity("other")
+			other.Entry = "other-entry"
+			var targetGrant *access.Grant
+			for _, current := range []contract.Identity{owner, other} {
+				if err := policy.Activate(current, []contract.Capability{{ID: "one"}, {ID: "two"}}); err != nil {
+					t.Fatal(err)
+				}
+				for _, capability := range []string{"one", "two"} {
+					grant, err := policy.Grant(current, capability, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if current == owner && capability == "one" {
+						targetGrant = grant
+					}
+				}
+			}
+			type call struct {
+				owner      contract.Identity
+				capability string
+			}
+			type admitted struct {
+				call
+				ctx context.Context
+			}
+			type outcome struct {
+				call
+				err error
+			}
+			entered := make(chan admitted, 3)
+			finished := make(chan outcome, 3)
+			release := make(chan struct{})
+			releaseCalls := sync.OnceFunc(func() { close(release) })
+			defer releaseCalls()
+			var handled atomic.Int32
+			broker := access.NewBroker(policy)
+			for _, capability := range []string{"one", "two"} {
+				if err := broker.Register(capability, allowScope, func(
+					ctx context.Context, owner contract.Identity, input json.RawMessage,
+				) (json.RawMessage, error) {
+					handled.Add(1)
+					if string(input) != "null" {
+						entered <- admitted{call: call{owner: owner, capability: capability}, ctx: ctx}
+						<-release
+					}
+					return json.RawMessage(`true`), nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			target := call{owner: owner, capability: "one"}
+			for _, request := range []call{target, {owner: owner, capability: "two"}, {owner: other, capability: "one"}} {
+				go func() {
+					_, err := broker.Call(t.Context(), request.owner, request.capability, json.RawMessage(`{}`))
+					finished <- outcome{call: request, err: err}
+				}()
+			}
+			contexts := make(map[call]context.Context)
+			for range 3 {
+				select {
+				case admission := <-entered:
+					contexts[admission.call] = admission.ctx
+				case <-t.Context().Done():
+					t.Fatal("calls did not enter handlers")
+				}
+			}
+			for range 2 {
+				var err error
+				if mode == "handle" {
+					err = targetGrant.Revoke()
+				} else {
+					err = policy.RevokeCapability(owner, "one")
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			for request, ctx := range contexts {
+				if request == target {
+					if !errors.Is(ctx.Err(), context.Canceled) {
+						t.Fatalf("revoked call not canceled: %v", ctx.Err())
+					}
+				} else if err := ctx.Err(); err != nil {
+					t.Fatalf("unrelated call canceled: %#v, %v", request, err)
+				}
+			}
+			status := policy.Calls(owner)
+			if len(status) != 2 {
+				t.Fatalf("calls = %#v", status)
+			}
+			for _, current := range status {
+				if current.Canceled != (current.Capability == "one") {
+					t.Fatalf("incorrect cancellation status: %#v", current)
+				}
+			}
+			_, err := broker.Call(t.Context(), owner, "one", json.RawMessage(`null`))
+			requireAccessCode(t, err, contract.Denied)
+			if handled.Load() != 3 {
+				t.Fatal("new call entered revoked handler")
+			}
+			releaseCalls()
+			for range 3 {
+				result := <-finished
+				if result.call == target {
+					requireAccessCode(t, result.err, contract.Canceled)
+				} else if result.err != nil {
+					t.Fatalf("unrelated result rejected: %#v, %v", result.call, result.err)
+				}
+			}
+		})
 	}
-	checking, release := make(chan struct{}), make(chan struct{})
-	releaseScope := sync.OnceFunc(func() { close(release) })
-	defer releaseScope()
-	var handled atomic.Bool
-	broker := access.NewBroker(policy)
-	if err := broker.Register("network", func(
-		context.Context, contract.Identity, json.RawMessage, json.RawMessage, json.RawMessage,
-	) error {
-		close(checking)
-		<-release
-		return nil
-	}, func(context.Context, contract.Identity, json.RawMessage) (json.RawMessage, error) {
-		handled.Store(true)
-		return json.RawMessage(`true`), nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	finished := make(chan error, 1)
-	go func() {
-		_, err := broker.Call(t.Context(), owner, "network", json.RawMessage(`{}`))
-		finished <- err
-	}()
-	<-checking
-	if err := policy.RevokeCapability(owner, "network"); err != nil {
-		t.Fatal(err)
-	}
-	releaseScope()
-	requireAccessCode(t, <-finished, contract.Denied)
-	if handled.Load() {
-		t.Fatal("handler entered after revocation during scope check")
+}
+
+func TestPolicyGrantRevocationDuringScopeCheckClosesAdmission(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"handle", "capability"} {
+		t.Run(mode, func(t *testing.T) {
+			policy := access.NewPolicy()
+			owner := identity("first")
+			activate(t, policy, owner)
+			grant, err := policy.Grant(owner, "network", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checking, release := make(chan struct{}), make(chan struct{})
+			releaseScope := sync.OnceFunc(func() { close(release) })
+			defer releaseScope()
+			var handled atomic.Bool
+			broker := access.NewBroker(policy)
+			if err := broker.Register("network", func(
+				context.Context, contract.Identity, json.RawMessage, json.RawMessage, json.RawMessage,
+			) error {
+				close(checking)
+				<-release
+				return nil
+			}, func(context.Context, contract.Identity, json.RawMessage) (json.RawMessage, error) {
+				handled.Store(true)
+				return json.RawMessage(`true`), nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			finished := make(chan error, 1)
+			go func() {
+				_, err := broker.Call(t.Context(), owner, "network", json.RawMessage(`{}`))
+				finished <- err
+			}()
+			<-checking
+			if mode == "handle" {
+				err = grant.Revoke()
+			} else {
+				err = policy.RevokeCapability(owner, "network")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			releaseScope()
+			requireAccessCode(t, <-finished, contract.Denied)
+			if handled.Load() {
+				t.Fatal("handler entered after revocation during scope check")
+			}
+		})
 	}
 }
 

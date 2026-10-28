@@ -10,7 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -238,8 +238,8 @@ func SignatureInput(entries []IntegrityEntry) ([]byte, error) {
 	if len(entries) > 10000 {
 		return nil, fmt.Errorf("too many integrity entries")
 	}
-	sorted := append([]IntegrityEntry(nil), entries...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path < sorted[j].Path })
+	sorted := slices.Clone(entries)
+	slices.SortFunc(sorted, func(a, b IntegrityEntry) int { return strings.Compare(a.Path, b.Path) })
 	var b bytes.Buffer
 	b.WriteString("cordis-go-package/v1\x00")
 	if err := binary.Write(&b, binary.BigEndian, uint32(len(sorted))); err != nil {
@@ -274,13 +274,7 @@ func (t TrustPolicy) verify(m contract.Manifest, digest string, input []byte, si
 	if t.RevokedPublishers[m.Publisher] {
 		return fmt.Errorf("publisher %q is revoked", m.Publisher)
 	}
-	authorized := false
-	for _, id := range t.Publishers[m.Publisher] {
-		if id == m.ID {
-			authorized = true
-		}
-	}
-	if !authorized {
+	if !slices.Contains(t.Publishers[m.Publisher], m.ID) {
 		return fmt.Errorf("publisher %q is not authorized for plugin %q", m.Publisher, m.ID)
 	}
 	if sig == nil {
@@ -303,49 +297,21 @@ func (t TrustPolicy) verify(m contract.Manifest, digest string, input []byte, si
 	return nil
 }
 
-func checkFileNames(names []string) error {
-	files := map[string]string{}
-	components := map[string]string{}
-	for _, name := range names {
-		if err := validatePath(name); err != nil {
-			return err
-		}
-		folded := cases.Fold().String(name)
-		if prior, ok := files[folded]; ok {
-			return fmt.Errorf("conflicting package paths %q and %q", prior, name)
-		}
-		files[folded] = name
-		for original := name; original != "."; original = path.Dir(original) {
-			key := cases.Fold().String(original)
-			if prior, ok := components[key]; ok && prior != original {
-				return fmt.Errorf("case-folding path conflict %q and %q", prior, original)
-			}
-			components[key] = original
-		}
-	}
-	for folded, name := range files {
-		for p := path.Dir(folded); p != "."; p = path.Dir(p) {
-			if other, ok := files[p]; ok {
-				return fmt.Errorf("file/directory conflict %q and %q", other, name)
-			}
-		}
-	}
-	return nil
-}
-
 func checkDirectories(files, dirs []string) error {
-	if err := checkFileNames(files); err != nil {
-		return err
-	}
 	components := map[string]string{}
 	fileSet := map[string]bool{}
+	seen := map[string]bool{}
 	for _, f := range files {
 		fileSet[cases.Fold().String(f)] = true
 	}
-	for _, name := range append(append([]string(nil), files...), dirs...) {
+	for _, name := range slices.Concat(files, dirs) {
 		if err := validatePath(name); err != nil {
 			return err
 		}
+		if seen[name] {
+			return fmt.Errorf("duplicate package path %q", name)
+		}
+		seen[name] = true
 		for p := name; p != "."; p = path.Dir(p) {
 			fold := cases.Fold().String(p)
 			if other, ok := components[fold]; ok && other != p {

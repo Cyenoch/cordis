@@ -43,7 +43,11 @@ type NamespaceStore struct {
 	commitObserver func()
 }
 
+// NewNamespaceStore creates an in-memory store. It panics if policy is nil.
 func NewNamespaceStore(policy *Policy) *NamespaceStore {
+	if policy == nil {
+		panic("access: namespace store requires a policy")
+	}
 	return &NamespaceStore{policy: policy, spaces: make(map[string]*namespaceData)}
 }
 
@@ -62,9 +66,10 @@ func OpenNamespaceStore(policy *Policy, directory string) (*NamespaceStore, erro
 	return store, nil
 }
 
-// Configure creates a namespace binding once. Version changes must use Migrate.
+// Configure creates or updates a package binding's quota. DataVersion initializes
+// new namespaces only; existing versions change exclusively through Migrate.
 func (s *NamespaceStore) Configure(packageID string, config NamespaceConfig) error {
-	if s.policy == nil || packageID == "" || config.Name == "" || !utf8.ValidString(packageID) || !utf8.ValidString(config.Name) || config.QuotaBytes < 0 {
+	if packageID == "" || config.Name == "" || !utf8.ValidString(packageID) || !utf8.ValidString(config.Name) || config.QuotaBytes < 0 {
 		return contract.Fail(contract.Invalid, "invalid namespace configuration")
 	}
 	s.mu.Lock()
@@ -73,12 +78,27 @@ func (s *NamespaceStore) Configure(packageID string, config NamespaceConfig) err
 		return &RecoveryError{Cause: s.failure}
 	}
 	for _, space := range s.spaces {
-		if space.Package == packageID || space.Config.Name == config.Name {
-			if space.Package == packageID && space.Config == config {
-				return nil
-			}
+		if space.Package != packageID && space.Config.Name != config.Name {
+			continue
+		}
+		if space.Package != packageID || space.Config.Name != config.Name {
 			return contract.Fail(contract.Conflict, "namespace already bound")
 		}
+		if config.QuotaBytes < space.Used {
+			return contract.Fail(contract.Conflict, "namespace quota below current usage")
+		}
+		previous := space.Config.QuotaBytes
+		if previous == config.QuotaBytes {
+			return nil
+		}
+		space.Config.QuotaBytes = config.QuotaBytes
+		if err := s.appendLog(namespaceRecord{Operation: "configure", Namespace: config.Name, Package: packageID, Config: space.Config}); err != nil {
+			if !isCommitted(err) {
+				space.Config.QuotaBytes = previous
+			}
+			return err
+		}
+		return nil
 	}
 	s.spaces[config.Name] = &namespaceData{
 		Package: packageID, Config: config, Values: make(map[string][]byte),
@@ -94,9 +114,6 @@ func (s *NamespaceStore) Configure(packageID string, config NamespaceConfig) err
 
 // Storage serialization is independent of the global policy lock.
 func (s *NamespaceStore) lock(ctx context.Context, owner contract.Identity, namespace string) (*namespaceData, error) {
-	if s.policy == nil || ctx == nil {
-		return nil, contract.Fail(contract.Invalid, "namespace store not configured")
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -243,7 +260,7 @@ type Migration func(context.Context, uint32, map[string][]byte) (map[string][]by
 func (s *NamespaceStore) Migrate(
 	ctx context.Context, namespace string, version uint32, confirm Confirmation, migrate Migration,
 ) error {
-	if ctx == nil || confirm == nil || migrate == nil {
+	if confirm == nil || migrate == nil {
 		return contract.Fail(contract.Invalid, "migration needs host approval")
 	}
 	if err := confirm(ctx, namespace, "migrate"); err != nil {
@@ -307,7 +324,7 @@ func (s *NamespaceStore) Migrate(
 }
 
 func (s *NamespaceStore) DeleteNamespace(ctx context.Context, namespace string, confirm Confirmation) error {
-	if ctx == nil || confirm == nil {
+	if confirm == nil {
 		return contract.Fail(contract.Invalid, "deletion needs host approval")
 	}
 	if err := confirm(ctx, namespace, "delete"); err != nil {

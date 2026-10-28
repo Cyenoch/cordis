@@ -1,11 +1,12 @@
 package access
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/Cyenoch/cordis/contract"
 )
@@ -66,18 +67,20 @@ type TaskManager struct {
 	usage  map[contract.Identity]*taskUsage
 }
 
+// NewTaskManager creates a manager. It panics if policy is nil.
 func NewTaskManager(policy *Policy) *TaskManager {
+	if policy == nil {
+		panic("access: task manager requires a policy")
+	}
 	manager := &TaskManager{
 		policy: policy, tasks: make(map[taskKey]*Task), usage: make(map[contract.Identity]*taskUsage),
 	}
-	if policy != nil {
-		policy.mu.Lock()
-		if policy.tasks == nil {
-			policy.tasks = make(map[*TaskManager]struct{})
-		}
-		policy.tasks[manager] = struct{}{}
-		policy.mu.Unlock()
+	policy.mu.Lock()
+	if policy.tasks == nil {
+		policy.tasks = make(map[*TaskManager]struct{})
 	}
+	policy.tasks[manager] = struct{}{}
+	policy.mu.Unlock()
 	return manager
 }
 
@@ -95,7 +98,7 @@ type Task struct {
 }
 
 func (m *TaskManager) Create(ctx context.Context, owner contract.Identity, id, token string) (*Task, error) {
-	if m.policy == nil || ctx == nil || id == "" || token == "" {
+	if id == "" || token == "" {
 		return nil, contract.Fail(contract.Invalid, "invalid task request")
 	}
 	if err := ctx.Err(); err != nil {
@@ -275,9 +278,6 @@ func (t *Task) Release() error {
 // Release locates a task for the trusted host, matches its creation token, and
 // releases its terminal ledger. Missing tasks return NotReady; stale tokens are denied.
 func (m *TaskManager) Release(owner contract.Identity, id, token string) error {
-	if m.policy == nil {
-		return contract.Fail(contract.Invalid, "task manager not configured")
-	}
 	m.policy.mu.Lock()
 	task := m.tasks[taskKey{owner: owner, id: id}]
 	if task == nil {
@@ -295,9 +295,6 @@ func (m *TaskManager) Release(owner contract.Identity, id, token string) error {
 // Transfer explicitly moves cancellation authority to the host. It neither
 // commits a business transaction nor stores a durable checkpoint.
 func (t *Task) Transfer(hostCtx context.Context) error {
-	if hostCtx == nil {
-		return contract.Fail(contract.Invalid, "missing host task context")
-	}
 	if err := hostCtx.Err(); err != nil {
 		return fmt.Errorf("transfer task: %w", err)
 	}
@@ -336,9 +333,6 @@ func (t *Task) Transfer(hostCtx context.Context) error {
 func (m *TaskManager) Finish(
 	owner contract.Identity, id, token string, state TaskState, result json.RawMessage, failure error,
 ) error {
-	if m.policy == nil {
-		return contract.Fail(contract.Invalid, "task manager not configured")
-	}
 	if err := validateFinish(state, result, failure); err != nil {
 		return err
 	}
@@ -383,9 +377,6 @@ func (m *TaskManager) revokeLocked(owner contract.Identity) {
 }
 
 func (m *TaskManager) Snapshot() []TaskStatus {
-	if m.policy == nil {
-		return []TaskStatus{}
-	}
 	m.policy.mu.Lock()
 	defer m.policy.mu.Unlock()
 	result := make([]TaskStatus, 0, len(m.tasks))
@@ -394,11 +385,8 @@ func (m *TaskManager) Snapshot() []TaskStatus {
 		status.Result = append(json.RawMessage(nil), status.Result...)
 		result = append(result, status)
 	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Owner.Activation != result[j].Owner.Activation {
-			return result[i].Owner.Activation < result[j].Owner.Activation
-		}
-		return result[i].ID < result[j].ID
+	slices.SortFunc(result, func(a, b TaskStatus) int {
+		return cmp.Or(cmp.Compare(a.Owner.Activation, b.Owner.Activation), cmp.Compare(a.ID, b.ID))
 	})
 	return result
 }

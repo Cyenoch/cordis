@@ -141,7 +141,6 @@ func TestManagedWorkWaitsForPublicationAndRetiresOutsideBusinessSerial(t *testin
 		defer cancel()
 		shutdownDone := make(chan error, 1)
 		go func() { _, err := s.host.Call(shutdownCtx, "shutdown", json.RawMessage(`{}`)); shutdownDone <- err }()
-		time.Sleep(2 * time.Second)
 		if err := <-shutdownDone; !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("uncooperative work was reported drained: %v", err)
 		}
@@ -257,17 +256,18 @@ func TestSDKCleanupPanicDoesNotSkipResourcesAndCloseIsShared(t *testing.T) {
 	})
 }
 
-func TestSDKRejectsMissingFrameBudgetBeforeStart(t *testing.T) {
+func TestSDKRejectsUnknownDefinitionBeforeStart(t *testing.T) {
 	var starts atomic.Int32
 	s := openSDKSession(t, contract.Definition{ID: "budget", Start: func(context.Context, contract.Scope) error {
 		starts.Add(1)
 		return nil
 	}})
-	if err := s.initialize(t, "budget", 0); err == nil {
-		t.Fatal("missing negotiated budget was accepted")
+	var invalid *contract.Error
+	if err := s.initialize(t, "unknown", contract.MaxFrameBytes); !errors.As(err, &invalid) || invalid.Code != contract.Invalid {
+		t.Fatalf("unknown definition was not rejected: %v", err)
 	}
 	if starts.Load() != 0 {
-		t.Fatal("invalid budget reached author Start")
+		t.Fatal("unknown definition reached author Start")
 	}
 }
 

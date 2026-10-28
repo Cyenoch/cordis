@@ -16,13 +16,15 @@ codePaths:
 `contract` 是宿主、Runtime 与 SDK 共用的数据契约；`wire` 只处理有界双向会话，不负责领域授权。使用 Go SDK 时不用手写这些帧；本页供其他语言 SDK、Runtime 和宿主协议适配作者查阅。
 
 - UTF-8 NDJSON，stdout 仅协议，stderr 日志；宿主显式指定每帧 4 KiB–1 MiB，默认深度 32、数组 10,000、64 个在途请求。
+- 通用 v1 Runtime 与 SDK 固定使用 64 个在途请求；Runtime 的 `Limits.Inflight` 只接受 0（默认）或 64，其他值在创建进程前拒绝。v1 initialize 不协商此预算；直接使用低层 wire 时，两端须显式配置一致的限额。自定义 SessionFactory 使用自身协议策略。
 - `request`/`response`/`cancel`；每个会话绑定一个 activation，宿主请求 ID `h:`、来宾请求 ID `g:`，方向内单调递增且不可重用。
 - `initialize` 在业务调用前完成。业务调用使用显式 service/version 和 JSON 数据，不传宿主对象或 Go 指针。
 - `parent` 是当前 endpoint 中的请求引用，由 endpoint 和宿主绑定；不接受插件自造的身份链。跨插件调用的等待环由组合内核检测。
 - 每次调用都有 deadline；取消先拒绝结果提交并发送 cancel。宽限期内没有回应会关闭会话，Runtime 负责终止和回收执行进程。
+- 接收端收到 cancel 后释放普通在途名额；已取消但 handler 尚未退出的请求另受四倍在途上限约束，超限关闭会话，防止取消洪泛无限占用资源。
 - 成功 shutdown 先完整写出响应，再关闭 guest 会话；不能等待下一次 stdin EOF 才退出。响应已匹配后连接关闭仍返回该响应，但调用取消继续优先拒绝提交。
 - 一次取消不撤回已发生的外部副作用，也不自动重试业务调用。旧 activation 的消息不能成为新实例状态。
-- 协议错误关闭对应会话，错误输出不默认包含原始载荷。宿主 handler 的错误还须经过 `access.Sink.PublicError` 投影。
+- 协议错误关闭对应会话，错误输出不默认包含原始载荷。宿主 handler 的错误还须经过 `access.PublicError` 投影。
 
 ## 帧格式
 

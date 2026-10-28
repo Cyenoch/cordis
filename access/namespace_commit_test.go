@@ -2,8 +2,10 @@ package access
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -93,5 +95,48 @@ func TestNamespaceCompactionPreservesDataAndFutureWrites(t *testing.T) {
 		if err != nil || string(got) != want {
 			t.Fatal(key, string(got), err)
 		}
+	}
+}
+
+func TestNamespaceConfigureQuotaFollowsDurableCommit(t *testing.T) {
+	for _, boundary := range []string{"before-commit", "after-commit"} {
+		t.Run(boundary, func(t *testing.T) {
+			if boundary == "after-commit" && runtime.GOOS == "windows" {
+				t.Skip("Windows has no separate directory sync failure boundary")
+			}
+			p, store, owner, directory := namespaceFixture(t, 20)
+			path := store.path
+			if boundary == "before-commit" {
+				store.path = directory // Opening a directory for a log write fails.
+			} else {
+				// Keep the real append and fsync, then fail the directory sync.
+				store.commitObserver = func() { store.path = filepath.Join(directory, "missing", "log") }
+			}
+			err := store.Configure(owner.Package, NamespaceConfig{Name: "state", QuotaBytes: 30})
+			if err == nil {
+				t.Fatal("quota update did not report persistence failure")
+			}
+			var committed *CommittedError
+			if errors.As(err, &committed) != (boundary == "after-commit") {
+				t.Fatalf("wrong commit classification: %v", err)
+			}
+			store.path, store.commitObserver = path, nil
+			for _, phase := range []string{"live", "reopened"} {
+				if phase == "reopened" {
+					store, err = OpenNamespaceStore(p, directory)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				// This value fits only the increased quota.
+				err := store.Write(t.Context(), owner, "state", "k", make([]byte, 25))
+				if boundary == "after-commit" && err != nil {
+					t.Fatalf("%s quota did not retain committed update: %v", phase, err)
+				}
+				if boundary == "before-commit" && !errors.Is(err, ErrQuota) {
+					t.Fatalf("%s quota changed after failed update: %v", phase, err)
+				}
+			}
+		})
 	}
 }

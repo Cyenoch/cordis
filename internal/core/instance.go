@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -15,6 +16,7 @@ func (i *instance) Status() contract.Status {
 	defer e.mu.Unlock()
 	status := contract.Status{
 		Identity: i.identity, State: i.state, Desired: i.desired, Applied: i.applied,
+		// Durable intent is separate from the runtime stop request, even in Quiescing.
 		Enabled: i.entry.Enabled, TemporaryStopped: !i.enabled && i.entry.Enabled,
 	}
 	if i.activation != nil {
@@ -231,7 +233,7 @@ func (i *instance) configure(config json.RawMessage, commit func() error) (func(
 	}, nil
 }
 func (i *instance) Stop(ctx context.Context) error {
-	wait, err := i.stop(ctx)
+	wait, err := i.stop(ctx, false)
 	if err != nil {
 		return err
 	}
@@ -246,10 +248,21 @@ func (e *Engine) Stop(ctx context.Context, entryID string) (func(context.Context
 	if i == nil {
 		return nil, contract.Fail(contract.NotReady, "entry not found")
 	}
-	return i.stop(ctx)
+	return i.stop(ctx, false)
 }
 
-func (i *instance) stop(ctx context.Context) (func(context.Context) error, error) {
+// Disable records persistent disable intent in the same state snapshot as Stop.
+func (e *Engine) Disable(ctx context.Context, entryID string) (func(context.Context) error, error) {
+	e.mu.Lock()
+	i := e.instances[entryID]
+	e.mu.Unlock()
+	if i == nil {
+		return nil, contract.Fail(contract.NotReady, "entry does not exist")
+	}
+	return i.stop(ctx, true)
+}
+
+func (i *instance) stop(ctx context.Context, disable bool) (func(context.Context) error, error) {
 	e := i.engine
 	e.configMu.Lock()
 	e.mu.Lock()
@@ -276,6 +289,9 @@ func (i *instance) stop(ctx context.Context) (func(context.Context) error, error
 	}
 	if release != nil {
 		defer release()
+	}
+	if disable {
+		i.entry.Enabled = false
 	}
 	i.enabled = false
 	// Parent ownership persists even while a child is waiting for dependencies.
@@ -356,7 +372,7 @@ func (i *instance) stop(ctx context.Context) (func(context.Context) error, error
 			}
 			errs = append(errs, a.cleanupErr)
 		}
-		return joinErrors(errs)
+		return errors.Join(errs...)
 	}, nil
 }
 func ownedByLocked(e *Engine, i *instance, parent string) bool {

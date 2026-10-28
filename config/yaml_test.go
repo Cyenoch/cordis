@@ -32,6 +32,7 @@ func TestYAMLRejectsAmbiguousAndNativeValues(t *testing.T) {
 		{name: "nan", input: "a: .nan\n", message: "non-finite"},
 		{name: "inf", input: "a: -.Inf\n", message: "non-finite"},
 		{name: "invalid explicit float", input: "a: !!float 'garbage'\n", message: "decimal"},
+		{name: "double signs explicit integer", input: "a: !!int '+-0x10'\n", message: "integer"},
 		{name: "invalid explicit null", input: "a: !!null 'garbage'\n", message: "invalid"},
 		{name: "invalid explicit bool", input: "a: !!bool 'yes'\n", message: "invalid"},
 		{name: "trailing document", input: "a: 1\n---\na: 2\n", message: "trailing"},
@@ -69,6 +70,10 @@ func TestYAMLJSONModelAndNumericTokens(t *testing.T) {
 		{name: "explicit float", input: "!!float '0.10000000000000001'", want: `0.10000000000000001`},
 		{name: "float forms", input: "[+.5, 1., 01.20, -0.00, 1_000.0_1e+2]", want: `[0.5,1.0,1.20,-0.00,1000.01e+2]`},
 		{name: "radix", input: "[0xFF, 0o10, 0b11, 0777, -0xFF, +1_000]", want: `[255,8,3,511,-255,1000]`},
+		{name: "signed radix", input: "[+0x10, -0x10, +0o7, -0o7, +0b11, -0b11]", want: `[16,-16,7,-7,3,-3]`},
+		{name: "double signs plus-minus hex", input: "+-0x10", want: `"+-0x10"`},
+		{name: "double signs minus-plus hex", input: "-+0x10", want: `"-+0x10"`},
+		{name: "double signs plus-minus octal", input: "+-0o7", want: `"+-0o7"`},
 		{name: "beyond resolver float", input: "1e1000", want: `1e1000`},
 		{name: "beyond resolver radix", input: "0xffffffffffffffffffffffff", want: `79228162514264337593543950335`},
 	}

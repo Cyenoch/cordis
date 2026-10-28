@@ -4,6 +4,7 @@ package packagehost
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -56,6 +57,8 @@ func TestExtractZIPRejectsMaliciousFixtures(t *testing.T) {
 		{"absolute", []maliciousEntry{{name: "/outside", data: "bad"}}},
 		{"symlink", []maliciousEntry{{name: "link", data: "../outside", mode: os.ModeSymlink | 0777}}},
 		{"duplicate", []maliciousEntry{{name: "a", data: "one"}, {name: "a", data: "two"}}},
+		{"duplicate directory", []maliciousEntry{{name: "a/", mode: os.ModeDir | 0700}, {name: "a/", mode: os.ModeDir | 0700}}},
+		{"empty invalid directory", []maliciousEntry{{name: "../outside/", mode: os.ModeDir | 0700}}},
 		{"case conflict", []maliciousEntry{{name: "A", data: "one"}, {name: "a", data: "two"}}},
 		{"parent case conflict", []maliciousEntry{{name: "Dir/a", data: "one"}, {name: "dir/b", data: "two"}}},
 		{"device", []maliciousEntry{{name: "NUL.txt", data: "bad"}}},
@@ -143,7 +146,7 @@ func TestPackDeterministicAndSnapshotImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalBytes(first, second) {
+	if !bytes.Equal(first, second) {
 		t.Fatal("nondeterministic archive")
 	}
 	s := openFixture(t, t.TempDir(), TrustPolicy{Publishers: map[string][]string{"example": {"demo"}}, DevDigests: map[string]bool{p.Ref.Digest: true}})

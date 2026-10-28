@@ -10,7 +10,7 @@ import (
 // RegisterNamespace uses the broker's existing declaration, grant and scope
 // admission. The host must configure the package binding separately.
 func RegisterNamespace(broker *Broker, store *NamespaceStore, capability string, authorize ScopeHandler) error {
-	if broker == nil || store == nil || store.policy == nil || store.policy != broker.policy {
+	if broker == nil || store == nil || store.policy != broker.policy {
 		return contract.Fail(contract.Invalid, "namespace store must share broker policy")
 	}
 	return Register(broker, capability, authorize,

@@ -54,30 +54,21 @@ func run() (result error) {
 	if int64(len(binary)) > *artifactBytes {
 		return errors.New("wasm command exceeds artifact byte limit")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	// Closing stdio unblocks WASI host reads/writes. The owning host also kills
-	// this worker after grace, including host functions that ignore cancellation.
-	closeIO := context.AfterFunc(ctx, func() {
-		if err := os.Stdin.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-			fmt.Fprintln(os.Stderr, "worker stdin close failed")
-		}
-		if err := os.Stdout.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-			fmt.Fprintln(os.Stderr, "worker stdout close failed")
-		}
-	})
-	defer closeIO()
+	ctx := context.Background()
+	// The host owns activation termination; compilation and startup have hard
+	// process watchdogs, not a cancellable context for the command's lifetime.
+	// Loop checks also yield to Go so the watchdog runs with a single processor.
 	configurationRuntime := wazero.NewRuntimeConfig().WithMemoryLimitPages(uint32(*memoryPages)).WithCloseOnContextDone(true)
 	if *cacheDirectory != "" {
 		cache, err := wazero.NewCompilationCacheWithDir(*cacheDirectory)
 		if err != nil {
 			return errors.New("cannot open trusted compilation cache")
 		}
-		defer func() { result = errors.Join(result, cache.Close(context.WithoutCancel(ctx))) }()
+		defer func() { result = errors.Join(result, cache.Close(ctx)) }()
 		configurationRuntime = configurationRuntime.WithCompilationCache(cache)
 	}
 	runtime := wazero.NewRuntimeWithConfig(ctx, configurationRuntime)
-	defer func() { result = errors.Join(result, runtime.Close(context.WithoutCancel(ctx))) }()
+	defer func() { result = errors.Join(result, runtime.Close(ctx)) }()
 	compileCtx, compileCancel := context.WithTimeout(ctx, *compileTimeout)
 	defer compileCancel()
 	// Compiler cancellation is cooperative. A process-local watchdog gives even
@@ -105,7 +96,7 @@ func run() (result error) {
 	if !exists || len(start.ParamTypes()) != 0 || len(start.ResultTypes()) != 0 {
 		return errors.New("wasm module must export a WASI command _start")
 	}
-	startupTimer := time.AfterFunc(*startTimeout, func() { cancel(); os.Exit(124) })
+	startupTimer := time.AfterFunc(*startTimeout, func() { os.Exit(124) })
 	defer startupTimer.Stop()
 	// Preserve *os.File so wazero exposes nonblocking read/poll_oneoff. A reader
 	// wrapper loses that type and can freeze the guest's cooperative scheduler.

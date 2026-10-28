@@ -49,16 +49,8 @@ func replaceFile(source, target string) error {
 // MOVEFILE_WRITE_THROUGH; also flush the current root file when it exists.
 func syncDir(name string) error {
 	file, err := os.OpenFile(filepath.Join(name, "catalog.json"), os.O_RDWR, 0)
-	if errors.Is(err, os.ErrNotExist) { // Windows directory handles require backup semantics, not os.Open.
-		path, e := windows.UTF16PtrFromString(name)
-		if e != nil {
-			return e
-		}
-		handle, e := windows.CreateFile(path, windows.GENERIC_READ, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
-		if e != nil {
-			return e
-		}
-		return windows.CloseHandle(handle)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
 	if err != nil {
 		return err

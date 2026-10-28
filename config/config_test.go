@@ -302,8 +302,11 @@ func FuzzParse(f *testing.F) {
 			t.Skip()
 		}
 		for _, format := range []config.Format{config.JSON, config.YAML, config.TOML} {
-			_, err := config.Parse("fuzz-input", []byte(input), format)
+			doc, err := config.Parse("fuzz-input", []byte(input), format)
 			if err == nil {
+				if !json.Valid(doc.JSON) {
+					t.Fatalf("invalid %s output: %s", format, doc.JSON)
+				}
 				continue
 			}
 			var located *config.Error

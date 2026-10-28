@@ -11,6 +11,29 @@ import (
 	"github.com/Cyenoch/cordis/internal/core"
 )
 
+func TestMissingEntryControlsReturnNotReady(t *testing.T) {
+	e := core.New()
+	defer closeEngine(t, e)
+	for _, operation := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "stop", run: func() error { _, err := e.Stop(t.Context(), "missing"); return err }},
+		{name: "disable", run: func() error { _, err := e.Disable(t.Context(), "missing"); return err }},
+		{name: "resume", run: func() error { _, err := e.Resume("missing"); return err }},
+		{name: "remove", run: func() error { return e.Remove(t.Context(), "missing") }},
+		{name: "configure", run: func() error { _, err := e.Configure("missing", nil, nil); return err }},
+		{name: "supervise", run: func() error { return e.Supervise(t.Context(), "missing", 0, 0) }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			var coded *contract.Error
+			if err := operation.run(); !errors.As(err, &coded) || coded.Code != contract.NotReady {
+				t.Fatalf("missing entry has wrong contract: %v", err)
+			}
+		})
+	}
+}
+
 func TestStopAndResumeSubmitWithoutLifecycleWaiting(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := core.New()
@@ -92,7 +115,11 @@ func TestStopWaiterRetainsOriginalCleanupResultAfterResume(t *testing.T) {
 			t.Fatal(err)
 		}
 		synctest.Wait()
-		if err := e.Enable(t.Context(), "entry"); err != nil {
+		resumed, err := e.Resume("entry")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := resumed.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if err := wait(t.Context()); !errors.Is(err, failure) {
@@ -147,7 +174,7 @@ func TestWaitingDiagnosticsRespectRealmVisibility(t *testing.T) {
 			}
 		}
 		parent := add(t, e, "parent", contract.Definition{Requires: []contract.Requirement{{Name: "missing"}}, Start: definitionNoop().Start})
-		child, err := e.AddChild("parent", contract.Entry{ID: "child", Enabled: true}, definitionNoop(), contract.Identity{})
+		child, err := e.Add(contract.Entry{ID: "child", Parent: "parent", Enabled: true}, definitionNoop(), contract.Identity{})
 		if err != nil {
 			t.Fatal(err)
 		}

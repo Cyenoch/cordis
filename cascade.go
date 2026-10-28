@@ -2,7 +2,6 @@ package cordis
 
 import (
 	"context"
-	"errors"
 	"slices"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -43,18 +42,10 @@ func (h *Host) planCascade(ref contract.PackageRef, action packagehost.ChangeAct
 			packages = append(packages, ref.ID)
 		}
 	}
-	entries, err := h.store.Entries()
+	entries, err := h.entrySnapshot()
 	if err != nil {
 		return CascadePlan{}, err
 	}
-	h.mu.Lock()
-	for id, entry := range h.entrySpecs {
-		if _, builtin := h.builtins[id]; builtin {
-			entry.Config = slices.Clone(entry.Config)
-			entries = append(entries, entry)
-		}
-	}
-	h.mu.Unlock()
 	roots := map[string]bool{}
 	for _, entry := range entries {
 		if entry.Enabled && slices.Contains(packages, entry.Package) {
@@ -95,7 +86,7 @@ func (h *Host) optionsAfterCascade(plan CascadePlan) (packagehost.ChangeOptions,
 		if _, builtin := h.builtins[id]; builtin {
 			continue
 		}
-		if state := instance.(*hostInstance).Instance.Status().State; state != contract.Stopped && state != contract.Failed {
+		if state := instance.Instance.Status().State; state != contract.Stopped && state != contract.Failed {
 			options.InUse = append(options.InUse, h.packages[id])
 		}
 	}
@@ -115,32 +106,7 @@ func (h *Host) executeCascade(ctx context.Context, plan CascadePlan, confirm Con
 	if err := confirm(ctx, snapshot); err != nil {
 		return err
 	}
-	var result error
-	for n := len(plan.Entries) - 1; n >= 0; n-- {
-		entry := plan.Entries[n]
-		h.mu.Lock()
-		_, live := h.entries[entry.ID]
-		h.mu.Unlock()
-		if live {
-			err := h.disableOne(ctx, entry.ID)
-			result = errors.Join(result, err)
-			if err != nil && !h.engine.Missing(entry.ID) {
-				return result
-			}
-		} else {
-			if !entry.Enabled {
-				continue
-			}
-			entry.Enabled = false
-			if err := h.store.SaveEntry(ctx, entry); err != nil {
-				result = errors.Join(result, err)
-				if !catalogCommitted(err) {
-					return result
-				}
-			}
-		}
-	}
-	return result
+	return h.disableEntries(ctx, plan.Entries)
 }
 
 func (h *Host) ReplaceCascade(ctx context.Context, ref contract.PackageRef, options packagehost.ChangeOptions, confirm ConfirmCascade) error {
@@ -168,7 +134,7 @@ func (h *Host) ReplaceCascade(ctx context.Context, ref contract.PackageRef, opti
 	}
 	actual.DataVersion = options.DataVersion
 	actual.MigrationCommitted = options.MigrationCommitted
-	if err := h.store.CheckSelect(ref, actual); err != nil {
+	if err := h.store.CheckSelect(ctx, ref, actual); err != nil {
 		return err
 	}
 	if err := h.checkRuntime(ref); err != nil {

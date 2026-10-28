@@ -99,7 +99,7 @@ func TestBootstrapHardLimitWithoutNewline(t *testing.T) {
 }
 
 func TestGuestAdmitsImmediateRequestAfterRegistration(t *testing.T) {
-	for range 50 {
+	synctest.Test(t, func(t *testing.T) {
 		left, right := net.Pipe()
 		host, err := New(Options{Transport: left, FrameBytes: contract.MaxFrameBytes, Identity: contract.Identity{Activation: "a"}, Handler: auditHandler})
 		if err != nil {
@@ -107,19 +107,18 @@ func TestGuestAdmitsImmediateRequestAfterRegistration(t *testing.T) {
 		}
 		guest, err := New(Options{Transport: right, Guest: true, Handler: auditHandler})
 		if err != nil {
+			host.Close()
+			host.Wait()
 			t.Fatal(err)
 		}
+		defer func() { host.Close(); guest.Close(); host.Wait(); guest.Wait() }()
 		if _, err := host.Call(t.Context(), "initialize", testInitialize("a")); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := host.Call(t.Context(), "call", nil); err != nil {
 			t.Fatal(err)
 		}
-		host.Close()
-		guest.Close()
-		host.Wait()
-		guest.Wait()
-	}
+	})
 }
 
 func TestInitializationCommitBarrierReleasesOnCancelOrClose(t *testing.T) {
@@ -136,26 +135,21 @@ func TestInitializationCommitBarrierReleasesOnCancelOrClose(t *testing.T) {
 				defer right.Close()
 				request, cancelRequest := context.WithCancel(t.Context())
 				defer cancelRequest()
-				gate := &lifecycleGate{entered: make(chan struct{}), release: make(chan struct{})}
-				delivery := &lifecycleContext{Context: t.Context(), gates: []*lifecycleGate{gate}}
 				done := make(chan error, 1)
 				go func() {
-					done <- endpoint.sendResponse(request, delivery, Frame{
+					done <- endpoint.sendResponse(request, t.Context(), Frame{
 						Schema: contract.SessionSchema, Kind: "response", Activation: "a",
 						ID: "h:1", Method: "initialize", Payload: testRegistration(),
 					})
 				}()
-				<-gate.entered
-				// Hold the state lock across queue admission, before the commit.
-				endpoint.mu.Lock()
-				close(gate.release)
-				message := <-endpoint.out
+				// The unbuffered queue parks delivery before the initialization commit.
+				synctest.Wait()
 				if closeSession {
 					endpoint.cancel()
 				} else {
 					cancelRequest()
 				}
-				endpoint.mu.Unlock()
+				message := <-endpoint.out
 				if err := <-done; err == nil {
 					t.Fatal("canceled registration committed")
 				}

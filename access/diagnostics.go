@@ -108,7 +108,7 @@ func defaultSummary(code contract.Code) string {
 }
 
 func (s *Sink) Emit(ctx context.Context, input DiagnosticInput) error {
-	if s == nil || s.options.Write == nil || ctx == nil {
+	if s == nil || s.options.Write == nil {
 		return contract.Fail(contract.Invalid, "diagnostic sink not configured")
 	}
 	if err := ctx.Err(); err != nil {
@@ -123,27 +123,18 @@ func (s *Sink) Emit(ctx context.Context, input DiagnosticInput) error {
 			return fmt.Errorf("redact diagnostic: %w", err)
 		}
 	}
-	// Reserve room for bounded metadata and JSON escaping (at most six bytes per
-	// input byte). Truncation is on UTF-8 boundaries and precedes serialization.
+	// Compact metadata fits in 384 bytes; reserve up to six JSON bytes
+	// per summary byte. Truncation is on UTF-8 boundaries before serialization.
 	summary = boundedText(summary, (s.options.MaxBytes-384)/6)
 	record := Diagnostic{
 		Owner: safeIdentity(input.Owner), Call: safeLabel(input.Call), Stage: safeLabel(input.Stage),
 		Code: code, Summary: summary,
 	}
-	encoded, err := json.Marshal(record)
-	if err != nil {
-		return fmt.Errorf("encode diagnostic: %w", err)
-	}
+	// Diagnostic contains only strings, so JSON encoding cannot fail.
+	encoded, _ := json.Marshal(record)
 	if len(encoded) > s.options.MaxBytes {
 		// Metadata can consume the budget; retain only the activation correlation.
 		record.Owner.Package, record.Owner.Entry, record.Owner.Digest, record.Call = "", "", "", ""
-		encoded, err = json.Marshal(record)
-		if err != nil {
-			return fmt.Errorf("encode compact diagnostic: %w", err)
-		}
-		if len(encoded) > s.options.MaxBytes {
-			return contract.Fail(contract.Invalid, "diagnostic exceeds limit")
-		}
 	}
 	if err := s.options.Write(ctx, record); err != nil {
 		return fmt.Errorf("write diagnostic: %w", err)
@@ -165,7 +156,7 @@ func boundedText(value string, limit int) string {
 
 // PublicError projects a host error at a guest boundary without copying its
 // message or wrapped cause. The original error remains the caller's property.
-func (s *Sink) PublicError(err error) error {
+func PublicError(err error) error {
 	if err == nil {
 		return nil
 	}

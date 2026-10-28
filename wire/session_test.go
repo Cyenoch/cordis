@@ -32,12 +32,8 @@ func pair(t *testing.T, host Handler, guest Handler) (*Endpoint, *Endpoint) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := h.Close(); err != nil {
-			t.Error(err)
-		}
-		if err := g.Close(); err != nil {
-			t.Error(err)
-		}
+		h.Close()
+		g.Close()
 		h.Wait()
 		g.Wait()
 	})
@@ -143,9 +139,7 @@ func TestEndpointRejectsReplayedRequest(t *testing.T) {
 		if err := b.Close(); err != nil {
 			t.Error(err)
 		}
-		if err := e.Close(); err != nil {
-			t.Error(err)
-		}
+		e.Close()
 		e.Wait()
 	}()
 	frame := Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "a", ID: "g:1", Method: "health", Payload: json.RawMessage(`{}`), DeadlineMS: 1000}

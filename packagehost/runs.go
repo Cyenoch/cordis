@@ -148,7 +148,7 @@ func (s *Store) commitRuns(ctx context.Context, runs []RunRecord) error {
 	}
 	s.runs = runs
 	s.observeCommit(commitRunsSwapped)
-	if err := syncDirectory(s.root); err != nil {
+	if err := syncDir(s.root); err != nil {
 		return &CommitError{Err: fmt.Errorf("sync runs: %w", err)}
 	}
 	return nil
@@ -210,5 +210,5 @@ func (s *Store) recoverRuns() error {
 	if err = os.Remove(filepath.Join(s.root, "runs.next")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return syncDirectory(s.root)
+	return syncDir(s.root)
 }

@@ -95,7 +95,7 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 				}
 				return session
 			}
-			call := func(session contract.Session, method string, input json.RawMessage) json.RawMessage {
+			call := func(t *testing.T, session contract.Session, method string, input json.RawMessage) json.RawMessage {
 				t.Helper()
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
@@ -106,16 +106,16 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 				return output
 			}
 			first, second := start(t), start(t)
-			if got := string(call(first, "sum", json.RawMessage(`[4,8,15,16,23,42]`))); got != "108" {
+			if got := string(call(t, first, "sum", json.RawMessage(`[4,8,15,16,23,42]`))); got != "108" {
 				t.Fatalf("sum: %s", got)
 			}
-			if got := string(call(first, "counter", nil)); got != "1" {
+			if got := string(call(t, first, "counter", nil)); got != "1" {
 				t.Fatalf("first counter: %s", got)
 			}
-			if got := string(call(first, "counter", nil)); got != "2" {
+			if got := string(call(t, first, "counter", nil)); got != "2" {
 				t.Fatalf("first counter: %s", got)
 			}
-			if got := string(call(second, "counter", nil)); got != "1" {
+			if got := string(call(t, second, "counter", nil)); got != "1" {
 				t.Fatalf("separate instance shares state: %s", got)
 			}
 			probe, err := json.Marshal(map[string]string{"path": secretFile})
@@ -127,7 +127,7 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 				FileAccessible bool   `json:"fileAccessible"`
 				Cwd            string `json:"cwd"`
 			}
-			if err := json.Unmarshal(call(second, "probe", probe), &observed); err != nil {
+			if err := json.Unmarshal(call(t, second, "probe", probe), &observed); err != nil {
 				t.Fatal(err)
 			}
 			if observed.Secret != "" {
@@ -152,10 +152,10 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 			if strings.Contains(first.Err().Error(), "runtime-test-secret") {
 				t.Fatal("guest stderr leaked in diagnostics")
 			}
-			if got := string(call(second, "counter", nil)); got != "2" {
+			if got := string(call(t, second, "counter", nil)); got != "2" {
 				t.Fatalf("other instance was damaged by panic: %s", got)
 			}
-			for _, fault := range []string{"loop", "block", "malformed", "stderr"} {
+			for _, fault := range []string{"loop", "block", "malformed"} {
 				t.Run(fault, func(t *testing.T) {
 					session := start(t)
 					ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -209,15 +209,27 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 				session := start(t, func(launch *contract.Launch) {
 					launch.Stderr = func(chunk []byte) error { forwarded += len(chunk); return nil }
 				})
-				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-				_, err := session.Call(ctx, "stderr", nil)
-				cancel()
-				if err == nil {
-					t.Fatal("stderr flood unexpectedly succeeded")
+				for range 2 {
+					if got := string(call(t, session, "stderr", nil)); got != "true" {
+						t.Fatalf("stderr write did not finish: %s", got)
+					}
+					if got := string(call(t, session, "health", nil)); got != `{"healthy":true}` {
+						t.Fatalf("stderr limit damaged activation: %s", got)
+					}
 				}
-				awaitReaped(t, session)
-				if forwarded > 1024 {
-					t.Fatalf("forwarded %d stderr bytes beyond the 1024-byte limit", forwarded)
+				if err := session.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if forwarded != 1024 {
+					t.Fatalf("forwarded %d stderr bytes, want the activation's 1024-byte budget", forwarded)
+				}
+			})
+			t.Run("stderr-without-sink-keeps-draining", func(t *testing.T) {
+				session := start(t)
+				call(t, session, "stderr", nil)
+				call(t, session, "health", nil)
+				if err := session.Close(); err != nil {
+					t.Fatal(err)
 				}
 			})
 			t.Run("stderr-sink-failure-keeps-draining", func(t *testing.T) {
@@ -226,15 +238,13 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 				session := start(t, func(launch *contract.Launch) {
 					launch.Stderr = func([]byte) error { calls++; return broken }
 				})
-				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-				_, err := session.Call(ctx, "stderr", nil)
-				cancel()
-				if err == nil {
-					t.Fatal("stderr flood unexpectedly succeeded")
+				// More than a pipe's capacity must drain even after forwarding fails.
+				call(t, session, "stderr", nil)
+				call(t, session, "health", nil)
+				if err := session.Close(); !errors.Is(err, broken) {
+					t.Fatalf("sink failure hidden: %v", err)
 				}
-				// A stalled reader would leave the guest blocked on a full pipe below the limit.
-				awaitReaped(t, session)
-				if calls != 1 || !errors.Is(session.Err(), broken) || !strings.Contains(session.Err().Error(), "stderr byte limit exceeded") {
+				if calls != 1 || !errors.Is(session.Err(), broken) {
 					t.Fatalf("sink failure must stop forwarding but keep draining: calls=%d err=%v", calls, session.Err())
 				}
 			})
@@ -261,7 +271,7 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					call(session, "spawn-child", payload)
+					call(t, session, "spawn-child", payload)
 					if err := session.Close(); err != nil {
 						t.Fatal(err)
 					}
@@ -342,13 +352,17 @@ func awaitReaped(t *testing.T, session contract.Session) {
 
 func TestNativeStartupRejectsInvalidPaths(t *testing.T) {
 	runtime := native.New()
+	root := t.TempDir()
+	artifact := filepath.Join(root, "artifact")
+	if err := os.WriteFile(artifact, []byte("not executable"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := runtime.Start(ctx, contract.Launch{FrameBytes: contract.MaxFrameBytes})
-	if err == nil {
-		t.Fatal("canceled or empty launch accepted")
+	_, err := runtime.Start(ctx, contract.Launch{FrameBytes: contract.MaxFrameBytes, Directory: root, Artifact: artifact})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("startup cancellation lost: %v", err)
 	}
-	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "external")
 	if err := os.WriteFile(outside, []byte("not executable"), 0600); err != nil {
 		t.Fatal(err)

@@ -42,10 +42,7 @@ func (h *Host) DiagnosticErrors() []error {
 
 func (h *Host) startBuiltin(ctx context.Context, scope contract.Scope, realm string, definition contract.Definition) error {
 	owner := scope.Identity()
-	if err := h.policy.Activate(owner, definition.Capabilities); err != nil {
-		return err
-	}
-	if err := scope.Defer(func(context.Context) error { h.onRetire(owner); return nil }); err != nil {
+	if err := h.activatePolicy(scope, definition.Capabilities); err != nil {
 		return err
 	}
 	for _, capability := range definition.Capabilities {
@@ -63,4 +60,15 @@ func (h *Host) startBuiltin(ctx context.Context, scope contract.Scope, realm str
 		}
 	}
 	return h.diagnose(ctx, owner, "", "initialize", definition.Start(ctx, &hostScope{Scope: scope, host: h, realm: realm}))
+}
+
+func (h *Host) activatePolicy(scope contract.Scope, capabilities []contract.Capability) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// Serialize with onRetire's entry barrier: a late Start cannot grant authority
+	// after the global retirement hook already revoked this activation.
+	if err := scope.Context().Err(); err != nil {
+		return err
+	}
+	return h.policy.Activate(scope.Identity(), capabilities)
 }

@@ -142,9 +142,10 @@ func run() (result error) {
     if err != nil {
         return err
     }
-    if err := namespaces.Configure(owner.Package, access.NamespaceConfig{
+    namespaceConfig := access.NamespaceConfig{
         Name: "tutorial-data", QuotaBytes: 4096, DataVersion: 1,
-    }); err != nil {
+    }
+    if err := namespaces.Configure(owner.Package, namespaceConfig); err != nil {
         return err
     }
     if err := namespaces.Write(ctx, owner, "tutorial-data", "greeting", []byte("hello")); err != nil {
@@ -184,6 +185,20 @@ func run() (result error) {
     if err := namespaces.Compact(ctx); err != nil {
         return err
     }
+    namespaces, err = access.OpenNamespaceStore(policy, directory)
+    if err != nil {
+        return err
+    }
+    // The manifest's initial version does not reset migrated data.
+    namespaceConfig.QuotaBytes = 8192
+    if err := namespaces.Configure(owner.Package, namespaceConfig); err != nil {
+        return err
+    }
+    value, err = namespaces.Read(ctx, owner, "tutorial-data", "greeting")
+    if err != nil {
+        return err
+    }
+    fmt.Println("reconfigured:", string(value))
 
     tasks := access.NewTaskManager(policy)
     guestCtx, stopGuest := context.WithCancel(ctx)
@@ -224,6 +239,7 @@ settings denied
 contributions: 1
 reopened: hello
 migrated: HELLO
+reconfigured: HELLO
 after revoke: 0 contributions
 host task: completed {"rows":3}
 retained tasks: 0
@@ -236,6 +252,8 @@ retained tasks: 0
 注册 contribution validator 后再 Enable 或 Restore。外部插件可用 `(*sdk.Client).Contribute` 在初始化时登记贡献；Host 把贡献和服务发布绑定到同一激活可见点。本例未连接 core，`batch.Commit` 就是可见点；不要将这一步搬到真实 Host 的任意业务 handler 中绕过发布门控。
 
 namespace 不会自动成为插件 API。宿主将 `OpenNamespaceStore(host.Access(), directory)` 接到自己的 Broker handler 中，身份使用 handler 取得的可信 owner，不能从 input 解码。目录只由一个 store 写入；框架没有跨进程 namespace 写锁，也不把打开失败转成内存模式。
+
+重开后继续使用清单中的 `DataVersion: 1` 调用 `Configure` 不会把已经迁移到 2 的数据降级；版本只在新建时使用。例子同时把配额从 4096 提高到 8192 并持久化。降低配额也允许，但不能低于现有 key/value 的总字节数，拒绝时原配额和数据不变。
 
 ## 外部插件发起任务
 
@@ -266,4 +284,4 @@ return task.Finish(finishCtx, "completed", json.RawMessage(`{"rows":3}`), "")
 
 ## 失败时怎么处理
 
-`ErrQuota`、`ErrTaskQuota` 和 `ErrNotFound` 都应交给业务判断，不转换成“成功但为空”。namespace 的 `CommittedError` 表示记录已提交、后续同步或清理失败，先核对状态，不盲目重放；`RecoveryError` 表示该 store 不能继续写入，需要重新打开并处理恢复错误。完整限制、配额和错误投影见[访问层参考](access.md)。
+`ErrQuota`、`ErrTaskQuota` 和 `ErrNotFound` 都应交给业务判断，不转换成“成功但为空”。namespace 的 `CommittedError` 表示记录已提交、后续同步或清理失败，先核对状态，不盲目重放；`RecoveryError` 表示该 store 不能继续写入，需要重新打开并处理恢复错误。向 guest 返回宿主错误前用 `access.PublicError(err)` 投影，无需创建诊断 Sink。完整限制、配额和错误投影见[访问层参考](access.md)。

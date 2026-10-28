@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -149,9 +148,6 @@ func validateIdentifiers(frame Frame) error {
 
 func validRequestID(id string) bool {
 	if len(id) < 3 || len(id) > 128 || id[1] != ':' || id[0] != 'h' && id[0] != 'g' || id[2] == '0' {
-		return false
-	}
-	if strings.IndexFunc(id[2:], func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
 		return false
 	}
 	n, err := strconv.ParseUint(id[2:], 10, 64)

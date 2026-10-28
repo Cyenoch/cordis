@@ -80,8 +80,8 @@ func (s *hostScope) Contribute(item contract.Contribution) error {
 	}
 	s.host.mu.Lock()
 	defer s.host.mu.Unlock()
-	if s.host.staged == nil {
-		s.host.staged = map[string][]contract.Contribution{}
+	if err := s.Context().Err(); err != nil {
+		return err
 	}
 	owner := s.Identity()
 	s.host.staged[owner.Activation] = append(s.host.staged[owner.Activation], item)
@@ -100,8 +100,8 @@ func (h *Host) RegisterDefinition(ctx context.Context, packageID string, definit
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	key := packageID + "/" + definition.ID
-	if h.closed || h.definitions[key].Start != nil {
-		return contract.Fail(contract.Conflict, "definition already registered or host closed")
+	if h.definitions[key].Start != nil {
+		return contract.Fail(contract.Conflict, "definition already registered")
 	}
 	h.definitions[key] = definition
 	return nil
@@ -129,9 +129,6 @@ func (h *Host) reserveEntry(id string) (func(), error) {
 	}
 	if h.admissions[id] {
 		return nil, contract.Fail(contract.Conflict, "entry registration is already in progress")
-	}
-	if h.admissions == nil {
-		h.admissions = map[string]bool{}
 	}
 	h.admissions[id] = true
 	return func() {
@@ -170,9 +167,6 @@ func (s *hostScope) CreateChild(ctx context.Context, child contract.Child) (cont
 	}
 	entry := contract.Entry{ID: owner.Entry + "." + child.ID, Parent: owner.Entry, Package: owner.Package,
 		Definition: child.Definition, Realm: s.realm, Config: child.Config, Enabled: true}
-	if len(entry.Config) == 0 {
-		entry.Config = json.RawMessage(`{}`)
-	}
 	if owner.Digest != "builtin" {
 		instance, err := h.enableEntry(ctx, entry, &owner)
 		if err != nil {

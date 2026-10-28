@@ -58,7 +58,6 @@ type Engine struct {
 	closed        bool
 	sequence      uint64
 	hooks         Hooks
-	cleanupSlots  chan struct{}
 }
 
 type instance struct {
@@ -115,7 +114,7 @@ type activation struct {
 func New() *Engine { return NewWithHooks(Hooks{}) }
 
 func NewWithHooks(hooks Hooks) *Engine {
-	e := &Engine{realms: map[string]realm{"": {}}, instances: map[string]*instance{}, services: map[string]map[string]*provider{}, edges: map[*activation]map[*activation]int{}, instanceEdges: map[*activation]map[*instance]int{}, changed: make(chan struct{}), wake: make(chan struct{}, 1), done: make(chan struct{}), hooks: hooks, cleanupSlots: make(chan struct{}, 8)}
+	e := &Engine{realms: map[string]realm{"": {}}, instances: map[string]*instance{}, services: map[string]map[string]*provider{}, edges: map[*activation]map[*activation]int{}, instanceEdges: map[*activation]map[*instance]int{}, changed: make(chan struct{}), wake: make(chan struct{}, 1), done: make(chan struct{}), hooks: hooks}
 	go e.coordinate()
 	return e
 }
@@ -146,43 +145,45 @@ func (e *Engine) ConfigureRealm(name, parent string, isolated []string) error {
 }
 
 func (e *Engine) Add(entry contract.Entry, definition contract.Definition, identity contract.Identity) (contract.Instance, error) {
-	return e.add(entry, definition, identity, nil)
+	return e.add(entry, definition, identity, nil, nil)
 }
 
 func (e *Engine) AddOwned(entry contract.Entry, definition contract.Definition, identity, parent contract.Identity) (contract.Instance, error) {
 	entry.Parent = parent.Entry
-	return e.add(entry, definition, identity, &parent)
+	return e.add(entry, definition, identity, &parent, nil)
 }
 
-func (e *Engine) add(entry contract.Entry, definition contract.Definition, identity contract.Identity, owner *contract.Identity) (contract.Instance, error) {
-	if entry.ID == "" || definition.Start == nil {
-		return nil, contract.Fail(contract.Invalid, "entry id and start callback are required")
-	}
-	if entry.Definition != "" && entry.Definition != definition.ID {
-		return nil, contract.Fail(contract.Invalid, "entry definition mismatch")
-	}
+// AddWithCommit checks admission before commit validates and records configuration.
+// The definition validator is retained for updates, not repeated after commit.
+// No engine mutex is held while commit performs storage I/O.
+func (e *Engine) AddWithCommit(entry contract.Entry, definition contract.Definition, identity contract.Identity, commit func() error) (contract.Instance, error) {
+	return e.add(entry, definition, identity, nil, commit)
+}
+
+func (e *Engine) add(entry contract.Entry, definition contract.Definition, identity contract.Identity, owner *contract.Identity, commit func() error) (contract.Instance, error) {
 	config := normalizeConfig(entry.Config)
-	if err := validate(definition, config); err != nil {
+	entry.Config = config
+	if err := validateAdmission(entry, definition); err != nil {
 		return nil, err
 	}
+	if commit == nil {
+		if err := validate(definition, config); err != nil {
+			return nil, err
+		}
+	}
+	e.configMu.Lock()
+	defer e.configMu.Unlock()
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.closed {
-		return nil, contract.Fail(contract.NotReady, "engine is closed")
+	if err := e.checkAdmissionLocked(entry, owner); err != nil {
+		return nil, err
 	}
-	if _, ok := e.instances[entry.ID]; ok {
-		return nil, contract.Fail(contract.Conflict, "entry already exists")
-	}
-	if _, ok := e.realms[entry.Realm]; !ok {
-		return nil, contract.Fail(contract.Invalid, "unknown realm")
-	}
-	if entry.Parent != "" {
-		parent, ok := e.instances[entry.Parent]
-		if !ok || !parent.enabled || parent.removing || !e.descendantLocked(entry.Realm, parent.entry.Realm) {
-			return nil, contract.Fail(contract.Invalid, "parent is unavailable or outside realm ancestry")
-		}
-		if owner != nil && (parent.activation == nil || parent.activation.identity != *owner || parent.activation.retiring) {
-			return nil, contract.Fail(contract.NotReady, "parent activation is no longer current")
+	if commit != nil {
+		e.mu.Unlock()
+		err := commit()
+		e.mu.Lock()
+		if err != nil {
+			return nil, err
 		}
 	}
 	definition.Requires = slices.Clone(definition.Requires)
@@ -323,11 +324,7 @@ func (e *Engine) signalChangedLocked() { close(e.changed); e.changed = make(chan
 func invokeStart(a *activation) (err error) {
 	ctx, cancel := context.WithCancel(context.WithValue(a.ctx, actorKey{}, a))
 	defer cancel()
-	defer func() {
-		if v := recover(); v != nil {
-			err = fmt.Errorf("plugin start panic: %v", v)
-		}
-	}()
+	defer recoverCallback("plugin start", &err)
 	return a.instance.definition.Start(ctx, &Scope{activation: a})
 }
 func (e *Engine) start(a *activation) {
@@ -526,11 +523,7 @@ func (e *Engine) retireLocked(root *activation, terminal contract.State) {
 	go e.dispose(root, dependents)
 }
 func invokeCleanup(fn contract.Cleanup, ctx context.Context) (err error) {
-	defer func() {
-		if v := recover(); v != nil {
-			err = fmt.Errorf("cleanup panic: %v", v)
-		}
-	}()
+	defer recoverCallback("cleanup", &err)
 	return fn(ctx)
 }
 func (e *Engine) dispose(a *activation, dependents []*activation) {
@@ -572,8 +565,8 @@ func (e *Engine) dispose(a *activation, dependents []*activation) {
 	}
 	a.work.Wait()
 	a.managedWork.Wait()
-	e.cleanupSlots <- struct{}{}
-	defer func() { <-e.cleanupSlots }()
+	// Cleanup is per activation: a stuck builtin must not exhaust a global pool.
+	// Go cannot forcibly stop it; its ownership/dependency tree remains pending.
 	cleanupCtx := context.WithValue(context.Background(), cleanupKey{}, a)
 	cleanupCtx = context.WithValue(cleanupCtx, actorKey{}, a)
 	for _, child := range dependents {
@@ -659,11 +652,7 @@ func (e *Engine) Close(ctx context.Context) error {
 }
 
 func invokePublish(hook func(contract.Identity) error, identity contract.Identity) (err error) {
-	defer func() {
-		if value := recover(); value != nil {
-			err = fmt.Errorf("publication hook panic: %v", value)
-		}
-	}()
+	defer recoverCallback("publication hook", &err)
 	return hook(identity)
 }
 
@@ -672,30 +661,6 @@ func (e *Engine) IsActive(identity contract.Identity) bool {
 	defer e.mu.Unlock()
 	i := e.instances[identity.Entry]
 	return i != nil && i.activation != nil && i.activation.identity == identity && i.activation.ready && !i.activation.retiring
-}
-
-// Fail reports an activation/session failure without automatically retrying it.
-func (e *Engine) Fail(entryID string, cause error) error {
-	if cause == nil {
-		return contract.Fail(contract.Invalid, "failure cause is required")
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	i := e.instances[entryID]
-	if i == nil {
-		return contract.Fail(contract.Invalid, "unknown entry")
-	}
-	if i.activation == nil {
-		i.state = contract.Failed
-		i.failure = cause
-		i.finishRevisionLocked(i.desired, contract.UpdateResult{Revision: i.desired}, cause)
-	} else {
-		i.activation.forcedErr = errors.Join(i.activation.forcedErr, cause)
-		i.activation.startErr = errors.Join(i.activation.startErr, cause)
-		e.retireLocked(i.activation, contract.Failed)
-	}
-	e.signalLocked()
-	return nil
 }
 
 // FailActivation rejects a late failure from an already replaced session.
@@ -717,11 +682,6 @@ func (e *Engine) FailActivation(identity contract.Identity, cause error) error {
 	return nil
 }
 
-func (e *Engine) AddChild(parent string, entry contract.Entry, definition contract.Definition, identity contract.Identity) (contract.Instance, error) {
-	entry.Parent = parent
-	return e.Add(entry, definition, identity)
-}
-
 // Remove waits for complete disposal before freeing the persistent entry ID.
 // Remove child registrations first; ownership is not silently transferred.
 func (e *Engine) Remove(ctx context.Context, entryID string) error {
@@ -731,7 +691,7 @@ func (e *Engine) Remove(ctx context.Context, entryID string) error {
 	if i == nil {
 		e.mu.Unlock()
 		e.configMu.Unlock()
-		return contract.Fail(contract.Invalid, "unknown entry")
+		return contract.Fail(contract.NotReady, "entry does not exist")
 	}
 	if i.removing {
 		e.mu.Unlock()
@@ -760,22 +720,13 @@ func (e *Engine) Remove(ctx context.Context, entryID string) error {
 	return err
 }
 
-// Enable starts a previously stopped entry. Failed entries require Retry.
-func (e *Engine) Enable(ctx context.Context, entryID string) error {
-	i, err := e.Resume(entryID)
-	if err != nil {
-		return err
-	}
-	return i.Wait(ctx)
-}
-
 // Resume submits the enable intent without waiting for dependencies or Start.
 func (e *Engine) Resume(entryID string) (contract.Instance, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	i := e.instances[entryID]
 	if i == nil {
-		return nil, contract.Fail(contract.Invalid, "unknown entry")
+		return nil, contract.Fail(contract.NotReady, "entry does not exist")
 	}
 	if e.closed || i.removing || i.state != contract.Stopped || i.activation != nil {
 		return nil, contract.Fail(contract.Conflict, "entry is not available for enabling")
@@ -795,11 +746,7 @@ func (e *Engine) Resume(entryID string) (contract.Instance, error) {
 }
 
 func invokeRetire(hook func(contract.Identity), identity contract.Identity) (err error) {
-	defer func() {
-		if value := recover(); value != nil {
-			err = fmt.Errorf("retirement hook panic: %v", value)
-		}
-	}()
+	defer recoverCallback("retirement hook", &err)
 	hook(identity)
 	return nil
 }

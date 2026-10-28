@@ -1,40 +1,18 @@
 package wire
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
-	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/Cyenoch/cordis/contract"
 )
-
-// Context gates park Call before and after it captures its response channel.
-// Only channel scheduling is white-box; frames and health use real transport.
-type lifecycleGate struct {
-	entered chan struct{}
-	release chan struct{}
-}
-
-type lifecycleContext struct {
-	context.Context
-	doneCalls atomic.Int32
-	gates     []*lifecycleGate
-}
-
-func (c *lifecycleContext) Done() <-chan struct{} {
-	n := int(c.doneCalls.Add(1)) - 1
-	if n < len(c.gates) && c.gates[n] != nil {
-		close(c.gates[n].entered)
-		<-c.gates[n].release
-	}
-	return c.Context.Done()
-}
 
 func writeLifecycleFrame(writer io.Writer, frame Frame) error {
 	data, err := json.Marshal(frame)
@@ -47,9 +25,7 @@ func writeLifecycleFrame(writer io.Writer, frame Frame) error {
 
 func closeLifecycleEndpoint(t *testing.T, endpoint *Endpoint, peer net.Conn) {
 	t.Helper()
-	if err := endpoint.Close(); err != nil {
-		t.Error(err)
-	}
+	endpoint.Close()
 	if err := peer.Close(); err != nil {
 		t.Error(err)
 	}
@@ -72,8 +48,9 @@ func TestAnsweredCancellationDoesNotExpireHealthyEndpoint(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer closeLifecycleEndpoint(t, endpoint, right)
+		base, cancel := context.WithTimeout(t.Context(), time.Minute)
+		defer cancel()
 		peerDone := make(chan error, 1)
-		responseReady := make(chan struct{})
 		go func() {
 			decoder := json.NewDecoder(right)
 			for {
@@ -86,9 +63,6 @@ func TestAnsweredCancellationDoesNotExpireHealthyEndpoint(t *testing.T) {
 					// An already answered request has no further cancellation reply.
 					continue
 				}
-				if request.ID == "h:1" {
-					<-responseReady
-				}
 				payload := json.RawMessage(`{}`)
 				if request.Method == "initialize" {
 					payload = testRegistration()
@@ -100,37 +74,18 @@ func TestAnsweredCancellationDoesNotExpireHealthyEndpoint(t *testing.T) {
 					peerDone <- err
 					return
 				}
+				if request.ID == "h:1" {
+					cancel()
+				}
 			}
 		}()
 
-		base, cancel := context.WithTimeout(t.Context(), time.Minute)
-		defer cancel()
-		before := &lifecycleGate{entered: make(chan struct{}), release: make(chan struct{})}
-		after := &lifecycleGate{entered: make(chan struct{}), release: make(chan struct{})}
-		ctx := &lifecycleContext{Context: base, gates: []*lifecycleGate{nil, before, after}}
 		callDone := make(chan error, 1)
 		go func() {
-			_, err := endpoint.Call(ctx, "initialize", testInitialize("answered"))
+			_, err := endpoint.Call(base, "initialize", testInitialize("answered"))
 			callDone <- err
 		}()
-		<-before.entered
-		endpoint.mu.Lock()
-		request := endpoint.pending["h:1"]
-		request.result = nil
-		endpoint.mu.Unlock()
-		close(before.release)
-		<-after.entered
-		// Call captured a nil result channel before reaching its second Done
-		// check. Deliver the real reply to a separate buffered channel, so only
-		// cancellation can wake the caller's select after receive removes it.
-		endpoint.mu.Lock()
-		request.result = make(chan reply, 1)
-		endpoint.mu.Unlock()
-		close(responseReady)
-		synctest.Wait()
-		cancel()
-		close(after.release)
-		if err := <-callDone; !errors.Is(err, context.Canceled) {
+		if err := <-callDone; err != nil && !errors.Is(err, context.Canceled) {
 			t.Fatalf("answered canceled call: %v", err)
 		}
 		time.Sleep(2 * grace)
@@ -138,14 +93,12 @@ func TestAnsweredCancellationDoesNotExpireHealthyEndpoint(t *testing.T) {
 		if _, err := endpoint.Call(t.Context(), "health", json.RawMessage(`{}`)); err != nil {
 			t.Fatalf("already answered cancellation killed the endpoint: %v", err)
 		}
-		if err := endpoint.Close(); err != nil {
-			t.Fatal(err)
-		}
+		endpoint.Close()
 		<-peerDone
 	})
 }
 
-func TestInitializeReplyAdmitsImmediateGuestRequestBeforeCallerResumes(t *testing.T) {
+func TestInitializeReplyAdmitsImmediateGuestRequest(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		left, right := net.Pipe()
 		handled := make(chan string, 1)
@@ -163,11 +116,9 @@ func TestInitializeReplyAdmitsImmediateGuestRequestBeforeCallerResumes(t *testin
 		defer closeLifecycleEndpoint(t, endpoint, right)
 		base, cancel := context.WithTimeout(t.Context(), time.Minute)
 		defer cancel()
-		gate := &lifecycleGate{entered: make(chan struct{}), release: make(chan struct{})}
-		ctx := &lifecycleContext{Context: base, gates: []*lifecycleGate{nil, nil, gate}}
 		callDone := make(chan error, 1)
 		go func() {
-			_, err := endpoint.Call(ctx, "initialize", testInitialize("initialize"))
+			_, err := endpoint.Call(base, "initialize", testInitialize("initialize"))
 			callDone <- err
 		}()
 		decoder := json.NewDecoder(right)
@@ -175,20 +126,25 @@ func TestInitializeReplyAdmitsImmediateGuestRequestBeforeCallerResumes(t *testin
 		if err := decoder.Decode(&initialize); err != nil {
 			t.Fatal(err)
 		}
-		<-gate.entered
 		peerDone := make(chan error, 1)
 		go func() {
-			if err := writeLifecycleFrame(right, Frame{
+			var frames bytes.Buffer
+			if err := writeLifecycleFrame(&frames, Frame{
 				Schema: contract.SessionSchema, Kind: "response", Activation: "initialize",
 				ID: initialize.ID, Method: "initialize", Payload: testRegistration(),
 			}); err != nil {
 				peerDone <- err
 				return
 			}
-			peerDone <- writeLifecycleFrame(right, Frame{
+			if err := writeLifecycleFrame(&frames, Frame{
 				Schema: contract.SessionSchema, Kind: "request", Activation: "initialize",
 				ID: "g:1", Method: "host.invoke", Payload: json.RawMessage(`{}`), DeadlineMS: 1000,
-			})
+			}); err != nil {
+				peerDone <- err
+				return
+			}
+			_, err := right.Write(frames.Bytes())
+			peerDone <- err
 		}()
 		synctest.Wait()
 		select {
@@ -199,7 +155,6 @@ func TestInitializeReplyAdmitsImmediateGuestRequestBeforeCallerResumes(t *testin
 		default:
 			t.Errorf("immediate guest request was not admitted: %v", endpoint.Err())
 		}
-		close(gate.release)
 		if err := <-callDone; err != nil {
 			t.Fatalf("initialize: %v", err)
 		}

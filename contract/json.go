@@ -14,6 +14,15 @@ import (
 	"unicode/utf8"
 )
 
+// UnknownFieldError identifies a rejected field without parsing error messages.
+type UnknownFieldError struct {
+	Field string
+}
+
+func (e *UnknownFieldError) Error() string {
+	return fmt.Sprintf("unknown contract field %q", e.Field)
+}
+
 // Decode rejects duplicate keys, unknown fields, deep values and trailing data.
 func Decode(data []byte, target any) error {
 	return DecodeWithLimits(data, target, 32, 10000)
@@ -158,7 +167,7 @@ func checkValue(dec *json.Decoder, t reflect.Type, depth, maxDepth, maxArray int
 			if t != nil && t.Kind() == reflect.Struct {
 				child = jsonFields(t)[name]
 				if child == nil {
-					return fmt.Errorf("unknown contract field %q", name)
+					return &UnknownFieldError{Field: name}
 				}
 			} else if t != nil && t.Kind() == reflect.Map {
 				child = t.Elem()

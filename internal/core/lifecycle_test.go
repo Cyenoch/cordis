@@ -334,7 +334,7 @@ func TestRetireNotificationPrecedesConsumerAndGlobalCleanup(t *testing.T) {
 			t.Fatalf("managed work occupied service gate: %v", err)
 		}
 		var err error
-		child, err = e.AddChild("provider", contract.Entry{ID: "consumer", Enabled: true}, contract.Definition{
+		child, err = e.Add(contract.Entry{ID: "consumer", Parent: "provider", Enabled: true}, contract.Definition{
 			Requires: []contract.Requirement{requirement}, Start: func(_ context.Context, s contract.Scope) error {
 				return s.Defer(func(ctx context.Context) error {
 					select {

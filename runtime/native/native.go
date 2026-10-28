@@ -17,6 +17,7 @@ type Options struct {
 	Lifetime    context.Context
 	Limits      wire.Limits
 	Grace       time.Duration
+	// StderrBytes caps bytes forwarded per activation; excess is drained.
 	StderrBytes int64
 }
 
@@ -40,9 +41,6 @@ func New(options ...Options) *Runtime {
 }
 
 func (r *Runtime) Start(ctx context.Context, launch contract.Launch) (contract.Session, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	path, err := process.Artifact(launch.Directory, launch.Artifact)
 	if err != nil {
 		return nil, fmt.Errorf("native artifact: %w", err)

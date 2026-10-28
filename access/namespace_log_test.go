@@ -32,6 +32,35 @@ func TestNamespaceRecoveredQuotaTracksOverwriteAndDelete(t *testing.T) {
 	}
 }
 
+func TestNamespaceReplayRejectsConflictingConfigure(t *testing.T) {
+	for _, mode := range []string{"other-package", "other-name", "quota-below-usage"} {
+		t.Run(mode, func(t *testing.T) {
+			policy, store, owner, directory := namespaceFixture(t, 20)
+			if err := store.Write(t.Context(), owner, "state", "k", []byte("1234")); err != nil {
+				t.Fatal(err)
+			}
+			record := namespaceRecord{
+				Operation: "configure", Namespace: "state", Package: owner.Package,
+				Config: NamespaceConfig{Name: "state", QuotaBytes: 20},
+			}
+			switch mode {
+			case "other-package":
+				record.Package = "other"
+			case "other-name":
+				record.Namespace, record.Config.Name = "other", "other"
+			case "quota-below-usage":
+				record.Config.QuotaBytes = 4
+			}
+			if err := store.appendLog(record); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := OpenNamespaceStore(policy, directory); err == nil {
+				t.Fatal("recovery accepted conflicting configuration")
+			}
+		})
+	}
+}
+
 func BenchmarkNamespaceReplay(b *testing.B) {
 	for _, size := range []int{1000, 10000} {
 		b.Run(fmt.Sprint(size), func(b *testing.B) {
@@ -41,7 +70,7 @@ func BenchmarkNamespaceReplay(b *testing.B) {
 			}
 			b.ResetTimer()
 			for b.Loop() {
-				s := NewNamespaceStore(nil)
+				s := NewNamespaceStore(NewPolicy())
 				if err := s.replay(namespaceRecord{Operation: "configure", Namespace: "state", Package: "package", Config: NamespaceConfig{Name: "state", QuotaBytes: 1 << 20}}); err != nil {
 					b.Fatal(err)
 				}

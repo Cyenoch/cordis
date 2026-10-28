@@ -126,17 +126,19 @@ func (e *Engine) runManaged(a *activation, work func(context.Context) error) {
 }
 
 func invokeLifecycle(stage string, fn func(context.Context) error, ctx context.Context) (err error) {
-	defer func() {
-		if value := recover(); value != nil {
-			if cause, ok := value.(error); ok {
-				err = fmt.Errorf("%s panic: %w", stage, cause)
-			} else {
-				err = fmt.Errorf("%s panic: %v", stage, value)
-			}
-		}
-	}()
+	defer recoverCallback(stage, &err)
 	if err := fn(ctx); err != nil {
 		return fmt.Errorf("%s: %w", stage, err)
 	}
 	return nil
+}
+
+func recoverCallback(stage string, err *error) {
+	if value := recover(); value != nil {
+		if cause, ok := value.(error); ok {
+			*err = fmt.Errorf("%s panic: %w", stage, cause)
+		} else {
+			*err = fmt.Errorf("%s panic: %v", stage, value)
+		}
+	}
 }

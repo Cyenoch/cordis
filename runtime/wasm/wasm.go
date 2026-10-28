@@ -14,9 +14,10 @@ import (
 )
 
 type Options struct {
-	Lifetime       context.Context
-	Limits         wire.Limits
-	Grace          time.Duration
+	Lifetime context.Context
+	Limits   wire.Limits
+	Grace    time.Duration
+	// StderrBytes caps bytes forwarded per activation; excess is drained.
 	StderrBytes    int64
 	MemoryPages    uint32
 	ArtifactBytes  int64

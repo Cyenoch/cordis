@@ -1,17 +1,18 @@
 package packagehost
 
 import (
+	"cmp"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -24,14 +25,13 @@ var ErrNotSelected = errors.New("package has no explicit selection")
 
 type catalog struct {
 	Revision        uint64                         `json:"revision"`
-	Transaction     string                         `json:"transaction"`
 	Installed       map[string]Package             `json:"installed"`
 	Selected        map[string]contract.PackageRef `json:"selected"`
 	Entries         map[string]contract.Entry      `json:"entries"`
 	DataVersions    map[string]uint32              `json:"dataVersions"`
 	Publishers      map[string]string              `json:"publishers"`
 	Pending         []pendingRemoval               `json:"pendingRemoval"`
-	Signatures      map[string]*Signature          `json:"signatures,omitempty"`
+	Signatures      map[string]*Signature          `json:"signatures"`
 	ExternalParents []string                       `json:"externalParents,omitempty"`
 }
 type pendingRemoval struct {
@@ -40,16 +40,10 @@ type pendingRemoval struct {
 	DeleteData bool                `json:"deleteData"`
 	Error      string              `json:"error,omitempty"`
 }
-type transaction struct {
-	ID        string `json:"id"`
-	Operation string `json:"operation"`
-	Digest    string `json:"digest,omitempty"`
-}
-
 type commitStage string
 
 const (
-	commitJournalSynced  commitStage = "journal-synced"
+	commitPrepared       commitStage = "prepared"
 	commitContentMoved   commitStage = "content-moved"
 	commitCatalogSynced  commitStage = "catalog-next-synced"
 	commitCatalogSwapped commitStage = "catalog-swapped"
@@ -102,16 +96,20 @@ func (e *CommitError) Error() string {
 func (e *CommitError) Unwrap() error { return e.Err }
 
 func newCatalog() catalog {
-	return catalog{Installed: map[string]Package{}, Selected: map[string]contract.PackageRef{}, Entries: map[string]contract.Entry{}, DataVersions: map[string]uint32{}, Publishers: map[string]string{}}
+	return catalog{
+		Installed:    map[string]Package{},
+		Selected:     map[string]contract.PackageRef{},
+		Entries:      map[string]contract.Entry{},
+		DataVersions: map[string]uint32{},
+		Publishers:   map[string]string{},
+		Signatures:   map[string]*Signature{},
+	}
 }
 
 // Open exclusively locks root until Close. Existing roots are recovered before
 // any package is exposed. Default trust is deny-by-default.
 func Open(root string, trust TrustPolicy) (s *Store, err error) {
-	return OpenWithLimits(root, trust, DefaultLimits())
-}
-func OpenWithLimits(root string, trust TrustPolicy, limits Limits) (s *Store, err error) {
-	return OpenWithOptions(root, Options{Trust: trust, Limits: limits})
+	return OpenWithOptions(root, Options{Trust: trust})
 }
 
 func OpenWithOptions(root string, options Options) (s *Store, err error) {
@@ -179,25 +177,24 @@ func OpenWithOptions(root string, options Options) (s *Store, err error) {
 }
 
 func copyTrust(t TrustPolicy) TrustPolicy {
-	out := TrustPolicy{Keys: map[string]TrustedKey{}, Publishers: map[string][]string{}, RevokedPublishers: map[string]bool{}, DevDigests: map[string]bool{}, PublisherChanges: map[string]map[string]bool{}}
+	out := TrustPolicy{
+		Keys:              map[string]TrustedKey{},
+		Publishers:        map[string][]string{},
+		RevokedPublishers: map[string]bool{},
+		DevDigests:        map[string]bool{},
+		PublisherChanges:  map[string]map[string]bool{},
+	}
 	for k, v := range t.Keys {
-		v.PublicKey = append([]byte(nil), v.PublicKey...)
+		v.PublicKey = slices.Clone(v.PublicKey)
 		out.Keys[k] = v
 	}
 	for k, v := range t.Publishers {
-		out.Publishers[k] = append([]string(nil), v...)
+		out.Publishers[k] = slices.Clone(v)
 	}
-	for k, v := range t.RevokedPublishers {
-		out.RevokedPublishers[k] = v
-	}
-	for k, v := range t.DevDigests {
-		out.DevDigests[k] = v
-	}
+	maps.Copy(out.RevokedPublishers, t.RevokedPublishers)
+	maps.Copy(out.DevDigests, t.DevDigests)
 	for id, list := range t.PublisherChanges {
-		out.PublisherChanges[id] = map[string]bool{}
-		for p, ok := range list {
-			out.PublisherChanges[id][p] = ok
-		}
+		out.PublisherChanges[id] = maps.Clone(list)
 	}
 	return out
 }
@@ -210,7 +207,6 @@ func (s *Store) UpdateTrust(trust TrustPolicy) error {
 	s.trust = copyTrust(trust)
 	return nil
 }
-func (s *Store) Limits() Limits { s.mu.Lock(); defer s.mu.Unlock(); return s.limits }
 func (s *Store) check() error {
 	if s.closed {
 		return os.ErrClosed
@@ -243,10 +239,13 @@ func decodeCatalog(raw []byte) (catalog, error) {
 }
 
 func validateCatalog(c catalog) error {
-	if c.Installed == nil || c.Selected == nil || c.Entries == nil || c.DataVersions == nil || c.Publishers == nil {
+	if c.Installed == nil || c.Selected == nil || c.Entries == nil || c.DataVersions == nil || c.Publishers == nil || c.Signatures == nil {
 		return fmt.Errorf("catalog is missing required maps")
 	}
 	for digest, p := range c.Installed {
+		if _, ok := c.Signatures[digest]; !ok {
+			return fmt.Errorf("installed package has no signature record: %s", digest)
+		}
 		if digest != p.Ref.Digest || !validDigest(digest) || p.Ref.ID != p.Manifest.ID || p.Ref.Version != p.Manifest.Version {
 			return fmt.Errorf("invalid installed catalog identity")
 		}
@@ -335,7 +334,7 @@ func (s *Store) recover() error {
 				return err
 			}
 		}
-		if err = syncDirectory(filepath.Join(s.root, name)); err != nil {
+		if err = syncDir(filepath.Join(s.root, name)); err != nil {
 			return err
 		}
 	}
@@ -354,7 +353,7 @@ func (s *Store) recover() error {
 			}
 		}
 	}
-	if err = syncDirectory(filepath.Join(s.root, "content")); err != nil {
+	if err = syncDir(filepath.Join(s.root, "content")); err != nil {
 		return err
 	}
 	for digest := range s.catalog.Installed {
@@ -369,40 +368,25 @@ func (s *Store) recover() error {
 	if err = s.retryPending(); err != nil {
 		return err
 	}
-	for _, name := range []string{"transaction.json", "catalog.next"} {
+	for _, name := range []string{"catalog.next"} {
 		if err = os.Remove(filepath.Join(s.root, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
-	return syncDirectory(s.root)
+	return syncDir(s.root)
 }
 
-func (s *Store) cloneCatalog() (catalog, error) {
-	c := newCatalog()
-	c.Revision = s.catalog.Revision
-	c.Transaction = s.catalog.Transaction
-	for k, v := range s.catalog.Installed {
-		c.Installed[k] = v
-	}
-	for k, v := range s.catalog.Selected {
-		c.Selected[k] = v
-	}
-	for k, v := range s.catalog.Entries {
-		c.Entries[k] = v
-	}
-	for k, v := range s.catalog.DataVersions {
-		c.DataVersions[k] = v
-	}
-	for k, v := range s.catalog.Publishers {
-		c.Publishers[k] = v
-	}
-	c.Pending = append([]pendingRemoval(nil), s.catalog.Pending...)
-	c.ExternalParents = append([]string(nil), s.catalog.ExternalParents...)
-	c.Signatures = make(map[string]*Signature, len(s.catalog.Signatures))
-	for digest, sig := range s.catalog.Signatures {
-		c.Signatures[digest] = sig
-	}
-	return c, nil
+func (s *Store) cloneCatalog() catalog {
+	c := s.catalog
+	c.Installed = maps.Clone(c.Installed)
+	c.Selected = maps.Clone(c.Selected)
+	c.Entries = maps.Clone(c.Entries)
+	c.DataVersions = maps.Clone(c.DataVersions)
+	c.Publishers = maps.Clone(c.Publishers)
+	c.Pending = slices.Clone(c.Pending)
+	c.ExternalParents = slices.Clone(c.ExternalParents)
+	c.Signatures = maps.Clone(c.Signatures)
+	return c
 }
 func durableJSON(file string, value any) (err error) {
 	raw, err := json.Marshal(value)
@@ -422,30 +406,13 @@ func durableBytes(file string, raw []byte) (err error) {
 	}
 	return errors.Join(err, f.Close())
 }
-func syncDirectory(dir string) (err error) { return syncDir(dir) }
 func (s *Store) observeCommit(stage commitStage) {
 	if s.commitObserver != nil {
 		s.commitObserver(stage)
 	}
 }
-func (s *Store) begin(op, digest string) (transaction, error) {
-	var identity [16]byte
-	if _, err := rand.Read(identity[:]); err != nil {
-		return transaction{}, fmt.Errorf("create transaction identity: %w", err)
-	}
-	tx := transaction{ID: hex.EncodeToString(identity[:]), Operation: op, Digest: digest}
-	if err := durableJSON(filepath.Join(s.root, "transaction.json"), tx); err != nil {
-		return tx, err
-	}
-	if err := syncDirectory(s.root); err != nil {
-		return tx, err
-	}
-	s.observeCommit(commitJournalSynced)
-	return tx, nil
-}
-func (s *Store) commit(ctx context.Context, c catalog, tx transaction) error {
+func (s *Store) commit(ctx context.Context, c catalog) error {
 	c.Revision = s.catalog.Revision + 1
-	c.Transaction = tx.ID
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return err
@@ -465,30 +432,24 @@ func (s *Store) commit(ctx context.Context, c catalog, tx transaction) error {
 	}
 	s.observeCommit(commitCatalogSwapped)
 	s.catalog = c
-	err = syncDirectory(s.root)
+	err = syncDir(s.root)
 	if err == nil {
 		s.observeCommit(commitRootSynced)
-	}
-	if e := os.Remove(filepath.Join(s.root, "transaction.json")); e != nil && !errors.Is(e, os.ErrNotExist) {
-		err = errors.Join(err, e)
 	}
 	if err != nil {
 		return &CommitError{err}
 	}
 	return nil
 }
-func (s *Store) mutate(ctx context.Context, op string, c catalog) error {
+func (s *Store) mutate(ctx context.Context, c catalog) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	tx, err := s.begin(op, "")
-	if err != nil {
+	s.observeCommit(commitPrepared)
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err = ctx.Err(); err != nil {
-		return err
-	}
-	return s.commit(ctx, c, tx)
+	return s.commit(ctx, c)
 }
 
 func (s *Store) Install(ctx context.Context, archive string) (Package, error) {
@@ -512,14 +473,7 @@ func (s *Store) install(ctx context.Context, source string, dev bool) (p Package
 	}
 	defer func() { err = errors.Join(err, os.RemoveAll(stage)) }()
 	if dev {
-		if err = copyDirectory(ctx, source, stage, s.limits); err != nil {
-			return p, err
-		}
-		if _, e := os.Stat(filepath.Join(stage, IntegrityFile)); errors.Is(e, os.ErrNotExist) {
-			err = generateIntegrity(ctx, stage, s.limits)
-		} else {
-			err = e
-		}
+		err = stageDirectory(ctx, source, stage, s.limits)
 	} else {
 		err = extractZIP(ctx, source, stage, s.limits)
 	}
@@ -554,31 +508,19 @@ func (s *Store) install(ctx context.Context, source string, dev bool) (p Package
 		if old.Ref.Version == p.Ref.Version && old.Ref.Digest != p.Ref.Digest {
 			return p, fmt.Errorf("same-version content conflict: %s (%s) versus %s (%s)", old.Source, old.Ref.Digest, p.Source, p.Ref.Digest)
 		}
-		if old.Manifest.Publisher != p.Manifest.Publisher && !s.trust.PublisherChanges[p.Ref.ID][p.Manifest.Publisher] {
-			return p, fmt.Errorf("publisher change for %s from %s to %s requires explicit approval", p.Ref.ID, old.Manifest.Publisher, p.Manifest.Publisher)
-		}
 	}
 	if err = ctx.Err(); err != nil {
 		return p, err
 	}
-	c, err := s.cloneCatalog()
-	if err != nil {
-		return p, err
-	}
+	c := s.cloneCatalog()
 	c.Signatures[p.Ref.Digest] = sig
+	c.Publishers[p.Ref.ID] = p.Manifest.Publisher
 	if _, ok := c.Installed[p.Ref.Digest]; ok {
 		p.Directory = s.content(p.Ref.Digest)
-		stored, e := clonePackageChecked(p)
-		if e != nil {
-			return p, e
-		}
-		c.Installed[p.Ref.Digest] = stored
-		return p, s.mutate(ctx, "refresh-signature", c)
+		c.Installed[p.Ref.Digest] = clonePackage(p)
+		return p, s.mutate(ctx, c)
 	}
-	tx, err := s.begin("install", p.Ref.Digest)
-	if err != nil {
-		return p, err
-	}
+	s.observeCommit(commitPrepared)
 	if _, e := os.Lstat(s.content(p.Ref.Digest)); e == nil {
 		if err = os.RemoveAll(s.content(p.Ref.Digest)); err != nil {
 			return p, err
@@ -594,20 +536,15 @@ func (s *Store) install(ctx context.Context, source string, dev bool) (p Package
 	if err = syncTree(s.content(p.Ref.Digest)); err != nil {
 		return p, errors.Join(err, os.RemoveAll(s.content(p.Ref.Digest)))
 	}
-	if err = syncDirectory(filepath.Join(s.root, "content")); err != nil {
+	if err = syncDir(filepath.Join(s.root, "content")); err != nil {
 		return p, errors.Join(err, os.RemoveAll(s.content(p.Ref.Digest)))
 	}
 	p.Directory = s.content(p.Ref.Digest)
-	stored, e := clonePackageChecked(p)
-	if e != nil {
-		return p, errors.Join(e, os.RemoveAll(p.Directory))
-	}
-	c.Installed[p.Ref.Digest] = stored
-	c.Publishers[p.Ref.ID] = p.Manifest.Publisher
+	c.Installed[p.Ref.Digest] = clonePackage(p)
 	if err = ctx.Err(); err != nil {
 		return p, errors.Join(err, os.RemoveAll(p.Directory))
 	}
-	err = s.commit(ctx, c, tx)
+	err = s.commit(ctx, c)
 	if err != nil {
 		var committed *CommitError
 		if !errors.As(err, &committed) {
@@ -617,29 +554,29 @@ func (s *Store) install(ctx context.Context, source string, dev bool) (p Package
 	// Cancellation after commit is intentionally not reported as a failed install.
 	return p, err
 }
-func clonePackageChecked(p Package) (Package, error) {
+func clonePackage(p Package) Package {
 	m := p.Manifest
-	m.Protocol.RequiredFeatures = append([]string(nil), m.Protocol.RequiredFeatures...)
-	m.HostMetadata = append([]byte(nil), m.HostMetadata...)
-	m.Definitions = append([]contract.DefinitionSpec(nil), m.Definitions...)
+	m.Protocol.RequiredFeatures = slices.Clone(m.Protocol.RequiredFeatures)
+	m.HostMetadata = slices.Clone(m.HostMetadata)
+	m.Definitions = slices.Clone(m.Definitions)
 	for i := range m.Definitions {
-		m.Definitions[i].Requires = append([]contract.Consumer(nil), m.Definitions[i].Requires...)
-		m.Definitions[i].ConfigSchema = append([]byte(nil), m.Definitions[i].ConfigSchema...)
-		m.Definitions[i].Provides = append([]contract.Service(nil), m.Definitions[i].Provides...)
+		m.Definitions[i].Requires = slices.Clone(m.Definitions[i].Requires)
+		m.Definitions[i].ConfigSchema = slices.Clone(m.Definitions[i].ConfigSchema)
+		m.Definitions[i].Provides = slices.Clone(m.Definitions[i].Provides)
 	}
-	m.Runtime.Artifacts = append([]contract.Artifact(nil), m.Runtime.Artifacts...)
-	m.Dependencies = append([]contract.Dependency(nil), m.Dependencies...)
-	m.OptionalDependencies = append([]contract.Dependency(nil), m.OptionalDependencies...)
-	m.Capabilities = append([]contract.Capability(nil), m.Capabilities...)
+	m.Runtime.Artifacts = slices.Clone(m.Runtime.Artifacts)
+	m.Dependencies = slices.Clone(m.Dependencies)
+	m.OptionalDependencies = slices.Clone(m.OptionalDependencies)
+	m.Capabilities = slices.Clone(m.Capabilities)
 	for i := range m.Capabilities {
-		m.Capabilities[i].Scope = append([]byte(nil), m.Capabilities[i].Scope...)
+		m.Capabilities[i].Scope = slices.Clone(m.Capabilities[i].Scope)
 	}
-	m.Contributions = append([]contract.Contribution(nil), m.Contributions...)
+	m.Contributions = slices.Clone(m.Contributions)
 	for i := range m.Contributions {
-		m.Contributions[i].Data = append([]byte(nil), m.Contributions[i].Data...)
+		m.Contributions[i].Data = slices.Clone(m.Contributions[i].Data)
 	}
 	p.Manifest = m
-	return p, nil
+	return p
 }
 func (s *Store) get(ref contract.PackageRef) (Package, error) {
 	p, ok := s.catalog.Installed[ref.Digest]
@@ -647,7 +584,7 @@ func (s *Store) get(ref contract.PackageRef) (Package, error) {
 		return Package{}, fmt.Errorf("package reference is not installed: %s@%s#%s", ref.ID, ref.Version, ref.Digest)
 	}
 	p.Directory = s.content(ref.Digest)
-	return clonePackageChecked(p)
+	return clonePackage(p), nil
 }
 func (s *Store) Get(ref contract.PackageRef) (Package, error) {
 	s.mu.Lock()
@@ -687,11 +624,8 @@ func (s *Store) Installed() ([]Package, error) {
 		}
 		out = append(out, q)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Ref.ID != out[j].Ref.ID {
-			return out[i].Ref.ID < out[j].Ref.ID
-		}
-		return out[i].Ref.Version < out[j].Ref.Version
+	slices.SortFunc(out, func(a, b Package) int {
+		return cmp.Or(strings.Compare(a.Ref.ID, b.Ref.ID), strings.Compare(a.Ref.Version, b.Ref.Version))
 	})
 	return out, nil
 }
@@ -758,14 +692,6 @@ func (s *Store) Preflight(ref contract.PackageRef) ([]string, error) {
 	}
 	return preflight(s.catalog, ref)
 }
-func inUse(ref contract.PackageRef, refs []contract.PackageRef) bool {
-	for _, r := range refs {
-		if r == ref {
-			return true
-		}
-	}
-	return false
-}
 
 // ConfirmDataVersion durably records an already-committed host data migration,
 // independently of package selection, trust, dependencies or installed code.
@@ -791,46 +717,40 @@ func (s *Store) confirmDataVersion(ctx context.Context, id string, version uint3
 	if current, ok := s.catalog.DataVersions[id]; ok && current == version {
 		return nil
 	}
-	c, err := s.cloneCatalog()
-	if err != nil {
-		return err
-	}
+	c := s.cloneCatalog()
 	c.DataVersions[id] = version
-	return s.mutate(context.WithoutCancel(ctx), "confirm-data-version", c)
+	return s.mutate(context.WithoutCancel(ctx), c)
 }
 
 // CheckSelect performs the same compatibility/configuration checks as Select,
 // without mutation and without requiring the old activation to have stopped.
-func (s *Store) CheckSelect(ref contract.PackageRef, opt ChangeOptions) error {
+func (s *Store) CheckSelect(ctx context.Context, ref contract.PackageRef, opt ChangeOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.check(); err != nil {
 		return err
 	}
-	_, err := s.prepareSelection(ref, opt)
+	_, err := s.prepareSelection(ctx, ref, opt)
 	return err
 }
-func (s *Store) prepareSelection(ref contract.PackageRef, opt ChangeOptions) (catalog, error) {
+func (s *Store) prepareSelection(ctx context.Context, ref contract.PackageRef, opt ChangeOptions) (catalog, error) {
+	if err := ctx.Err(); err != nil {
+		return catalog{}, err
+	}
 	p, err := s.get(ref)
 	if err != nil {
 		return catalog{}, err
 	}
 	// Reject corrupt/revoked replacement code before the facade quiesces the old
 	// activation. The eventual execution Snapshot independently verifies again.
-	checked, input, err := inspectContent(context.Background(), p.Directory, p.Source, p.Development, s.limits, s.decoder)
+	checked, input, err := inspectContent(ctx, p.Directory, p.Source, p.Development, s.limits, s.decoder)
 	if err != nil {
 		return catalog{}, err
 	}
 	if checked.Ref != ref {
 		return catalog{}, fmt.Errorf("managed package digest changed")
 	}
-	sig, recorded := s.catalog.Signatures[ref.Digest]
-	if !recorded {
-		sig, err = readSignature(p.Directory)
-		if err != nil {
-			return catalog{}, err
-		}
-	}
+	sig := s.catalog.Signatures[ref.Digest]
 	if _, err = Artifact(checked.Manifest, runtime.GOOS, runtime.GOARCH); err != nil {
 		return catalog{}, err
 	}
@@ -841,10 +761,7 @@ func (s *Store) prepareSelection(ref contract.PackageRef, opt ChangeOptions) (ca
 	if p.Manifest.DataVersion < dataVersion {
 		return catalog{}, fmt.Errorf("data recovery required: package data version %d is below committed data version %d", p.Manifest.DataVersion, dataVersion)
 	}
-	c, err := s.cloneCatalog()
-	if err != nil {
-		return c, err
-	}
+	c := s.cloneCatalog()
 	c.Selected[ref.ID] = ref
 	if _, err = preflight(c, ref); err != nil {
 		return c, err
@@ -887,15 +804,15 @@ func (s *Store) Select(ctx context.Context, ref contract.PackageRef, opt ChangeO
 			return fmt.Errorf("confirm committed migration: %w", err)
 		}
 	}
-	c, err := s.prepareSelection(ref, opt)
+	c, err := s.prepareSelection(ctx, ref, opt)
 	if err != nil {
 		return err
 	}
 	old, exists := s.catalog.Selected[ref.ID]
-	if exists && old != ref && inUse(old, opt.InUse) {
+	if exists && old != ref && slices.Contains(opt.InUse, old) {
 		return fmt.Errorf("old activation %s must be stopped before selection", ref.ID)
 	}
-	return s.mutate(ctx, "select", c)
+	return s.mutate(ctx, c)
 }
 
 func validateEntry(m contract.Manifest, e contract.Entry) error {
@@ -922,10 +839,10 @@ func (s *Store) Entries() ([]contract.Entry, error) {
 	}
 	var out []contract.Entry
 	for _, e := range s.catalog.Entries {
-		e.Config = append([]byte(nil), e.Config...)
+		e.Config = slices.Clone(e.Config)
 		out = append(out, e)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.SortFunc(out, func(a, b contract.Entry) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil
 }
 func (s *Store) SaveEntry(ctx context.Context, e contract.Entry) error {
@@ -948,13 +865,10 @@ func (s *Store) SaveEntry(ctx context.Context, e contract.Entry) error {
 	if err = validateEntry(p.Manifest, e); err != nil {
 		return err
 	}
-	c, err := s.cloneCatalog()
-	if err != nil {
-		return err
-	}
-	e.Config = append([]byte(nil), e.Config...)
+	c := s.cloneCatalog()
+	e.Config = slices.Clone(e.Config)
 	c.Entries[e.ID] = e
-	return s.mutate(ctx, "save-entry", c)
+	return s.mutate(ctx, c)
 }
 func (s *Store) DeleteEntry(ctx context.Context, id string) error {
 	s.mu.Lock()
@@ -962,12 +876,9 @@ func (s *Store) DeleteEntry(ctx context.Context, id string) error {
 	if err := s.check(); err != nil {
 		return err
 	}
-	c, err := s.cloneCatalog()
-	if err != nil {
-		return err
-	}
+	c := s.cloneCatalog()
 	delete(c.Entries, id)
-	return s.mutate(ctx, "delete-entry", c)
+	return s.mutate(ctx, c)
 }
 
 // Snapshot is the only supported execution source. Close after the activation
@@ -1020,18 +931,21 @@ func (s *Store) Snapshot(ctx context.Context, ref contract.PackageRef) (snapshot
 		return nil, err
 	}
 	// Only the private execution copy changes; the catalog is the proof's commit point.
-	if proof, ok := s.catalog.Signatures[ref.Digest]; ok {
-		if proof == nil {
-			err = os.Remove(filepath.Join(dir, SignatureFile))
-			if errors.Is(err, os.ErrNotExist) {
-				err = nil
-			}
-		} else {
-			err = durableJSON(filepath.Join(dir, SignatureFile), proof)
+	proof := s.catalog.Signatures[ref.Digest]
+	if proof == nil {
+		err = os.Remove(filepath.Join(dir, SignatureFile))
+		if errors.Is(err, os.ErrNotExist) {
+			err = nil
 		}
-		if err != nil {
-			return nil, err
+	} else {
+		var raw []byte
+		raw, err = json.Marshal(proof)
+		if err == nil {
+			err = os.WriteFile(filepath.Join(dir, SignatureFile), raw, 0600)
 		}
+	}
+	if err != nil {
+		return nil, err
 	}
 	checked, input, sig, err := inspect(ctx, dir, p.Source, p.Development, s.limits, s.decoder)
 	if err != nil {
@@ -1066,14 +980,11 @@ func (s *Store) checkUninstall(ref contract.PackageRef, opt ChangeOptions) error
 	if _, err := s.get(ref); err != nil {
 		return err
 	}
-	if inUse(ref, opt.InUse) {
+	if slices.Contains(opt.InUse, ref) {
 		return fmt.Errorf("package is still in use")
 	}
 	if s.catalog.Selected[ref.ID] == ref {
-		candidate, err := s.cloneCatalog()
-		if err != nil {
-			return err
-		}
+		candidate := s.cloneCatalog()
 		delete(candidate.Selected, ref.ID)
 		var blocked []string
 		for _, id := range opt.Enabled {
@@ -1112,10 +1023,7 @@ func (s *Store) Uninstall(ctx context.Context, ref contract.PackageRef, opt Chan
 		return result, err
 	}
 	selected := s.catalog.Selected[ref.ID] == ref
-	c, err := s.cloneCatalog()
-	if err != nil {
-		return result, err
-	}
+	c := s.cloneCatalog()
 	delete(c.Installed, ref.Digest)
 	delete(c.Signatures, ref.Digest)
 	if selected {
@@ -1128,7 +1036,7 @@ func (s *Store) Uninstall(ctx context.Context, ref contract.PackageRef, opt Chan
 		}
 	}
 	c.Pending = append(c.Pending, pendingRemoval{Ref: ref, Directory: "content/" + ref.Digest, DeleteData: opt.DeleteData})
-	if err = s.mutate(ctx, "uninstall", c); err != nil {
+	if err = s.mutate(ctx, c); err != nil {
 		var committed *CommitError
 		if errors.As(err, &committed) {
 			result.Pending = true
@@ -1153,10 +1061,8 @@ func (s *Store) retryPending() error {
 	if len(s.catalog.Pending) == 0 {
 		return nil
 	}
-	c, err := s.cloneCatalog()
-	if err != nil {
-		return err
-	}
+	c := s.cloneCatalog()
+	var err error
 	remaining := make([]pendingRemoval, 0, len(c.Pending))
 	for _, p := range c.Pending {
 		source := filepath.Join(s.root, filepath.FromSlash(p.Directory))
@@ -1186,16 +1092,12 @@ func (s *Store) retryPending() error {
 	}
 	c.Pending = remaining
 	for _, name := range []string{"content", "trash", "data"} {
-		if err = syncDirectory(filepath.Join(s.root, name)); err != nil {
+		if err = syncDir(filepath.Join(s.root, name)); err != nil {
 			return err
 		}
 	}
 	// Pending-removal failures remain durable and observable, not success claims.
-	tx, err := s.begin("cleanup", "")
-	if err != nil {
-		return err
-	}
-	return s.commit(context.Background(), c, tx)
+	return s.mutate(context.Background(), c)
 }
 
 // PendingRemovals returns references still held by the OS or external programs.
@@ -1274,7 +1176,7 @@ func syncTree(root string) error {
 		return err
 	}
 	for i := len(dirs) - 1; i >= 0; i-- {
-		if err = syncDirectory(dirs[i]); err != nil {
+		if err = syncDir(dirs[i]); err != nil {
 			return err
 		}
 	}

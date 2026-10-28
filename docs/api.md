@@ -138,7 +138,7 @@ Start 收到的 `*sdk.Client` 实现 Scope 和 ChildScope，另提供：
 
 作者入口 `LoadAuthor` 读取唯一 TOML/YAML/JSON 源，`Author.Generate` 生成类型和元数据；`Build` 生成、构建并记录实际 SDK 与产物摘要，`PrepareBuild/WriteBuildDescriptor` 供显式外部流水线。打包入口为 `Pack`、`Sign`、`Inspect`；需要已有宿主 Manifest 时使用 `WithDecoder` 版本。Inspect 只校验格式和完整性，不授信。`Discover` 对显式来源集合返回候选及逐项错误，不下载、不自动求解版本、不执行。
 
-`Open`、`OpenWithLimits`、`OpenWithOptions` 创建 Store。主要方法按用途分组：
+`Open`、`OpenWithOptions` 创建 Store。主要方法按用途分组：
 
 | 用途 | 方法 |
 | --- | --- |
@@ -147,7 +147,7 @@ Start 收到的 `*sdk.Client` 实现 Scope 和 ChildScope，另提供：
 | 执行副本 | `Snapshot`；执行完成后处理 `Snapshot.Close`，不能用 Get 的 Directory 启动 |
 | 启用意图 | `Entries`、`SaveEntry`、`DeleteEntry`、`RegisterParent`、`UnregisterParent` |
 | 数据版本 | `ConfirmDataVersion`、`DataDirectory` |
-| 信任与发现 | `UpdateTrust`、`Discover`、`Limits` |
+| 信任与发现 | `UpdateTrust`、`Discover` |
 | 卸载 | `CheckUninstall`、`Uninstall`、`PendingRemovals`、`RetryRemovals` |
 | 运行记录 | `BeginRun`、`EndRun`、`Runs` |
 | 结束 | `Close` 释放跨进程独占锁 |
@@ -162,7 +162,7 @@ Start 收到的 `*sdk.Client` 实现 Scope 和 ChildScope，另提供：
 - `TaskManager.Create/Finish/Release/Snapshot` 与可信 `Task.Start/Transfer/Finish/Release` 管理取消权和有界结果，不持久化业务事务。
 - `NewNamespaceStore` 明确使用内存；`OpenNamespaceStore` 使用持久日志。`Configure/Read/Write/Delete/Migrate/DeleteNamespace/Compact` 由宿主调用。
 - `access.Register[I,O]` 复用同一 broker；`RegisterNamespace` 绑定可信 package namespace，SDK 的 `NewNamespaceClient` 保留确定 outcome 和 submission-unknown，不自动重试。
-- `Sink.Emit/PublicError` 将宿主诊断与 guest 可见错误分开；默认不复制原始错误、载荷或路径。
+- `Sink.Emit` 与包函数 `access.PublicError` 将宿主诊断与 guest 可见错误分开；默认不复制原始错误、载荷或路径。
 
 ## Runtime、schema 与 wire
 
@@ -174,7 +174,7 @@ Start 收到的 `*sdk.Client` 实现 Scope 和 ChildScope，另提供：
 
 ## 错误与本地查询
 
-用 `errors.As(err, &target)` 检查 `*contract.Error`、`*schema.FieldError`、`*packagehost.CommitError`、`*access.CommittedError` 和 `*access.RecoveryError`；不要解析错误字符串。`contract.Error` 的 canceled / timeout 支持 `errors.Is` 匹配标准 context 错误。错误码对照见[排障](troubleshooting.md)。
+用 `errors.As(err, &target)` 检查 `*contract.Error`、`*contract.UnknownFieldError`、`*schema.FieldError`、`*packagehost.CommitError`、`*access.CommittedError` 和 `*access.RecoveryError`；不要解析错误字符串。`UnknownFieldError.Field` 提供未知字段名。`contract.Error` 支持 `errors.Is(err, contract.Fail(code, ""))` 按 Code 匹配，canceled / timeout 也匹配标准 context 错误。错误码对照见[排障](troubleshooting.md)。
 
 在目标版本检出中查询：
 

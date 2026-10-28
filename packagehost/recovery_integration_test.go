@@ -39,7 +39,7 @@ func TestStoreRecoveryProcessExit(t *testing.T) {
 		stage     commitStage
 		committed bool
 	}{
-		{name: "journal", stage: commitJournalSynced},
+		{name: "prepared", stage: commitPrepared},
 		{name: "content-moved", stage: commitContentMoved},
 		{name: "catalog-next", stage: commitCatalogSynced},
 		{name: "catalog-swapped", stage: commitCatalogSwapped, committed: true},
@@ -93,8 +93,8 @@ func TestStoreRecoveryProcessExit(t *testing.T) {
 						wantSelected = p2.Ref
 					}
 					wantV2 := operation == "select" || stage.committed
-					// Read catalog.json itself before recovery; neither transaction.json
-					// nor catalog.next may determine the committed state.
+					// Read catalog.json itself before recovery; catalog.next cannot
+					// determine the committed state.
 					after := readRecoveryCatalog(t, root)
 					if after.Selected["demo"] != wantSelected {
 						t.Fatalf("durable selection = %+v, want %+v", after.Selected["demo"], wantSelected)
@@ -106,24 +106,20 @@ func TestStoreRecoveryProcessExit(t *testing.T) {
 					wantRevision := before.Revision
 					if stage.committed {
 						wantRevision++
-						if after.Transaction == before.Transaction {
-							t.Fatal("committed catalog retained the old transaction identity")
-						}
 					} else if !reflect.DeepEqual(after, before) {
 						t.Fatal("pre-commit exit changed the durable catalog")
 					}
 					if after.Revision != wantRevision {
 						t.Fatalf("catalog revision = %d, want %d", after.Revision, wantRevision)
 					}
-					assertRecoveryPath(t, filepath.Join(root, "transaction.json"), true)
 					assertRecoveryPath(t, filepath.Join(root, "catalog.next"), stage.stage == commitCatalogSynced)
 					wantStaging := 0
-					if operation == "install" && stage.stage == commitJournalSynced {
+					if operation == "install" && stage.stage == commitPrepared {
 						wantStaging = 1
 					}
 					assertRecoveryDirectoryCount(t, filepath.Join(root, "staging"), wantStaging)
 					assertRecoveryDirectoryCount(t, filepath.Join(root, "snapshots"), 1)
-					contentMoved := operation == "select" || stage.stage != commitJournalSynced
+					contentMoved := operation == "select" || stage.stage != commitPrepared
 					assertRecoveryPath(t, filepath.Join(root, "content", p2.Ref.Digest), contentMoved)
 
 					s = openFixture(t, root, trust)
@@ -146,7 +142,7 @@ func TestStoreRecoveryProcessExit(t *testing.T) {
 						if p.Ref != p1.Ref && (!wantV2 || p.Ref != p2.Ref) {
 							t.Fatalf("unexpected installed reference: %+v", p.Ref)
 						}
-						checked, input, sig, err := inspect(ctx, p.Directory, p.Source, p.Development, s.limits)
+						checked, input, sig, err := inspect(ctx, p.Directory, p.Source, p.Development, s.limits, nil)
 						if err != nil || checked.Ref != p.Ref {
 							t.Fatalf("recovered content is inconsistent for %+v: %+v, %v", p.Ref, checked.Ref, err)
 						}
@@ -166,9 +162,7 @@ func TestStoreRecoveryProcessExit(t *testing.T) {
 					for _, name := range []string{"staging", "snapshots", "trash"} {
 						assertRecoveryDirectoryCount(t, filepath.Join(root, name), 0)
 					}
-					for _, name := range []string{"transaction.json", "catalog.next"} {
-						assertRecoveryPath(t, filepath.Join(root, name), false)
-					}
+					assertRecoveryPath(t, filepath.Join(root, "catalog.next"), false)
 					assertRecoveryPath(t, filepath.Join(root, "content", p2.Ref.Digest), wantV2)
 					if operation == "install" && wantV2 {
 						if snapshot, err := s.Snapshot(ctx, p2.Ref); err == nil {
@@ -354,7 +348,7 @@ func TestStoreRecoveryCancellationBoundary(t *testing.T) {
 		stage     commitStage
 		committed bool
 	}{
-		{name: "before-commit", stage: commitJournalSynced},
+		{name: "before-commit", stage: commitPrepared},
 		{name: "catalog-ready", stage: commitCatalogSynced},
 		{name: "after-commit", stage: commitCatalogSwapped, committed: true},
 	}

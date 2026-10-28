@@ -33,7 +33,7 @@ session, err := wasmRuntime.Start(startContext, launch)
 - `wasm.New(workerPath string, options ...wasm.Options) *wasm.Runtime`
 - 两者 `Start(ctx context.Context, launch contract.Launch) (contract.Session, error)`。
 - `Start` 的 ctx **仅控制启动**；成功返回后取消初始化请求的 ctx 不会误杀激活。需要应用级联停止时显式设置 `Options.Lifetime`。这个 context 应覆盖应用生命周期，而不是单次初始化调用。
-- 返回的 `Session` 独占激活。宿主调用 `Close`，或者 endpoint 协议失败/退出、Lifetime 取消、stderr 超额，都会关闭管道并终止进程树。`Done` 在 wait/reap、stderr 和管道清理、工作目录删除尝试结束后关闭；清理失败保留在 `Err`，不能把 Done 当作删除成功。
+- 返回的 `Session` 独占激活。宿主调用 `Close`，或者 endpoint 协议失败/退出、Lifetime 取消，都会关闭管道并终止进程树。`Done` 在 wait/reap、stderr 和管道清理、工作目录删除尝试结束后关闭；清理失败保留在 `Err`，不能把 Done 当作删除成功。
 - `Close` 可并发、可重复，等待同一结果。启动 stdio 关闭后独立推进终止，避免 Windows 同步 pipe Read 阻塞 Close 而阻止 kill。Unix 向专用进程组发送 SIGTERM，Windows 以关闭输入为协作停止信号；宽限期后强杀并回收。Windows 等待 Job 的 ActiveProcesses 归零，再关闭 Job；执行映像延迟释放时仅对 ACCESS_DENIED/SHARING_VIOLATION 重试删除至多两秒，仍失败则报告。内核不可中断 I/O 不保证绝对墙钟期限。
 - 默认 grace 是 1 秒，最大 30 秒；`Launch.Grace` 非零时覆盖 Options。正常显式停止引起的进程退出信号不算插件崩溃；协议错误、非主动退出及清理错误保留在 `Session.Err`。
 - Runtime **不发送 initialize**。Facade 在 Start 后完成协议协商。`Launch.SessionFactory` 明确描述 generic/custom；nil 选择通用 wire，非 nil 的 Open 接收原始 transport、身份、handler 和帧预算。启动前完成描述符及通用预算校验，自有 ABI 不被注入额外 envelope。专有 session 的 Close 必须及时返回，宿主 handler 必须响应自己的 ctx；这里不假称能够杀死任意宿主 Go goroutine。通用 wire 的 `Wait` 会等待 host handler，不属于外部进程 reap 的完成条件。
@@ -59,9 +59,9 @@ GOOS=wasip1 GOARCH=wasm go build -o plugin.wasm ./your-plugin
 
 `wasm.New` 的 worker 必须是绝对常规文件路径；`Launch.Worker` 可以明确覆盖它。worker 和 guest 不继承宿主环境。worker 每次只加载一个 WASI preview 1 command（必须有无参数、无结果的 `_start`），不是 reactor ABI。stdout 原样用于插件会话，stderr 仅用于日志。
 
-wazero 固定 {{docs.wazeroVersion}}，启用 `WithCloseOnContextDone(true)`。默认模块文件最大 64 MiB、每实例线性内存最多 4096 pages（256 MiB），编译与到首次读取会话 stdin 的启动阶段各 30 秒。编译的进程内硬 watchdog 覆盖编译器不及时响应 ctx 的情况。启动达到首次 stdin 读取之后，command 是持续运行的消息泵，而不是把整个激活生存期误当成一次有期限的调用。
+wazero 固定 {{docs.wazeroVersion}}，保留 `WithCloseOnContextDone(true)` 的循环检查点，让单核环境的 Go watchdog 也能调度。默认模块文件最大 64 MiB、每实例线性内存最多 4096 pages（256 MiB），编译与到首次读取会话 stdin 的启动阶段各 30 秒，均有进程内硬 watchdog。worker 的 activation context 不设置生命周期期限，终止由拥有该进程的宿主负责。启动达到首次 stdin 读取之后，command 是持续运行的消息泵，而不是把整个激活生存期误当成一次有期限的调用。
 
-初始化/业务调用的 deadline 和最多在途数由 Runtime 的 `Options.Limits` 传给 wire，默认 30 秒 / 64。帧大小不再位于 Limits：Host 使用显式 `Options.FrameBytes`，直接 Runtime 使用 `Launch.FrameBytes`，范围为 4096–1048576，零值不补默认。SDK 在 Start 前应用预算并在 Registration 原值确认；详见[协议参考](protocol.md#帧预算与失败范围)。忽略取消且宽限期内无有效响应会关闭 endpoint；Runtime 接到 Done 后终止独立 worker。CPU 无限循环和阻塞 stdin 都不依赖 guest 合作。自有 SessionFactory 需明确标为 custom 并自行负责调用限制，不注入通用协议。
+初始化/业务调用的 deadline 由 Runtime 的 `Options.Limits` 传给 wire，默认 30 秒。通用 v1 协议在途上限固定为 64；`Inflight` 只接受 0（默认）或 64，其他值在创建进程前失败。帧大小不再位于 Limits：Host 使用显式 `Options.FrameBytes`，直接 Runtime 使用 `Launch.FrameBytes`，范围为 4096–1048576，零值不补默认。SDK 在 Start 前应用预算并在 Registration 原值确认；详见[协议参考](protocol.md#帧预算与失败范围)。忽略取消且宽限期内无有效响应会关闭 endpoint；Runtime 接到 Done 后终止独立 worker。CPU 无限循环和阻塞 stdin 都不依赖 guest 合作。自有 SessionFactory 需明确标为 custom 并自行负责调用限制，不注入通用协议。
 
 不 preopen 任何目录，不配置 FS、不向 guest 传入环境、不暴露任意 host module；只实例化 WASI，拒绝非 WASI import、imported memory 和 `sock_*` import。标准 WASI 文件调用没有预开放文件描述符，因此不能读取宿主任意路径。时钟和随机数显式提供；guest 的参数仅为固定程序名，不含宿主模块路径。worker 诊断不输出 guest 堆栈、源码或模块内容。
 
@@ -73,7 +73,7 @@ Windows worker 修正 wazero v1.12.0 的 pipe EOF poll：仅在原 `poll_oneoff`
 
 ## 日志、故障与验证
 
-默认最多接收每激活 1 MiB stderr；只计数、持续 drain，不保留/回显日志内容。`Launch.Stderr` 收到的总量不超过该限额，超过限额使对应激活失败并清理。进程退出后在 grace 内继续读到 EOF，退出前写入的最后输出不会因拆除而丢失。回调返回错误后停止转发但继续 drain，错误保留在 `Err`；强制关闭读端后再超过 grace 仍未结束读取（例如回调不返回）时，`Done` 不再等待并在 `Err` 中记录。Native panic 的退出原因保留为 OS exit error，但 stderr 中的秘密不会附到错误；WASM trap 仅给出脱敏错误。协议原始坏帧也不应被宿主诊断回显。
+每激活默认最多向 `Launch.Stderr` 转发 1 MiB；未配置回调时只持续 drain，不保留/回显日志内容。达到限额后继续读取并丢弃后续字节，不因累计日志量终止健康插件。进程退出后在 grace 内继续读到 EOF，退出前写入且未超过限额的最后输出不会因拆除而丢失。回调返回错误后停止转发但继续 drain，错误保留在 `Err`；强制关闭读端后再超过 grace 仍未结束读取（例如回调不返回）时，`Done` 不再等待并在 `Err` 中记录。Native panic 的退出原因保留为 OS exit error，但 stderr 中的秘密不会附到错误；WASM trap 仅给出脱敏错误。协议原始坏帧也不应被宿主诊断回显。
 
 真实 fault command 位于 `runtime/testdata/faultplugin`，同一源码分别构建 native/WASI；它执行加法及实例内计数，并能真实 panic、CPU 死循环、阻塞读、发送畸形帧、stderr 洪泛及写出 stderr 后立即退出。integration 测试构建真实 worker/插件，检查两个实例状态和故障隔离、取消后 reap、环境不继承、WASI 路径不可读和 native 私有 cwd：
 

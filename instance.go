@@ -19,14 +19,6 @@ type hostInstance struct {
 
 func (i *hostInstance) Status() contract.Status {
 	status := i.Instance.Status()
-	i.host.mu.Lock()
-	current := i.host.entries[i.id] == i
-	entry := i.host.entrySpecs[i.id]
-	i.host.mu.Unlock()
-	if current {
-		status.Enabled = entry.Enabled
-		status.TemporaryStopped = entry.Enabled && status.State == contract.Stopped
-	}
 	status.Diagnostics = slices.Clone(i.diagnostics)
 	return status
 }
@@ -166,7 +158,7 @@ func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
 		record := contract.RestoreEntry{ID: entry.ID, Action: "registered"}
 		h.mu.Lock()
 		current, exists := h.entrySpecs[entry.ID]
-		instance := h.entries[entry.ID]
+		existing := h.entries[entry.ID]
 		ref := h.packages[entry.ID]
 		h.mu.Unlock()
 		if exists {
@@ -177,9 +169,9 @@ func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
 				blocked[entry.ID] = true
 			} else {
 				record.Action = "existing"
-				record.Status = instance.Status()
+				record.Status = existing.Status()
 				if record.Status.State == contract.Failed {
-					record.Error = instance.Wait(ctx)
+					record.Error = existing.Wait(ctx)
 				}
 			}
 			report.Entries = append(report.Entries, record)
@@ -202,7 +194,7 @@ func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
 			result = errors.Join(result, record.Error)
 			continue
 		}
-		instance, err = h.enable(ctx, entry)
+		instance, err := h.enable(ctx, entry)
 		if err != nil && instance == nil {
 			blocked[entry.ID] = true
 			record.Action = "failed"

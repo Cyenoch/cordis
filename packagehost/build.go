@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime/debug"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -345,8 +345,8 @@ func WriteBuildDescriptor(dir string, descriptor BuildDescriptor) error {
 	if err := validateBuildDescriptor(descriptor); err != nil {
 		return err
 	}
-	sort.Slice(descriptor.Targets, func(i, j int) bool {
-		return descriptor.Targets[i].OS+"/"+descriptor.Targets[i].Arch < descriptor.Targets[j].OS+"/"+descriptor.Targets[j].Arch
+	slices.SortFunc(descriptor.Targets, func(a, b BuildTarget) int {
+		return strings.Compare(a.OS+"/"+a.Arch, b.OS+"/"+b.Arch)
 	})
 	raw, err := json.MarshalIndent(descriptor, "", "  ")
 	if err != nil {
@@ -482,7 +482,7 @@ func atomicBuildFile(dir, name string, data []byte) (err error) {
 	if err := replaceFile(temp, filepath.Join(dir, filepath.FromSlash(name))); err != nil {
 		return err
 	}
-	return syncDirectory(filepath.Join(dir, parent))
+	return syncDir(filepath.Join(dir, parent))
 }
 
 func checkBinarySDK(file, goos, goarch string, sdk SDKBuild) error {

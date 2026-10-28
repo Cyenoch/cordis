@@ -38,21 +38,21 @@ type outbound struct {
 	committed <-chan struct{}
 }
 type pending struct {
-	ctx       context.Context
-	method    string
-	result    chan reply
-	cancelAck chan struct{}
+	ctx    context.Context
+	method string
+	result chan reply
 }
 type incoming struct {
 	cancel      context.CancelFunc
 	method      string
 	recoverable bool
+	canceled    bool
 }
 type cancellation struct {
 	ctx      context.Context
 	method   string
 	awaiting bool
-	ack      chan struct{}
+	timer    *time.Timer
 }
 
 type Endpoint struct {
@@ -69,6 +69,7 @@ type Endpoint struct {
 	sequence         uint64
 	pending          map[string]*pending
 	incoming         map[string]incoming
+	activeIncoming   int
 	remoteSequence   uint64
 	canceled         map[string]*cancellation
 	cancelOrder      []string
@@ -134,8 +135,13 @@ func (e *Endpoint) shutdown(err error) {
 		for _, in := range e.incoming {
 			in.cancel()
 		}
-		e.mu.Unlock()
+		for _, canceled := range e.canceled {
+			if canceled.timer != nil {
+				canceled.timer.Stop()
+			}
+		}
 		e.cancel()
+		e.mu.Unlock()
 		close(e.done)
 		if closeErr := e.transport.Close(); closeErr != nil {
 			e.mu.Lock()
@@ -210,7 +216,7 @@ func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessag
 		prefix = "g:"
 	}
 	id := prefix + strconv.FormatUint(e.sequence, 10)
-	p := &pending{ctx: ctx, method: method, result: make(chan reply, 1), cancelAck: make(chan struct{})}
+	p := &pending{ctx: ctx, method: method, result: make(chan reply, 1)}
 	e.pending[id] = p
 	activation := e.identity.Activation
 	e.mu.Unlock()
@@ -242,24 +248,18 @@ func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessag
 		if err := e.send(cancelCtx, Frame{Schema: contract.SessionSchema, Kind: "cancel", Activation: activation, ID: id}); err != nil && e.ctx.Err() == nil {
 			e.shutdown(err)
 		}
-		e.wg.Go(func() {
-			timer := time.NewTimer(e.limits.Grace)
-			defer timer.Stop()
-			select {
-			case <-e.done:
-				return
-			case <-p.cancelAck:
-				return
-			case <-timer.C:
-			}
-			e.mu.Lock()
-			record := e.canceled[id]
-			unanswered := record != nil && record.awaiting
-			e.mu.Unlock()
-			if unanswered {
-				e.shutdown(contract.Fail(contract.Timeout, "peer ignored cancellation"))
-			}
-		})
+		e.mu.Lock()
+		if record := e.canceled[id]; record != nil && record.awaiting && e.ctx.Err() == nil {
+			record.timer = time.AfterFunc(e.limits.Grace, func() {
+				e.mu.Lock()
+				unanswered := record.awaiting && e.ctx.Err() == nil
+				e.mu.Unlock()
+				if unanswered {
+					e.shutdown(contract.Fail(contract.Timeout, "peer ignored cancellation"))
+				}
+			})
+		}
+		e.mu.Unlock()
 		return nil, ctx.Err()
 	case <-e.done:
 		select {
@@ -300,7 +300,7 @@ func (e *Endpoint) removePending(id string, canceled bool) bool {
 			e.shutdown(contract.Fail(contract.Timeout, "unanswered cancellation limit exceeded"))
 			return false
 		}
-		e.canceled[id] = &cancellation{ctx: p.ctx, method: p.method, awaiting: true, ack: p.cancelAck}
+		e.canceled[id] = &cancellation{ctx: p.ctx, method: p.method, awaiting: true}
 		e.cancelOrder = append(e.cancelOrder, id)
 	}
 	e.mu.Unlock()
@@ -359,11 +359,6 @@ func (e *Endpoint) sendResponse(ctx, deliveryCtx context.Context, response Frame
 	limit := e.frameBytes
 	e.mu.Unlock()
 	initializes := response.Method == "initialize" && response.Error == nil
-	if initializes {
-		if err := decodeRegistration(response.Payload, limit); err != nil {
-			return err
-		}
-	}
 	data, err := encodeFrame(response, limit)
 	if _, oversized := errors.AsType[*frameSizeError](err); oversized && recoverable {
 		response.Payload = nil
@@ -502,7 +497,9 @@ func (e *Endpoint) receive(frame Frame) error {
 			late := e.canceled[frame.ID]
 			if late != nil && late.awaiting && late.method == frame.Method {
 				late.awaiting = false
-				close(late.ack)
+				if late.timer != nil {
+					late.timer.Stop()
+				}
 				e.mu.Unlock()
 				return nil
 			}
@@ -530,6 +527,15 @@ func (e *Endpoint) receive(frame Frame) error {
 		return nil
 	case "cancel":
 		in, ok := e.incoming[frame.ID]
+		if ok && !in.canceled {
+			in.canceled = true
+			e.incoming[frame.ID] = in
+			e.activeIncoming--
+			if len(e.incoming)-e.activeIncoming > e.limits.Inflight*4 {
+				e.mu.Unlock()
+				return contract.Fail(contract.Invalid, "canceled incoming request limit exceeded")
+			}
+		}
 		e.mu.Unlock()
 		if ok {
 			in.cancel()
@@ -540,11 +546,12 @@ func (e *Endpoint) receive(frame Frame) error {
 	if e.guest {
 		prefix = "h:"
 	}
-	if !strings.HasPrefix(frame.ID, prefix) {
+	sequence, ok := strings.CutPrefix(frame.ID, prefix)
+	if !ok {
 		e.mu.Unlock()
 		return contract.Fail(contract.Invalid, "invalid request direction")
 	}
-	n, err := strconv.ParseUint(strings.TrimPrefix(frame.ID, prefix), 10, 64)
+	n, err := strconv.ParseUint(sequence, 10, 64)
 	if err != nil || n <= e.remoteSequence {
 		e.mu.Unlock()
 		return contract.Fail(contract.Invalid, "invalid request sequence")
@@ -560,7 +567,7 @@ func (e *Endpoint) receive(frame Frame) error {
 		e.mu.Unlock()
 		return contract.Fail(contract.NotReady, "request before initialization")
 	}
-	if len(e.incoming) >= e.limits.Inflight {
+	if e.activeIncoming >= e.limits.Inflight {
 		e.mu.Unlock()
 		return contract.Fail(contract.Invalid, "peer exceeded inflight limit")
 	}
@@ -581,6 +588,7 @@ func (e *Endpoint) receive(frame Frame) error {
 	ctx, cancel := context.WithTimeout(parent, time.Duration(frame.DeadlineMS)*time.Millisecond)
 	ctx = context.WithValue(ctx, requestKey{}, requestReference{endpoint: e, id: frame.ID})
 	e.incoming[frame.ID] = incoming{cancel: cancel, method: frame.Method, recoverable: e.ready && !controlMethod(frame.Method)}
+	e.activeIncoming++
 	e.mu.Unlock()
 	e.wg.Go(func() { e.handle(ctx, cancel, frame) })
 	return nil
@@ -588,19 +596,24 @@ func (e *Endpoint) receive(frame Frame) error {
 
 func (e *Endpoint) handle(ctx context.Context, cancel context.CancelFunc, frame Frame) {
 	defer cancel()
-	defer func() { e.mu.Lock(); delete(e.incoming, frame.ID); e.mu.Unlock() }()
+	defer func() {
+		e.mu.Lock()
+		if !e.incoming[frame.ID].canceled {
+			e.activeIncoming--
+		}
+		delete(e.incoming, frame.ID)
+		e.mu.Unlock()
+	}()
 	var payload json.RawMessage
 	err := ctx.Err()
 	if err == nil {
 		payload, err = e.handler(ctx, frame.Method, frame.Payload)
 	}
-	e.mu.Lock()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		err = contract.Fail(contract.Timeout, "request deadline exceeded")
 	} else if ctx.Err() != nil {
 		err = contract.Fail(contract.Canceled, "request canceled")
 	}
-	e.mu.Unlock()
 	response := Frame{Schema: contract.SessionSchema, Kind: "response", Activation: frame.Activation, ID: frame.ID, Method: frame.Method, Payload: payload}
 	if err != nil {
 		response.Payload = nil

@@ -1,9 +1,10 @@
 package access
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/Cyenoch/cordis/contract"
 )
@@ -25,26 +26,28 @@ type ContributionStore struct {
 	activeGate func(contract.Identity) bool
 }
 
+// NewContributionStore creates a store. It panics if policy is nil.
 func NewContributionStore(policy *Policy) *ContributionStore {
+	if policy == nil {
+		panic("access: contribution store requires a policy")
+	}
 	store := &ContributionStore{
 		policy: policy, validators: make(map[string]Validator),
 		published: make(map[contract.Identity][]contract.Contribution), staged: make(map[*Batch]struct{}),
 	}
-	if policy != nil {
-		policy.mu.Lock()
-		if policy.contributions == nil {
-			policy.contributions = make(map[*ContributionStore]struct{})
-		}
-		policy.contributions[store] = struct{}{}
-		policy.mu.Unlock()
+	policy.mu.Lock()
+	if policy.contributions == nil {
+		policy.contributions = make(map[*ContributionStore]struct{})
 	}
+	policy.contributions[store] = struct{}{}
+	policy.mu.Unlock()
 	return store
 }
 
 // SetActiveGate binds visibility to the core activation commit. The callback is
 // always invoked without the policy lock, so it may safely query core state.
 func (s *ContributionStore) SetActiveGate(gate func(contract.Identity) bool) error {
-	if s.policy == nil || gate == nil {
+	if gate == nil {
 		return contract.Fail(contract.Invalid, "invalid activation gate")
 	}
 	s.policy.mu.Lock()
@@ -54,7 +57,7 @@ func (s *ContributionStore) SetActiveGate(gate func(contract.Identity) bool) err
 }
 
 func (s *ContributionStore) Register(slot string, validator Validator) error {
-	if s.policy == nil || slot == "" || validator == nil {
+	if slot == "" || validator == nil {
 		return contract.Fail(contract.Invalid, "incomplete contribution validator")
 	}
 	s.policy.mu.Lock()
@@ -86,9 +89,6 @@ func (e *ContributionError) Unwrap() error { return e.Cause }
 func (s *ContributionStore) Stage(
 	ctx context.Context, owner contract.Identity, items []contract.Contribution,
 ) (*Batch, error) {
-	if s.policy == nil || ctx == nil {
-		return nil, contract.Fail(contract.Invalid, "store not configured")
-	}
 	p := s.policy
 	p.mu.Lock()
 	if _, err := p.activeLocked(owner); err != nil {
@@ -173,9 +173,6 @@ func (b *Batch) Abort() error {
 // Revoke removes staged and visible data only for this owner. It is also called
 // automatically by Policy.Revoke and by activation replacement.
 func (s *ContributionStore) Revoke(owner contract.Identity) error {
-	if s.policy == nil {
-		return contract.Fail(contract.Invalid, "store not configured")
-	}
 	s.policy.mu.Lock()
 	defer s.policy.mu.Unlock()
 	s.revokeLocked(owner)
@@ -195,9 +192,6 @@ func (s *ContributionStore) revokeLocked(owner contract.Identity) {
 }
 
 func (s *ContributionStore) Snapshot() []OwnedContribution {
-	if s.policy == nil {
-		return []OwnedContribution{}
-	}
 	s.policy.mu.Lock()
 	gate := s.activeGate
 	result := make([]OwnedContribution, 0)
@@ -222,15 +216,12 @@ func (s *ContributionStore) Snapshot() []OwnedContribution {
 		}
 		result = visible
 	}
-	sort.Slice(result, func(i, j int) bool {
-		a, b := result[i], result[j]
-		if a.Owner.Activation != b.Owner.Activation {
-			return a.Owner.Activation < b.Owner.Activation
-		}
-		if a.Contribution.Slot != b.Contribution.Slot {
-			return a.Contribution.Slot < b.Contribution.Slot
-		}
-		return a.Contribution.ID < b.Contribution.ID
+	slices.SortFunc(result, func(a, b OwnedContribution) int {
+		return cmp.Or(
+			cmp.Compare(a.Owner.Activation, b.Owner.Activation),
+			cmp.Compare(a.Contribution.Slot, b.Contribution.Slot),
+			cmp.Compare(a.Contribution.ID, b.Contribution.ID),
+		)
 	})
 	return result
 }

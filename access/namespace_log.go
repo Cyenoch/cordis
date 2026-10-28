@@ -10,9 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 
 	"github.com/Cyenoch/cordis/contract"
 )
@@ -200,22 +201,12 @@ func (s *NamespaceStore) Compact(ctx context.Context) (result error) {
 		_, err = file.Write(append(data, '\n'))
 		return err
 	}
-	names := make([]string, 0, len(s.spaces))
-	for name := range s.spaces {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(s.spaces)) {
 		space := s.spaces[name]
 		if err = write(namespaceRecord{Operation: "configure", Namespace: name, Package: space.Package, Config: space.Config}); err != nil {
 			return err
 		}
-		keys := make([]string, 0, len(space.Values))
-		for key := range space.Values {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
+		for _, key := range slices.Sorted(maps.Keys(space.Values)) {
 			if err = write(namespaceRecord{Operation: "write", Namespace: name, Key: key, Value: space.Values[key]}); err != nil {
 				return err
 			}
@@ -248,8 +239,18 @@ func (s *NamespaceStore) replay(record namespaceRecord) error {
 	space := s.spaces[record.Namespace]
 	switch record.Operation {
 	case "configure":
-		if space != nil || record.Namespace == "" || record.Package == "" || record.Config.Name != record.Namespace || record.Config.QuotaBytes < 0 {
+		if record.Namespace == "" || record.Package == "" || record.Config.Name != record.Namespace || record.Config.QuotaBytes < 0 {
 			return fmt.Errorf("invalid namespace binding")
+		}
+		if space != nil {
+			if space.Package != record.Package {
+				return fmt.Errorf("namespace already bound to another package")
+			}
+			if record.Config.QuotaBytes < space.Used {
+				return ErrQuota
+			}
+			space.Config.QuotaBytes = record.Config.QuotaBytes
+			return nil
 		}
 		for _, other := range s.spaces {
 			if other.Package == record.Package {

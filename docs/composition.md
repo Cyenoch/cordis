@@ -87,3 +87,5 @@ Facade 跟踪 external 与 builtin 的同一父子所有权树。`Host.Disable(p
 `contract.Go(scope, work)` 只在 Start 期间登记。Start context 返回即结束，工作使用 activation context；工作与串行服务/事件回调并发，共享状态由作者同步。完成本地发布后，Host 等待当前 activation 的 publish 确认，才开放普通调用、推进 Active/applied 和完成等待者。确认失败或退役后的迟到结果不能复活工作。
 
 退役先关闭普通准入、取消工作并通知外部 SDK，再等待消费者清理，最后等待自己的工作退出并释放资源。消费者清理沿原绑定可继续调用退役 provider；只有 Host 从可信 cleanup context 生成的 invocation `cleanup:true` 才使用独立清理准入，插件不能用普通 host 调用伪造它。完整自定义 PluginSession 必须映射 Publish/Retire，不能省略通知或混入 generic envelope。
+
+每个 activation 独立清理，不共用固定数量的全局清理槽位；多个 builtin 清理阻塞不会阻止无关实例清理。Go 无法安全强杀进程内 callback：不合作的清理仍会保留其所有权/依赖树，完整 `Host.Close` 也必须等待这些资源排空。取消等待只结束调用方的等待，不表示资源已释放。

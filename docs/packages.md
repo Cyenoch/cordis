@@ -85,9 +85,9 @@ Store 使用 `OpenWithOptions(root, packagehost.Options{Trust: trust, Limits: li
 
 默认拒绝未签名包。开发许可只接受 `DevDigests[digest] == true` 的具体内容，仍要求 publisher 对 plugin ID 的授权。可先 Pack 或 `Inspect(ctx, archive)` 获取经格式/完整性核验的 digest，再明确授权该 digest 后 Install（或 ImportDirectory）。Inspect 不授信、不安装、不执行。许可接受的未签名 ZIP 明确标记 Development；同一许可不能允许修改后的内容。目录先复制再验证，绝不直接执行可变开发源文件。
 
-已安装或保留数据的 ID 不允许新 publisher 自动接续。`PublisherChanges[id][newPublisher] = true` 是宿主显式批准的迁移；仍需正常 key/publisher/ID 授权。卸载但保留数据时保留 publisher 与数据版本记录。
+已安装或保留数据的 ID 不允许新 publisher 自动接续。`catalog.Publishers[id]` 是当前发布者的唯一权威记录；`PublisherChanges[id][newPublisher] = true` 批准一次迁移，仍需正常 key/publisher/ID 授权。安装成功才记录新 publisher，随后可撤掉批准；即使旧 publisher 的历史版本仍已安装，新 publisher 的后续版本也无需再次批准。旧 publisher 若要重新接管则须重新获批，同 ID/version 不同 digest 仍被拒绝。卸载但保留数据时保留 publisher 与数据版本记录。
 
-同 digest 重签后再次 Install/ImportDirectory 会先按当前策略验签，再原子刷新 catalog 的 `signatures[digest]` 与来源/开发标记，不覆盖共享 content。CheckSelect 使用当前证明；Snapshot 将该证明写入本次私有副本并再次验签。证明不是永久授权，后续吊销仍生效。未提交刷新继续使用旧证明，已提交刷新在重开后保留；原签名字节和 digest 算法不变。旧 catalog 尚无该摘要的证明记录时，仍验证 content 自带签名；重新安装后以 catalog 证明为准。
+同 digest 重签后再次 Install/ImportDirectory 会先按当前策略验签，再原子刷新 catalog 的 `signatures[digest]` 与来源/开发标记，不覆盖共享 content。CheckSelect 使用当前证明；Snapshot 将该证明写入本次私有副本并再次验签。证明不是永久授权，后续吊销仍生效。未提交刷新继续使用旧证明，已提交刷新在重开后保留；原签名字节和 digest 算法不变。每个已安装摘要必须有 catalog 证明记录；明确开发许可的未签名包使用 nil 记录，不从旧格式补读签名。
 
 ## 候选集合发现
 
@@ -128,7 +128,7 @@ if err != nil { return err }
 // activation 停止、进程/文件句柄关闭后处理 snapshot.Close() 错误。
 ```
 
-- `OpenWithLimits` 公布并收紧限制；默认压缩 64 MiB、单文件 64 MiB、展开总量 256 MiB、10,000 条目。在构建 ZIP 完整索引前扫描实际 central directory 记录并限制条目数，同时限制 EOCD/ZIP64 宣称的数量；不能用伪造或回绕计数绕过内存限制。实际展开读取也计数。metadata 每份最多 1 MiB。manifest 与 entry 配置各自保持 JSON 深度 32、数组长度 10,000 的叶文档限制；catalog 额外预留三层封装深度，不占用叶文档预算。每次提交在替换根之前用恢复时相同的规则校验已编码候选根，禁止提交重开无法读取的 catalog。
+- `OpenWithOptions` 的 `Limits` 显式收紧限制；默认压缩 64 MiB、单文件 64 MiB、展开总量 256 MiB、10,000 条目。在构建 ZIP 完整索引前扫描实际 central directory 记录并限制条目数，同时限制 EOCD/ZIP64 宣称的数量；不能用伪造或回绕计数绕过内存限制。实际展开读取也计数。metadata 每份最多 1 MiB。manifest 与 entry 配置各自保持 JSON 深度 32、数组长度 10,000 的叶文档限制；catalog 额外预留三层封装深度，不占用叶文档预算。每次提交在替换根之前用恢复时相同的规则校验已编码候选根，禁止提交重开无法读取的 catalog。
 - 路径为 NFC 相对 POSIX 路径；拒绝父目录、绝对/驱动器/UNC、反斜杠、控制字符、Windows 保留名、尾点空格、链接、重复及 Unicode 大小写折叠冲突。目录源使用 `os.Root` 限制打开范围；开发源的硬链接也拒绝。输入先检查 regular file，打开后再检查；Unix 使用 nonblocking/no-follow 打开，避免检查后替换为 FIFO 导致永久阻塞。
 - `Get` 与 `Installed` 用于检查元数据，不能用其 Directory 直接启动。`Snapshot` 仅接受显式选中的引用，重新复制、核验完整性、信任、平台与必需依赖后返回一次执行私有目录。
 - `Preflight` 检查已选定的必需版本范围和循环；可选缺失/不兼容返回诊断，不阻止启用。包依赖满足不代表运行服务就绪。
@@ -136,19 +136,19 @@ if err != nil { return err }
 - `RegisterParent(ctx context.Context, id string) error` / `UnregisterParent(ctx context.Context, id string) error` 是 Store 方法，只在 catalog 的 `externalParents` 保存宿主父 ID。锚点参与父图校验，不得与真实 entry 重名；任何子 entry（包括 disabled）仍引用时不能注销。重复注册/注销幂等。不会持久化 builtin 回调、配置或运行状态，Entries 不返回锚点；宿主必须先重建 builtin 再恢复外部子 entry，删除子 entry 后才能注销锚点。
 - `ChangeOptions.InUse` 必须完整列出当前活跃引用，旧 activation 未停止不能切换/卸载。`Enabled` 必须完整列出显式级联停用完成后的启用包 ID；反向依赖不兼容拒绝切换，不能静默卸载依赖者。
 - `ReverseDependencies(ref contract.PackageRef, enabled []string, action ChangeAction) ([]string, error)` 是只读 Store 方法。action 显式选择 `SelectPackage` 或 `RemovePackage`，同版本选择不等于卸载。它复用递归 Preflight，返回受阻 enabled 包 ID 的去重、排序传递闭包（不含 ref.ID），忽略 optional 依赖；既有必需依赖故障也会出现在结果中。它不授予级联权限、不决定实例停止顺序。宿主须明确授权、停止对应实例，再按实际剩余 Enabled 调用 Select/Uninstall。无效引用或已关闭 Store 返回错误；非选中版本的直接卸载不影响当前选择。
-- 替换流程在停止旧 activation **之前**调用 `CheckSelect(ref, options)`：检查新内容完整性与当前信任、正反向依赖、schema 和数据版本，不提交且忽略 InUse。停旧实例后再调用 Select（重新检查并提交），避免不兼容请求先造成停机。若迁移已经发生，必须先完成下面的独立确认，再调用 CheckSelect 或其他版本操作。
-- 宿主每次提交业务数据迁移后，必须**立即**调用 `ConfirmDataVersion(ctx, id, version)`，成功记录事实之后才能进行版本预检、选择或执行。此 API 不要求新包已安装或受信任，不改变代码选择，数据版本只能递增（同版本重复确认无副作用），有意忽略 context 取消：取消不能撤销已发生的宿主数据变化。确认失败时宿主必须停止相关版本操作并修复持久化问题；不得恢复旧代码。为兼容原有调用，`Select` 收到 `MigrationCommitted: true` 时会先独立确认 `DataVersion`，然后才检查目标、信任、依赖、配置、InUse 与取消；即使后续选择失败，确认事实仍保留。该选项仍要求目标 manifest 的 DataVersion 匹配，但匹配失败不能撤回确认。`CheckSelect` 本身只读，不替代确认 API。
+- 替换流程在停止旧 activation **之前**调用 `CheckSelect(ctx, ref, options)`：检查新内容完整性与当前信任、正反向依赖、schema 和数据版本，不提交且忽略 InUse；metadata decoder 与内容读取使用调用方 context。Select 同样传递调用方 context。停旧实例后再调用 Select（重新检查并提交），避免不兼容请求先造成停机。若迁移已经发生，必须先完成下面的独立确认，再预检或进行其他版本操作。
+- 宿主每次提交业务数据迁移后，必须**立即**调用 `ConfirmDataVersion(ctx, id, version)`，成功记录事实之后才能进行版本预检、选择或执行。此 API 不要求新包已安装或受信任，不改变代码选择，数据版本只能递增（同版本重复确认无副作用），有意忽略 context 取消：取消不能撤销已发生的宿主数据变化。确认失败时宿主必须停止相关版本操作并修复持久化问题；不得恢复旧代码。`Select` 收到 `MigrationCommitted: true` 时会先独立确认 `DataVersion`，然后才检查目标、信任、依赖、配置、InUse 与取消；即使后续选择失败，确认事实仍保留。该选项仍要求目标 manifest 的 DataVersion 匹配，但匹配失败不能撤回确认。`CheckSelect` 本身只读，不替代确认 API。
 - 已确认的数据版本立即阻止旧版本 `Snapshot` 与选择，并在重开后继续生效。选择失败不自动回滚选择，原引用可能仍是 selected 但已不可执行；宿主需显式选择兼容代码或执行授权的数据恢复，Store 不运行迁移、不猜测 rollback。未改变数据格式时旧包仍保留，可显式选择恢复。
-- `DataDirectory` 使用 SHA-256(ID) 独立 namespace，避免具有斜杠的 ID 嵌套或大小写文件系统冲突。Uninstall 默认只删代码；`DeleteData: true` 表示宿主已取得明确授权，多版本共享数据时拒绝删除。
+- `DataDirectory` 使用 SHA-256(ID) 独立 namespace，避免具有斜杠的 ID 嵌套或大小写文件系统冲突。Uninstall 默认只删代码；`DeleteData: true` 表示宿主已取得明确授权，多版本共享数据时拒绝删除。清理成功后删除数据目录、数据版本下界和发布者记录；重开后可由正常授权的新 publisher 安装并选择较低数据版本的代码，不需批准接续已删除的 namespace。
 - Windows 文件被占用时 Removal 返回 Pending/Reason，不假报删除成功；`PendingRemovals` 可查询，`RetryRemovals` 和下次 Open 重试清理。
 
 ## 提交、取消与恢复
 
-Store 持有跨进程独占锁直到 Close，同实例提交串行化。内容在同文件系统 staging 写入并校验，文件与目录同步，事务记录先落盘，再通过原子替换 catalog 根提交。catalog 根是唯一提交点；孤立内容不是已安装包。
+Store 持有跨进程独占锁直到 Close，同实例提交串行化。内容在同文件系统 staging 普通写入并校验，rename 到 content 后统一同步内容树及 content 目录；catalog.next 同步后通过原子替换 catalog 根提交，最后同步 root。不写事务日志，也不读取旧 transaction 字段。catalog 根是唯一提交点；孤立内容不是已安装包。Snapshot 为可丢弃的私有执行副本，不逐文件同步。
 
-一般安装/选择在提交前取消不改变该操作的已安装集合和选择；catalog.next 同步后、rename 前再次观察取消。已经发生的迁移确认是独立提交，不受此取消检查影响。提交后即使 context 已取消也返回实际已安装 Package，不伪报取消未发生。`CommitError` 明确表示相应 catalog（或下述 runs 文件）已替换但后续同步或清理失败，调用者不得当作未提交盲目重试。对 `ConfirmDataVersion`，该错误表示确认已过提交点而非迁移未发生；对兼容选项触发的确认，`Select` 会包装并返回它，此时新代码尚未选择。通过 `errors.As` 识别错误，保留存储诊断并停止相关版本操作，恢复后检查实际选择，切勿把它视为可以重启旧代码的依据。
+一般安装/选择在提交前取消不改变该操作的已安装集合和选择；catalog.next 同步后、rename 前再次观察取消。已经发生的迁移确认是独立提交，不受此取消检查影响。提交后即使 context 已取消也返回实际已安装 Package，不伪报取消未发生。`CommitError` 明确表示相应 catalog（或下述 runs 文件）已替换但后续同步或清理失败，调用者不得当作未提交盲目重试。对 `ConfirmDataVersion`，该错误表示确认已过提交点而非迁移未发生；对选择选项触发的确认，`Select` 会包装并返回它，此时新代码尚未选择。通过 `errors.As` 识别错误，保留存储诊断并停止相关版本操作，恢复后检查实际选择，切勿把它视为可以重启旧代码的依据。
 
-重开清理未提交 staging、孤立内容、上次执行快照及事务残留，保留已提交安装和选择。旧运行记录按下述规则中断；宿主必须重新创建身份、重新 Snapshot、再启动。原生 runtime 为受信任模式，不声明抵御拥有相同用户完整权限的外部进程或管理员并发修改。
+重开清理未提交 staging、孤立内容、上次执行快照及 catalog.next，保留已提交安装和选择。旧运行记录按下述规则中断；宿主必须重新创建身份、重新 Snapshot、再启动。原生 runtime 为受信任模式，不声明抵御拥有相同用户完整权限的外部进程或管理员并发修改。
 
 ## 运行记录
 

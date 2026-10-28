@@ -253,7 +253,7 @@ type CallStatus struct {
 	Canceled   bool              `json:"canceled"`
 }
 
-func (p *Policy) Calls(owner contract.Identity) ([]CallStatus, error) {
+func (p *Policy) Calls(owner contract.Identity) []CallStatus {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	result := make([]CallStatus, 0)
@@ -265,5 +265,5 @@ func (p *Policy) Calls(owner contract.Identity) ([]CallStatus, error) {
 			Owner: owner, Capability: lease.grant.capability, Canceled: lease.ctx.Err() != nil,
 		})
 	}
-	return result, nil
+	return result
 }

@@ -141,7 +141,10 @@ func yamlScalar(n *yaml.Node) ([]byte, error) {
 			if yamlInteger.MatchString(n.Value) {
 				return integerToken(n.Value, true)
 			}
-			unsigned := strings.TrimLeft(n.Value, "+-")
+			unsigned := n.Value
+			if len(unsigned) > 0 && (unsigned[0] == '+' || unsigned[0] == '-') {
+				unsigned = unsigned[1:]
+			}
 			if strings.HasPrefix(unsigned, "0x") || strings.HasPrefix(unsigned, "0o") || strings.HasPrefix(unsigned, "0b") {
 				if raw, err := integerToken(n.Value, true); err == nil {
 					return raw, nil

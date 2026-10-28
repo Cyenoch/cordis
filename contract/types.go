@@ -38,6 +38,9 @@ type Error struct {
 func (e *Error) Error() string             { return string(e.Code) + ": " + e.Message }
 func Fail(code Code, message string) error { return &Error{Code: code, Message: message} }
 func (e *Error) Is(target error) bool {
+	if other, ok := target.(*Error); ok {
+		return other != nil && e.Code == other.Code
+	}
 	return (target == context.Canceled && e.Code == Canceled) || (target == context.DeadlineExceeded && e.Code == Timeout)
 }
 

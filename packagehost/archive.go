@@ -2,6 +2,7 @@ package packagehost
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -14,7 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -82,9 +83,6 @@ func copyFile(ctx context.Context, dst string, src io.Reader, budget *byteBudget
 		return fmt.Errorf("package expanded byte quota exceeded")
 	}
 	budget.remaining -= n
-	if err = out.Sync(); err != nil {
-		return fmt.Errorf("sync package file: %w", err)
-	}
 	return nil
 }
 
@@ -126,23 +124,14 @@ func extractZIP(ctx context.Context, archive, dest string, l Limits) (err error)
 	if len(zr.File) > l.Entries {
 		return fmt.Errorf("archive entry quota exceeded")
 	}
-	var files []string
-	dirs := map[string]bool{}
-	all := map[string]bool{}
+	var files, dirs []string
 	for _, z := range zr.File {
 		name := strings.TrimSuffix(z.Name, "/")
-		if err := validatePath(name); err != nil {
-			return err
-		}
-		if all[z.Name] {
-			return fmt.Errorf("duplicate zip entry %q", z.Name)
-		}
-		all[z.Name] = true
 		if z.Flags&1 != 0 || z.Mode()&os.ModeSymlink != 0 || !z.Mode().IsRegular() && !z.FileInfo().IsDir() {
 			return fmt.Errorf("encrypted or linked/special zip entry %q", z.Name)
 		}
 		if z.FileInfo().IsDir() {
-			dirs[name] = true
+			dirs = append(dirs, name)
 			continue
 		}
 		if z.UncompressedSize64 > uint64(l.FileBytes) {
@@ -150,11 +139,7 @@ func extractZIP(ctx context.Context, archive, dest string, l Limits) (err error)
 		}
 		files = append(files, name)
 	}
-	var explicit []string
-	for d := range dirs {
-		explicit = append(explicit, d)
-	}
-	if err := checkDirectories(files, explicit); err != nil {
+	if err := checkDirectories(files, dirs); err != nil {
 		return err
 	}
 	budget := byteBudget{remaining: l.ExpandedBytes, file: l.FileBytes}
@@ -204,9 +189,6 @@ func copyDirectory(ctx context.Context, source, dest string, l Limits) error {
 		if count > l.Entries {
 			return fmt.Errorf("directory entry quota exceeded")
 		}
-		if err := validatePath(name); err != nil {
-			return err
-		}
 		if d.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("source link %q", name)
 		}
@@ -248,6 +230,19 @@ func copyDirectory(ctx context.Context, source, dest string, l Limits) error {
 		}
 	}
 	return root.Close()
+}
+
+func stageDirectory(ctx context.Context, source, dest string, l Limits) error {
+	if err := copyDirectory(ctx, source, dest, l); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(dest, IntegrityFile)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return generateIntegrity(ctx, dest, l)
+		}
+		return err
+	}
+	return nil
 }
 
 func checkSourceParents(root *os.Root, name string) error {
@@ -300,9 +295,6 @@ func hashDirectory(ctx context.Context, dir string, l Limits) ([]IntegrityEntry,
 		if countEntries > l.Entries {
 			return fmt.Errorf("entry count quota exceeded")
 		}
-		if err := validatePath(name); err != nil {
-			return err
-		}
 		if d.IsDir() {
 			dirs = append(dirs, name)
 			return nil
@@ -343,12 +335,12 @@ func hashDirectory(ctx context.Context, dir string, l Limits) ([]IntegrityEntry,
 	if err := checkDirectories(names, dirs); err != nil {
 		return nil, err
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	slices.SortFunc(entries, func(a, b IntegrityEntry) int { return strings.Compare(a.Path, b.Path) })
 	return entries, nil
 }
 
-func inspect(ctx context.Context, dir, source string, development bool, l Limits, decoders ...MetadataDecoder) (Package, []byte, *Signature, error) {
-	p, input, err := inspectContent(ctx, dir, source, development, l, decoders...)
+func inspect(ctx context.Context, dir, source string, development bool, l Limits, decoder MetadataDecoder) (Package, []byte, *Signature, error) {
+	p, input, err := inspectContent(ctx, dir, source, development, l, decoder)
 	if err != nil {
 		return p, nil, nil, err
 	}
@@ -356,15 +348,11 @@ func inspect(ctx context.Context, dir, source string, development bool, l Limits
 	return p, input, sig, err
 }
 
-func inspectContent(ctx context.Context, dir, source string, development bool, l Limits, decoders ...MetadataDecoder) (Package, []byte, error) {
+func inspectContent(ctx context.Context, dir, source string, development bool, l Limits, decoder MetadataDecoder) (Package, []byte, error) {
 	var p Package
 	raw, err := readMetadata(dir, ManifestFile)
 	if err != nil {
 		return p, nil, err
-	}
-	var decoder MetadataDecoder
-	if len(decoders) > 0 {
-		decoder = decoders[0]
 	}
 	m, err := decodeMetadata(ctx, raw, os.DirFS(dir), decoder)
 	if err != nil {
@@ -390,7 +378,7 @@ func inspectContent(ctx context.Context, dir, source string, development bool, l
 	if err != nil {
 		return p, nil, err
 	}
-	if !equalBytes(input, expected) {
+	if !bytes.Equal(input, expected) {
 		return p, nil, fmt.Errorf("package integrity mismatch")
 	}
 	listed := map[string]bool{}
@@ -427,18 +415,6 @@ func readSignature(dir string) (*Signature, error) {
 	}
 	return sig, nil
 }
-func equalBytes(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func generateIntegrity(ctx context.Context, dir string, l Limits) error {
 	entries, err := hashDirectory(ctx, dir, l)
 	if err != nil {
@@ -551,7 +527,7 @@ func writeZIP(ctx context.Context, dir, archive string, l Limits) (err error) {
 		names = append(names, filepath.ToSlash(rel))
 		return nil
 	})
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, name := range names {
 		if err != nil {
 			break
@@ -592,5 +568,5 @@ func writeZIP(ctx context.Context, dir, archive string, l Limits) (err error) {
 	if err = replaceFile(name, archive); err != nil {
 		return err
 	}
-	return syncDirectory(filepath.Dir(archive))
+	return syncDir(filepath.Dir(archive))
 }

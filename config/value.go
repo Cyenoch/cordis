@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 )
 
@@ -32,10 +32,8 @@ func stringValue(text string, pos Position) *value {
 	return &value{raw: raw, pos: pos}
 }
 
-func (v *value) writeJSON(out *bytes.Buffer, doc *Document, path string, depth int) error {
-	if err := checkLimits(depth, v.size()); err != nil {
-		return sourceError(doc.Source, path, v.pos, err)
-	}
+// Parsers enforce resource limits while constructing values.
+func (v *value) writeJSON(out *bytes.Buffer, doc *Document, path string) {
 	doc.Positions[path] = v.pos
 	switch v.kind {
 	case '{':
@@ -44,7 +42,7 @@ func (v *value) writeJSON(out *bytes.Buffer, doc *Document, path string, depth i
 		for key := range v.object {
 			keys = append(keys, key)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		for i, key := range keys {
 			if i > 0 {
 				out.WriteByte(',')
@@ -52,9 +50,7 @@ func (v *value) writeJSON(out *bytes.Buffer, doc *Document, path string, depth i
 			encoded, _ := json.Marshal(key)
 			out.Write(encoded)
 			out.WriteByte(':')
-			if err := v.object[key].writeJSON(out, doc, childPath(path, key), depth+1); err != nil {
-				return err
-			}
+			v.object[key].writeJSON(out, doc, childPath(path, key))
 		}
 		out.WriteByte('}')
 	case '[':
@@ -63,15 +59,12 @@ func (v *value) writeJSON(out *bytes.Buffer, doc *Document, path string, depth i
 			if i > 0 {
 				out.WriteByte(',')
 			}
-			if err := item.writeJSON(out, doc, childPath(path, strconv.Itoa(i)), depth+1); err != nil {
-				return err
-			}
+			item.writeJSON(out, doc, childPath(path, strconv.Itoa(i)))
 		}
 		out.WriteByte(']')
 	default:
 		out.Write(v.raw)
 	}
-	return nil
 }
 
 func (v *value) size() int {

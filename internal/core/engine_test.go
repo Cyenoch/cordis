@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/internal/core"
@@ -243,7 +244,7 @@ func TestRealmIsolationAndParentOwnership(t *testing.T) {
 		if err := parent.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		child, err := e.AddChild("parent", contract.Entry{ID: "optional", Enabled: true}, contract.Definition{Requires: []contract.Requirement{{Name: "missing"}}, Start: func(context.Context, contract.Scope) error { return errors.New("must not start") }}, contract.Identity{})
+		child, err := e.Add(contract.Entry{ID: "optional", Parent: "parent", Enabled: true}, contract.Definition{Requires: []contract.Requirement{{Name: "missing"}}, Start: func(context.Context, contract.Scope) error { return errors.New("must not start") }}, contract.Identity{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -454,7 +455,11 @@ func TestRemoveEnableAndStaleSessionFailure(t *testing.T) {
 		if err := i.Stop(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if err := e.Enable(t.Context(), "entry"); err != nil {
+		resumed, err := e.Resume("entry")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := resumed.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if i.Status().Identity.Activation == old.Activation {
@@ -480,6 +485,94 @@ func TestRemoveEnableAndStaleSessionFailure(t *testing.T) {
 			t.Fatal("replacement was stopped")
 		}
 	})
+}
+
+func TestBlockedCleanupsDoNotDelayUnrelatedStop(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := core.New()
+		defer closeEngine(t, e)
+		release := make(chan struct{})
+		defer close(release)
+		entered := make(chan struct{}, 8)
+		for n := range 8 {
+			i := add(t, e, fmt.Sprintf("blocked-%d", n), contract.Definition{Start: func(_ context.Context, s contract.Scope) error {
+				return s.Defer(func(context.Context) error { entered <- struct{}{}; <-release; return nil })
+			}})
+			if err := i.Wait(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := e.Stop(t.Context(), i.Status().Identity.Entry); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for range 8 {
+			<-entered
+		}
+		other := add(t, e, "unrelated", definitionNoop())
+		if err := other.Wait(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		if err := other.Stop(ctx); err != nil {
+			t.Fatalf("eight blocked cleanups exhausted unrelated retirement: %v", err)
+		}
+		if other.Status().State != contract.Stopped {
+			t.Fatal(other.Status())
+		}
+		if err := e.Close(ctx); !errors.Is(err, context.DeadlineExceeded) || e.Drained() {
+			t.Fatalf("Close pretended blocked builtin cleanup had finished: %v", err)
+		}
+	})
+}
+
+func TestCallbackPanicsRetainErrorIdentity(t *testing.T) {
+	for _, stage := range []string{"start", "cleanup", "service", "before-publish", "on-retire"} {
+		t.Run(stage, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				cause := contract.Fail(contract.Denied, "callback failure")
+				hooks := core.Hooks{}
+				if stage == "before-publish" {
+					hooks.BeforePublish = func(contract.Identity) error { panic(cause) }
+				}
+				if stage == "on-retire" {
+					hooks.OnRetire = func(contract.Identity) { panic(cause) }
+				}
+				e := core.NewWithHooks(hooks)
+				defer func() {
+					if err := e.Close(t.Context()); err != nil && !errors.Is(err, cause) {
+						t.Error(err)
+					}
+				}()
+				i := add(t, e, "panic", contract.Definition{Provides: []contract.Service{service}, Start: func(_ context.Context, s contract.Scope) error {
+					if stage == "start" {
+						panic(cause)
+					}
+					if stage == "cleanup" {
+						if err := s.Defer(func(context.Context) error { panic(cause) }); err != nil {
+							return err
+						}
+					}
+					return s.Provide(service, func(context.Context, json.RawMessage) (json.RawMessage, error) { panic(cause) })
+				}})
+				err := i.Wait(t.Context())
+				if stage != "start" && stage != "before-publish" {
+					if err != nil {
+						t.Fatal(err)
+					}
+					if stage == "service" {
+						_, err = e.Call(t.Context(), "", requirement, json.RawMessage(`{}`))
+					} else {
+						err = i.Stop(t.Context())
+					}
+				}
+				var coded *contract.Error
+				if !errors.Is(err, cause) || !errors.As(err, &coded) || coded.Code != contract.Denied {
+					t.Fatalf("panic lost error identity: %v", err)
+				}
+			})
+		})
+	}
 }
 
 func TestFailedPublicationRollsBackPreparedOwnership(t *testing.T) {

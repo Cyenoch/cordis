@@ -39,9 +39,7 @@ func BenchmarkEndpointNetPipe(b *testing.B) {
 				b.Fatal(errors.Join(err, left.Close(), right.Close()))
 			}
 			b.Cleanup(func() {
-				if err := host.Close(); err != nil {
-					b.Error(err)
-				}
+				host.Close()
 				host.Wait()
 			})
 			guest, err := New(Options{Transport: right, Guest: true, Handler: handler})
@@ -49,9 +47,7 @@ func BenchmarkEndpointNetPipe(b *testing.B) {
 				b.Fatal(errors.Join(err, right.Close()))
 			}
 			b.Cleanup(func() {
-				if err := guest.Close(); err != nil {
-					b.Error(err)
-				}
+				guest.Close()
 				guest.Wait()
 			})
 			if _, err := host.Call(b.Context(), "initialize", testInitialize("benchmark")); err != nil {

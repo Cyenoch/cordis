@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"go/format"
 	"io"
 	"os"
 	"path/filepath"
@@ -43,15 +42,11 @@ func generateCommand(flags *flag.FlagSet, parse func() (bool, error), out io.Wri
 	if err := schema.GenerateMany(&generated, *name, definitions...); err != nil {
 		return fmt.Errorf("generate %v: %w", flags.Args(), err)
 	}
-	data, err := format.Source(generated.Bytes())
-	if err != nil {
-		return fmt.Errorf("format generated Go: %w", err)
-	}
 	if *output == "-" {
-		_, err := io.Copy(out, bytes.NewReader(data))
+		_, err := generated.WriteTo(out)
 		return err
 	}
-	return atomicOutput(*output, data)
+	return atomicOutput(*output, generated.Bytes())
 }
 
 func atomicOutput(path string, data []byte) (result error) {

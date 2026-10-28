@@ -3,6 +3,7 @@
 package packagehost
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -42,7 +43,7 @@ func FuzzExtractZIP(f *testing.F) {
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
-		if !equalBytes(after, data) {
+		if !bytes.Equal(after, data) {
 			t.Fatal("extraction overwrote archive")
 		}
 	})

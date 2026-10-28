@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -115,6 +116,298 @@ func TestBuiltinUpdatedConfigSurvivesParentReplace(t *testing.T) {
 	}
 }
 
+type selectionCommitFailureContext struct {
+	context.Context
+	host *Host
+	once sync.Once
+	err  error
+}
+
+func (c *selectionCommitFailureContext) Err() error {
+	if c.host.engine.Missing("a") && c.host.engine.Missing("b") {
+		c.once.Do(func() {
+			c.err = os.Mkdir(filepath.Join(c.host.options.Directory, "catalog.next"), 0700)
+		})
+	}
+	return errors.Join(c.Context.Err(), c.err)
+}
+
+func TestReplaceCommitFailurePreservesEnabledIntentAfterReopen(t *testing.T) {
+	h, p1, p2 := lifecycleHost(t)
+	for _, id := range []string{"a", "b"} {
+		i, err := h.Enable(t.Context(), contract.Entry{ID: id, Package: p1.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := i.Wait(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := &selectionCommitFailureContext{Context: t.Context(), host: h}
+	err := h.Replace(ctx, p2, packagehost.ChangeOptions{})
+	var committed *packagehost.CommitError
+	if err == nil || errors.As(err, &committed) || ctx.err != nil {
+		t.Fatalf("expected selection commit failure: %v (fixture: %v)", err, ctx.err)
+	}
+	if err := os.RemoveAll(filepath.Join(h.options.Directory, "catalog.next")); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(h.options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := reopened.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+	report, err := reopened.Restore(t.Context())
+	if err != nil || len(report.Entries) != 2 {
+		t.Fatal(report, err)
+	}
+	for _, entry := range report.Entries {
+		if entry.Action == "disabled" || entry.Status.State != contract.Active || !entry.Status.Enabled || entry.Status.Identity.Digest != p1.Digest {
+			t.Fatalf("replacement lost enabled intent after reopening: %+v", entry)
+		}
+	}
+}
+
+type capturedLaunch struct {
+	launch  contract.Launch
+	session *fixtureSession
+}
+
+type captureRuntime struct{ launches chan capturedLaunch }
+
+func (r captureRuntime) Start(_ context.Context, launch contract.Launch) (contract.Session, error) {
+	session := &fixtureSession{done: make(chan struct{})}
+	r.launches <- capturedLaunch{launch: launch, session: session}
+	return session, nil
+}
+
+func TestExternalAuthorChildChecksDigestAndRetiresWithParent(t *testing.T) {
+	h, p1, p2 := lifecycleHost(t)
+	launches := make(chan capturedLaunch, 4)
+	h.options.Runtimes["wasm"] = captureRuntime{launches: launches}
+	parent, err := h.Enable(t.Context(), contract.Entry{ID: "parent", Package: p1.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := parent.Wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	parentLaunch := <-launches
+	childRequest := json.RawMessage(`{"action":"create","child":{"id":"optional","definition":"main"}}`)
+	if _, err := parentLaunch.launch.Handle(t.Context(), "child", childRequest); err != nil {
+		t.Fatal(err)
+	}
+	childLaunch := <-launches
+	if childLaunch.launch.Identity.Digest != p1.Digest || childLaunch.launch.Identity.Entry != "parent.optional" {
+		t.Fatal("child did not inherit parent package identity", childLaunch.launch.Identity)
+	}
+	if _, err := parentLaunch.launch.Handle(t.Context(), "child", json.RawMessage(`{"action":"wait","id":"optional"}`)); err != nil {
+		t.Fatal("author child was not registered for controls", err)
+	}
+	entries, err := h.Store().Entries()
+	if err != nil || len(entries) != 1 || entries[0].ID != "parent" {
+		t.Fatal("activation child leaked into durable entries", entries, err)
+	}
+	// Change only the store selection to model a stale parent's child request.
+	if err := h.Store().Select(t.Context(), p2, packagehost.ChangeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = parentLaunch.launch.Handle(t.Context(), "child", json.RawMessage(`{"action":"create","child":{"id":"wrong-digest","definition":"main"}}`))
+	var coded *contract.Error
+	if !errors.As(err, &coded) || coded.Code != contract.Conflict {
+		t.Fatalf("child used a different selected digest: %v", err)
+	}
+	if err := h.Disable(t.Context(), "parent"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-childLaunch.session.Done():
+	default:
+		t.Fatal("parent retirement did not close child session")
+	}
+	if !h.engine.Missing("parent.optional") {
+		t.Fatal("parent retirement retained child registration")
+	}
+	if _, err := parentLaunch.launch.Handle(t.Context(), "child", childRequest); err == nil {
+		t.Fatal("retired parent retained child creation authority")
+	}
+}
+
+func TestNilSinkGuestFailureIsProjected(t *testing.T) {
+	h, p1, _ := lifecycleHost(t)
+	launches := make(chan capturedLaunch, 1)
+	h.options.Runtimes["wasm"] = captureRuntime{launches: launches}
+	private := errors.New("private-token /host/path")
+	h.options.HandleGuest = func(context.Context, contract.Scope, string, json.RawMessage) (json.RawMessage, error) {
+		return nil, fmt.Errorf("%w: %w", contract.Fail(contract.Denied, "private context"), private)
+	}
+	i, err := h.Enable(t.Context(), contract.Entry{ID: "guest", Package: p1.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := i.Wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	launch := <-launches
+	value, err := launch.launch.Handle(t.Context(), "private", json.RawMessage(`{}`))
+	var coded *contract.Error
+	if !errors.As(err, &coded) || coded.Code != contract.Denied || len(value) != 0 {
+		t.Fatalf("guest failure projection lost stable code: %s %v", value, err)
+	}
+	if errors.Is(err, private) || strings.Contains(err.Error(), "private") || strings.Contains(err.Error(), "/host/path") {
+		t.Fatal("guest failure exposed private details", err)
+	}
+}
+
+func TestSuperviseDisableDuringRestartDelayDoesNotStartAgain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, err := Open(Options{Directory: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := h.Close(context.Background()); err != nil {
+				t.Error(err)
+			}
+		}()
+		failure := errors.New("start failed")
+		var starts atomic.Int32
+		i, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "supervised"}, contract.Definition{Start: func(context.Context, contract.Scope) error {
+			starts.Add(1)
+			return failure
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := i.Wait(t.Context()); !errors.Is(err, failure) {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- h.Supervise(t.Context(), "supervised", 2, time.Hour) }()
+		synctest.Wait()
+		if err := h.Disable(t.Context(), "supervised"); !errors.Is(err, failure) {
+			t.Fatal(err)
+		}
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if starts.Load() != 1 {
+			t.Fatalf("Disable allowed a scheduled restart: %d starts", starts.Load())
+		}
+	})
+}
+
+func TestClosedHostRejectsManagementAdmission(t *testing.T) {
+	h, pkg, _ := lifecycleHost(t)
+	if err := h.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	definition := contract.Definition{ID: "main", Start: func(context.Context, contract.Scope) error { return nil }}
+	for _, operation := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "Enable", run: func() error {
+			_, err := h.Enable(t.Context(), contract.Entry{ID: "external", Package: pkg.ID})
+			return err
+		}},
+		{name: "AddBuiltin", run: func() error {
+			_, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "builtin"}, definition)
+			return err
+		}},
+		{name: "RegisterDefinition", run: func() error { return h.RegisterDefinition(t.Context(), "builtin", definition) }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			var coded *contract.Error
+			if err := operation.run(); !errors.As(err, &coded) || coded.Code != contract.NotReady {
+				t.Fatalf("closed host admitted management or returned wrong code: %v", err)
+			}
+		})
+	}
+}
+
+func TestRetiredStartCannotActivatePolicy(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, err := Open(Options{Directory: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := h.Close(context.Background()); err != nil {
+				t.Error(err)
+			}
+		}()
+		entered, release := make(chan struct{}), make(chan struct{})
+		i, err := h.engine.Add(contract.Entry{ID: "late", Package: "builtin", Enabled: true}, contract.Definition{Start: func(ctx context.Context, scope contract.Scope) error {
+			close(entered)
+			<-release
+			return h.startBuiltin(ctx, scope, "", contract.Definition{Start: func(context.Context, contract.Scope) error { return nil }})
+		}}, contract.Identity{Digest: "builtin"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-entered
+		owner := i.Status().Identity
+		wait, err := h.engine.Stop(t.Context(), "late")
+		if err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		close(release)
+		if err := wait(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.Access().Check(owner); err == nil {
+			t.Fatal("late Start restored retired activation authority")
+		}
+	})
+}
+
+func TestRetirementDrainsConcurrentContributionStaging(t *testing.T) {
+	h, _, _ := lifecycleHost(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	if err := h.Contributions().Register("retirement", func(context.Context, contract.Identity, contract.Contribution) error {
+		entered <- struct{}{}
+		<-release
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for n := range 32 {
+		instance, err := h.AddBuiltin(t.Context(), contract.Entry{ID: fmt.Sprintf("staging-%d", n)}, contract.Definition{Start: func(ctx context.Context, scope contract.Scope) error {
+			if err := scope.(contract.Contributor).Contribute(contract.Contribution{Slot: "retirement", ID: "item", Data: json.RawMessage(`{}`)}); err != nil {
+				return err
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-entered
+		owner := instance.Status().Identity
+		stopped := make(chan error, 1)
+		go func() { stopped <- instance.Stop(t.Context()) }()
+		release <- struct{}{}
+		if err := <-stopped; err != nil {
+			t.Fatal(err)
+		}
+		h.mu.Lock()
+		staged, batch := len(h.staged[owner.Activation]), h.batches[owner.Activation]
+		h.mu.Unlock()
+		if staged != 0 || batch != nil {
+			t.Fatalf("retired activation retained staged contributions: %d, %v", staged, batch != nil)
+		}
+	}
+}
+
 func TestExternalChildAcceptsBuiltinParent(t *testing.T) {
 	h, p1, _ := lifecycleHost(t)
 	parent, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "parent"}, contract.Definition{Start: func(context.Context, contract.Scope) error { return nil }})
@@ -211,43 +504,6 @@ func TestDisableParentSkipsDisabledUninstalledChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.Disable(t.Context(), "parent"); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestCloseCancellationWhileDisableIsBlocked(t *testing.T) {
-	h, err := Open(Options{FrameBytes: contract.MaxFrameBytes, Directory: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	entered, release := make(chan struct{}), make(chan struct{})
-	i, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "slow"}, contract.Definition{Start: func(_ context.Context, s contract.Scope) error {
-		return s.Defer(func(context.Context) error { close(entered); <-release; return nil })
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = i.Wait(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	disabled := make(chan error, 1)
-	go func() { disabled <- h.Disable(context.Background(), "slow") }()
-	<-entered
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	closed := make(chan error, 1)
-	go func() { closed <- h.Close(ctx) }()
-	select {
-	case err := <-closed:
-		if err == nil {
-			t.Fatal("canceled close succeeded")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("Close ignored cancellation")
-	}
-	close(release)
-	<-disabled
-	if err = h.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
