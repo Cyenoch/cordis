@@ -195,7 +195,7 @@ SDK 和宿主 Scope 都可以实现这两个接口。一个 service 注册一个
 
 类型化事件使用公共 `contract.EventKey[T]`、`contract.Subscribe` 和 `contract.Publish`，middleware 使用 `contract.Chain`；参见[组合与事件](composition.md)。这些入口不要求作者导入 core，也不允许跨会话传递任意 Go 对象。
 
-`schema/testdata/consumer_test.go.txt` 是独立消费者的真实实现与行为测试。`go test -tags=integration ./schema` 会生成文件到临时独立 module，使用 replace 指向当前框架，再编译并运行 typed client/server、nullable、可选字段、int64、base64、union 和严格 envelope 场景；普通 `go test ./schema` 运行 schema 与生成输入拒绝测试。已执行结果及对应源码修订以 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md) 为准，不把本文的复现命令当作新的运行记录。
+`schema/testdata/consumer_test.go.txt` 是独立消费者的真实实现与行为测试。`go test -tags=integration ./schema` 会生成文件到临时独立 module，使用 replace 指向当前框架，再编译并运行 typed client/server、nullable、可选字段、int64、base64、union 和严格 envelope 场景；普通 `go test ./schema` 运行 schema 与生成输入拒绝测试。已执行结果及对应源码修订以 [OpenSpec change 的集成证据](../openspec/changes/archive/2026-10-28-build-go-plugin-framework/tasks.md) 为准，不把本文的复现命令当作新的运行记录。
 
 ## 互操作向量
 

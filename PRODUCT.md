@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-用户委托选择现代、稳定的框架，部署为 GitHub Pages 并自动发布。采用 Astro 与 Starlight，版本和实施决策以 `package.json` 与 `openspec/changes/build-go-plugin-framework/` 为准。
+用户委托选择现代、稳定的框架，部署为 GitHub Pages 并自动发布。采用 Astro 与 Starlight，版本和实施决策以 `package.json` 与 `openspec/changes/archive/2026-10-28-build-go-plugin-framework/` 为准。
 
 ## Users
 

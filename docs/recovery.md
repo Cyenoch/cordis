@@ -67,7 +67,7 @@ go test -tags=integration ./packagehost -run '^TestStoreRecovery' -count=1 -time
 go test -tags=integration -race ./packagehost -timeout=5m
 ```
 
-集成负责人已执行的恢复、集成和 race 结果见 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)。上述命令用于复现，不是独立新增的通过记录；提交点、进程锁和目录同步必须按实际 OS/架构及对应源码修订判断，交叉编译不代表平台运行验收。
+集成负责人已执行的恢复、集成和 race 结果见 [OpenSpec change 的集成证据](../openspec/changes/archive/2026-10-28-build-go-plugin-framework/tasks.md)。上述命令用于复现，不是独立新增的通过记录；提交点、进程锁和目录同步必须按实际 OS/架构及对应源码修订判断，交叉编译不代表平台运行验收。
 
 ## 逐条恢复
 

@@ -13,7 +13,7 @@ test('repository Markdown renders working Pages links without a duplicate title'
     '# A page',
     '[guide](composition.md#scope)',
     '[home](index.md)',
-    '[evidence](../openspec/changes/build-go-plugin-framework/tasks.md)',
+    '[evidence](../openspec/changes/archive/2026-10-28-build-go-plugin-framework/tasks.md)',
     '## A section',
     '```go',
     'fmt.Println("composition.md")',

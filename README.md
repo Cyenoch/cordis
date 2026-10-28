@@ -70,6 +70,6 @@ if err := instance.Wait(ctx); err != nil { return err }
 | 性能复现 | [performance](docs/performance.md) |
 | 真实外部生命周期与回归 | [lifecycle acceptance](docs/lifecycle-acceptance.md)、[regressions](docs/regressions.md) |
 
-规划与行为规范唯一来源：[OpenSpec change](openspec/changes/build-go-plugin-framework/)。验证结果以 change 的任务证据为准；迁出前的平台记录不代表本次重命名后已重新验证。宿主专属 ABI、Adapter 和游戏验收由宿主项目维护。
+当前行为规范以 [OpenSpec 主规格](openspec/specs/) 为准；设计、任务与验证证据见[归档 change](openspec/changes/archive/)，进行中的变更见 [changes](openspec/changes/)。验证结果以 change 的任务证据为准；迁出前的平台记录不代表本次重命名后已重新验证。宿主专属 ABI、Adapter 和游戏验收由宿主项目维护。
 
 参与仓库或文档开发见[贡献指南](CONTRIBUTING.md)。

@@ -30,7 +30,7 @@ go run ./conformance/cmd/lifecycle-smoke -runtime native -guest /tmp/cordis-life
 go run ./conformance/cmd/lifecycle-smoke -runtime wasm -guest /tmp/cordis-lifecycle-bin/chain.wasm -bad-guest /tmp/cordis-lifecycle-bin/chain-bad.wasm -worker /tmp/cordis-lifecycle-bin/cordis-worker
 ```
 
-这些命令用于复现，不是新增通过记录。实际 Native/WASM、单测及 race 结果见 [OpenSpec 集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)，按对应源码修订和平台判断。Windows 使用本机 `.exe` 与路径；POSIX 示例、旧修订结果和交叉编译不算 Windows 运行证据。
+这些命令用于复现，不是新增通过记录。实际 Native/WASM、单测及 race 结果见 [OpenSpec 集成证据](../openspec/changes/archive/2026-10-28-build-go-plugin-framework/tasks.md)，按对应源码修订和平台判断。Windows 使用本机 `.exe` 与路径；POSIX 示例、旧修订结果和交叉编译不算 Windows 运行证据。
 
 每次调用有三分钟总期限。命令创建临时 catalog、随机 Ed25519 密钥及 `example.chain` 的三个签名版本；1.2.0 使用独立构建且明确拒绝初始化的产物，trust 绑定精确 publisher/package ID。退出时清理临时包与 catalog。
 

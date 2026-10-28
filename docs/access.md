@@ -82,7 +82,7 @@ checkpoint、持久任务 journal、业务恢复和补偿由宿主负责。任�
 
 ## 行为测试
 
-`access/*_test.go` 覆盖撤销与准入交错、按当前能力撤权及其他 owner/grant 隔离、取消及迟到结果、整批校验失败不可见、core gate 可见性、旧激活拒绝、任务唯一终态与接管存活、取消 callback 延迟时完成/接管拒绝、任务 flood 与结果字节边界、同 activation 长期完成/释放循环、终态计数与结果额度回收、活跃任务不可删、旧 handle/token 不修改新任务、退休 ledger 清理及宿主 handle 保留、跨 namespace/配额拒绝、真实持久化/确认迁移和诊断 secret 不泄露。集成负责人统一记录单测、集成与 race 的实际结果；当前修订和平台范围以 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md) 为准。
+`access/*_test.go` 覆盖撤销与准入交错、按当前能力撤权及其他 owner/grant 隔离、取消及迟到结果、整批校验失败不可见、core gate 可见性、旧激活拒绝、任务唯一终态与接管存活、取消 callback 延迟时完成/接管拒绝、任务 flood 与结果字节边界、同 activation 长期完成/释放循环、终态计数与结果额度回收、活跃任务不可删、旧 handle/token 不修改新任务、退休 ledger 清理及宿主 handle 保留、跨 namespace/配额拒绝、真实持久化/确认迁移和诊断 secret 不泄露。集成负责人统一记录单测、集成与 race 的实际结果；当前修订和平台范围以 [OpenSpec change 的集成证据](../openspec/changes/archive/2026-10-28-build-go-plugin-framework/tasks.md) 为准。
 
 `policy_test.go` 集中覆盖 grant/当前能力撤权的在途取消、新调用拒绝、迟到结果拒绝及范围检查期间撤权，替代 `broker_test.go` 的两项重复撤销测试；同文件另覆盖整次 `Revoke` 和同 entry 替换。命名空间测试覆盖迁移后重配、配额持久调整与拒绝、压缩重开保留版本；诊断测试覆盖最大标签和 JSON 最坏转义下的大小边界、无 Sink 投影。
 

@@ -33,7 +33,7 @@
   插件、进程边界、cgo/WASM 一类设计问题的真实工程反馈。
 - [r/golang](https://reddit.com/r/golang)
   中等信号，提问“如何设计插件边界”时能拿到多种工程取舍；筛掉框架推荐类回答。
-- 本仓库 issue / OpenSpec change（`openspec/changes/build-go-plugin-framework/`）
+- 本仓库 issue / OpenSpec change（`openspec/changes/archive/2026-10-28-build-go-plugin-framework/`）
   唯一能拿到“设计者本人怎么想”的渠道；也是用户未来贡献断言的入口。
 
 ## Gaps

@@ -94,7 +94,7 @@ chmod 700 "$cache"
 
 ## 证据状态与适用范围
 
-进程内 benchmark、真实 native/WASM 测量和集成/race 的命令、产物摘要、样本与平台记录统一见 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)。报告明确对应测量时的构建；Adapter 的后续修订不自动继承性能数字。不同版本或平台结果不得拼接成同一次基准，不设性能门禁，也不推导 p95/p99。实际执行目标与仿真方式以该证据记录为准，交叉编译不能替代运行。
+进程内 benchmark、真实 native/WASM 测量和集成/race 的命令、产物摘要、样本与平台记录统一见 [OpenSpec change 的集成证据](../openspec/changes/archive/2026-10-28-build-go-plugin-framework/tasks.md)。报告明确对应测量时的构建；Adapter 的后续修订不自动继承性能数字。不同版本或平台结果不得拼接成同一次基准，不设性能门禁，也不推导 p95/p99。实际执行目标与仿真方式以该证据记录为准，交叉编译不能替代运行。
 
 counter 负载仅包含一个小 JSON 请求、串行有状态加法和响应校验，不代表高并发、大 payload、反向宿主能力调用、事件扇出、真实磁盘或 UI 工作负载。不同机器、不同构建版本、后台负载及操作系统文件缓存都会影响结果；比较时应保留原始样本与环境，不引入缺少场景依据的数字门禁。
 

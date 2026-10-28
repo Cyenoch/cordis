@@ -69,4 +69,4 @@ func start(_ context.Context, scope contract.Scope) error {
 
 Group 负责关闭连接、取消并等待受管理工作、撤销订阅等资源生命周期；它不撤销已经提交的文件写入、网络请求、数据库提交或其他外部副作用。初始化中途失败会释放已登记资源，但不是事务，也不提供任意业务补偿。需要回滚的业务必须自己定义事务边界和补偿策略。
 
-真实外部 C → B → A 的资源获取、传递 cleanup context、释放响应及 shutdown 确认顺序见[生命周期验收](lifecycle-acceptance.md)；Group 单测不能替代 native/WASM 进程链证据。实际执行结果统一引用 [OpenSpec change 的集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)。
+真实外部 C → B → A 的资源获取、传递 cleanup context、释放响应及 shutdown 确认顺序见[生命周期验收](lifecycle-acceptance.md)；Group 单测不能替代 native/WASM 进程链证据。实际执行结果统一引用 [OpenSpec change 的集成证据](../openspec/changes/archive/2026-10-28-build-go-plugin-framework/tasks.md)。

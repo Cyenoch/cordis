@@ -272,7 +272,7 @@ namespace 使用带序号/hash的有界增量日志，Compact 显式原子替换
 
 签名算法、`cordis-go-package/v1\0` 域及路径/大小/hash 输入布局没有变化理由，继续使用。新的 Manifest 字节产生新的摘要和签名；保留独立签名算法向量，更新被契约变化影响的结构向量，不篡改历史执行记录。此处的 v1 不是稳定发布兼容承诺。
 
-共享 wire 写集另有两个 owner：[isolate-oversized-responses](../isolate-oversized-responses/proposal.md) 拥有本地普通响应超限隔离，[negotiate-session-frame-budgets](../negotiate-session-frame-budgets/proposal.md) 拥有双方有效帧预算。已向其 owner 同步“不提升兼容 major、不保留旧握手回退”的用户决定。本 change 不定义预算字段、响应替换或第二套协商；实施先确定单一公共契约及串行合并顺序，仍保留宿主专有 Session 完整替换。
+共享 wire 写集另有两个 owner：[isolate-oversized-responses](../2026-10-28-isolate-oversized-responses/proposal.md) 拥有本地普通响应超限隔离，[negotiate-session-frame-budgets](../2026-10-28-negotiate-session-frame-budgets/proposal.md) 拥有双方有效帧预算。已向其 owner 同步“不提升兼容 major、不保留旧握手回退”的用户决定。本 change 不定义预算字段、响应替换或第二套协商；实施先确定单一公共契约及串行合并顺序，仍保留宿主专有 Session 完整替换。
 
 #### 15.2 一份作者声明，复用当前 schema 编译器
 

@@ -48,6 +48,6 @@ Cordis 是独立的 Go 插件框架。插件以 WASM 或原生进程运行，用
 
 ## 代码与证据
 
-[GitHub 源码](https://github.com/Cyenoch/cordis) · [Go API 导航](api.md) · [示例宿主](https://github.com/Cyenoch/cordis/tree/main/examples/basic-host) · [验收记录](https://github.com/Cyenoch/cordis/blob/main/openspec/changes/build-go-plugin-framework/tasks.md)
+[GitHub 源码](https://github.com/Cyenoch/cordis) · [Go API 导航](api.md) · [示例宿主](https://github.com/Cyenoch/cordis/tree/main/examples/basic-host) · [验收记录](https://github.com/Cyenoch/cordis/blob/main/openspec/changes/archive/2026-10-28-build-go-plugin-framework/tasks.md)
 
 MIT 许可。每页代码基线标明所述 API 对应的修订；使用其他版本时，先核对差异。实际平台验证范围见验收记录。

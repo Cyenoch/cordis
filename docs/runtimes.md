@@ -81,4 +81,4 @@ Windows worker 修正 wazero v1.12.0 的 pipe EOF poll：仅在原 `poll_oneoff`
 go test -tags=integration -race ./runtime/... -timeout 5m
 ```
 
-历史验收包含 macOS arm64/amd64、Linux arm64/amd64 和 Windows amd64 执行，具体命令、源码修订及输出见 [OpenSpec 集成证据](../openspec/changes/build-go-plugin-framework/tasks.md)。其中 macOS amd64 使用 Rosetta，Linux amd64 使用容器仿真，Windows amd64 使用 Win11 ARM64 VM 的 x64 仿真，不是物理 amd64 硬件认证。每次改动只继承对应修订的证据；旧结果、交叉编译或 skip 不能算作当前目标通过。
+历史验收包含 macOS arm64/amd64、Linux arm64/amd64 和 Windows amd64 执行，具体命令、源码修订及输出见 [OpenSpec 集成证据](../openspec/changes/archive/2026-10-28-build-go-plugin-framework/tasks.md)。其中 macOS amd64 使用 Rosetta，Linux amd64 使用容器仿真，Windows amd64 使用 Win11 ARM64 VM 的 x64 仿真，不是物理 amd64 硬件认证。每次改动只继承对应修订的证据；旧结果、交叉编译或 skip 不能算作当前目标通过。

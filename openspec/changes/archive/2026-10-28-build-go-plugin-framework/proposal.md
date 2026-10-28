@@ -26,7 +26,7 @@
 - 框架直接提供共用作者能力、标准进程入口、类型化 namespace 代理、当前授权撤销和普通终态任务回收；复用现有严格 codec、权限、任务和存储，不另建通用 Context 或持久工作引擎。
 - 改善生成代码组合、消费者版本绑定、CLI 文件输出/帮助/等待诊断、业务测试及真实独立作者闭环；连接受信任诊断和可显式委托的标准 dispatcher，不改变宿主专有 ABI。
 
-会话尺寸隔离与双方预算分别由 [isolate-oversized-responses](../isolate-oversized-responses/proposal.md) 和 [negotiate-session-frame-budgets](../negotiate-session-frame-budgets/proposal.md) 拥有；本 change 不重复定义预算、响应替换或另建协商版本。三者实施必须协调共享契约写集。
+会话尺寸隔离与双方预算分别由 [isolate-oversized-responses](../2026-10-28-isolate-oversized-responses/proposal.md) 和 [negotiate-session-frame-budgets](../2026-10-28-negotiate-session-frame-budgets/proposal.md) 拥有；本 change 不重复定义预算、响应替换或另建协商版本。三者实施必须协调共享契约写集。
 
 兼容边界：借鉴 `third_party/cordis` 固定提交 `35fdc969e4b6c48c48ed44717c7a018324e4dd88` 的行为，不提供 TypeScript/Node/npm 兼容层，也不兼容 Cordis 或 Vortex 的现有插件二进制。上游源码事实不自动成为本框架规范；取舍见 design。
 
