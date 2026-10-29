@@ -3,22 +3,14 @@ package core
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
+	"log/slog"
 	"slices"
-	"sync"
 
 	"github.com/Cyenoch/cordis/contract"
 )
 
 type actorKey struct{}
 type cleanupKey struct{}
-type dispatchKey struct{}
-
-func DispatchMode(ctx context.Context) contract.Dispatch {
-	mode, _ := ctx.Value(dispatchKey{}).(contract.Dispatch)
-	return mode
-}
 
 // Scope owns one activation's registration snapshot and reverse-order resource group.
 type Scope struct{ activation *activation }
@@ -87,7 +79,7 @@ func (s *Scope) Call(ctx context.Context, requirement contract.Requirement, inpu
 }
 func (e *Engine) Call(ctx context.Context, requirement contract.Requirement, input json.RawMessage) (json.RawMessage, error) {
 	e.mu.Lock()
-	p := e.resolveLocked(requirement)
+	p := e.resolveLocked(nil, requirement)
 	if p == nil {
 		e.mu.Unlock()
 		return nil, contract.Fail(contract.NotReady, "service is unavailable")
@@ -95,8 +87,13 @@ func (e *Engine) Call(ctx context.Context, requirement contract.Requirement, inp
 	// Host calls never inherit cleanup bypass authority.
 	return e.callLocked(ctx, p, input, false)
 }
-func (e *Engine) callLocked(ctx context.Context, p *provider, input json.RawMessage, cleanup bool) (json.RawMessage, error) {
+func (e *Engine) callLocked(ctx context.Context, p *provider, input json.RawMessage, cleanup bool) (output json.RawMessage, err error) {
 	target := p.owner
+	defer func() {
+		if p.service.Name != "" {
+			e.callFailure(ctx, target.identity, slog.String("service", p.service.Key()), err)
+		}
+	}()
 	if !target.ready && !cleanup {
 		e.mu.Unlock()
 		return nil, contract.Fail(contract.NotReady, "provider publication is not acknowledged")
@@ -153,7 +150,7 @@ func (e *Engine) callLocked(ctx context.Context, p *provider, input json.RawMess
 	if cleanup {
 		callCtx = context.WithValue(callCtx, cleanupKey{}, target)
 	}
-	output, err := invokeHandler(p.handler, callCtx, input)
+	output, err = invokeHandler(p.handler, callCtx, input)
 	if callCtx.Err() != nil {
 		return nil, callCtx.Err()
 	}
@@ -180,90 +177,6 @@ func (e *Engine) pathLocked(from, to *activation, seen map[*activation]bool) boo
 	return false
 }
 func invokeHandler(handler contract.Handler, ctx context.Context, input json.RawMessage) (output json.RawMessage, err error) {
-	defer recoverCallback("service callback", &err)
+	defer recoverCallback(ctx, "service callback", &err)
 	return handler(ctx, input)
-}
-func (s *Scope) On(name string, handler contract.EventHandler) error {
-	if name == "" || handler == nil {
-		return contract.Fail(contract.Invalid, "event name and handler are required")
-	}
-	a := s.activation
-	e := a.instance.engine
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if a.retiring || a.startFinished {
-		return contract.Fail(contract.NotReady, "registration snapshot is sealed")
-	}
-	e.sequence++
-	a.subscriptions = append(a.subscriptions, &subscription{name: name, handler: handler, order: e.sequence, owner: a})
-	return nil
-}
-func (s *Scope) Emit(ctx context.Context, name string, input json.RawMessage, mode contract.Dispatch) ([]contract.EventResult, error) {
-	a := s.activation
-	e := a.instance.engine
-	e.mu.Lock()
-	retiring := a.retiring
-	e.mu.Unlock()
-	if retiring {
-		return nil, contract.Fail(contract.NotReady, "scope is retiring")
-	}
-	return e.Emit(context.WithValue(ctx, actorKey{}, a), name, input, mode)
-}
-func (e *Engine) Emit(ctx context.Context, name string, input json.RawMessage, mode contract.Dispatch) ([]contract.EventResult, error) {
-	if mode != contract.Sequential && mode != contract.Parallel && mode != contract.First {
-		return nil, contract.Fail(contract.Invalid, "unknown event dispatch mode")
-	}
-	ctx = context.WithValue(ctx, dispatchKey{}, mode)
-	e.mu.Lock()
-	listeners := []*subscription{}
-	for _, listener := range e.events {
-		if listener.name == name && listener.owner.ready && !listener.owner.retiring {
-			listeners = append(listeners, listener)
-		}
-	}
-	e.mu.Unlock()
-	results := make([]contract.EventResult, len(listeners))
-	errs := make([]error, len(listeners))
-	run := func(n int) {
-		listener := listeners[n]
-		var result contract.EventResult
-		proxy := &provider{owner: listener.owner, handler: func(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
-			var err error
-			result, err = listener.handler(ctx, raw)
-			return nil, err
-		}}
-		e.mu.Lock()
-		_, err := e.callLocked(ctx, proxy, input, false)
-		results[n] = result
-		if err != nil {
-			errs[n] = fmt.Errorf("event %s listener %s: %w", name, listener.owner.identity.Entry, err)
-		}
-	}
-	if mode == contract.Parallel {
-		// Bounded fan-out; each activation's gate still serializes its own callbacks.
-		var group sync.WaitGroup
-		limit := make(chan struct{}, 8)
-		for n := range listeners {
-			select {
-			case limit <- struct{}{}:
-			case <-ctx.Done():
-				group.Wait()
-				return results, errors.Join(errors.Join(errs...), ctx.Err())
-			}
-			group.Add(1)
-			go func(n int) { defer group.Done(); defer func() { <-limit }(); run(n) }(n)
-		}
-		group.Wait()
-		return results, errors.Join(errs...)
-	}
-	for n := range listeners {
-		run(n)
-		if errs[n] != nil {
-			return results[:n+1], errs[n]
-		}
-		if mode == contract.First && results[n].Handled {
-			return results[:n+1], nil
-		}
-	}
-	return results, nil
 }

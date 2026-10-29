@@ -1,6 +1,6 @@
 ---
 title: CLI 命令
-description: Cordis 命令行工具的初始化、生成、构建、打包、签名与本地调试用法。
+description: 初始化、构建、签名、离线管理、前台宿主与编辑重启。
 ---
 
 # CLI 命令
@@ -30,6 +30,16 @@ go build -o ./bin/cordis ./cmd/cordis
 | `validate ARCHIVE.zip` | 检查归档格式与完整性，不评估宿主信任 |
 | `generate -output FILE\|- [FLAGS] CONTRACT...` | 合并检查多个契约，生成已格式化的 Go 源码 |
 | `run -dev-unsigned [FLAGS] ARCHIVE.zip` | 在临时宿主内运行自己的本地开发产物 |
+| `list -store DIRECTORY` | 列出已安装包、选中版本和持久 entry |
+| `install -store DIRECTORY -trust FILE ARCHIVE.zip` | 验证并安装签名包 |
+| `select -store DIRECTORY -trust FILE ID@VERSION#SHA256` | 选择精确版本 |
+| `enable -store DIRECTORY -trust FILE [FLAGS] ENTRY` | 保存校验后的启用意图，不启动插件 |
+| `disable -store DIRECTORY ENTRY` | 原子停用该持久 entry 及其子树 |
+| `remove -store DIRECTORY ENTRY` | 删除已停用、没有持久子项的 entry 意图 |
+| `uninstall -store DIRECTORY ID@VERSION#SHA256` | 卸载精确包，保留依赖与使用中保护 |
+| `status -store DIRECTORY [ENTRY]` | 查看离线意图及最近运行记录 |
+| `host -store DIRECTORY -trust FILE` | 在前台恢复启用实例，直到取消 |
+| `dev -dev-unsigned -go-package PACKAGE [FLAGS] DIRECTORY` | 监视单包输入，构建并重启本机插件 |
 | `version` | 显示实际构建信息 |
 
 ## 初始化与构建
@@ -67,6 +77,59 @@ go build -o ./bin/cordis ./cmd/cordis
 包目录只能有一个作者源候选：`plugin.toml`、`plugin.yaml`、`plugin.yml` 或 `plugin.json`。格式或声明错误直接失败，不按其他格式重试。作者源不被回写；打包在私有 staging 生成完整机器 `plugin.json`，再计算完整性。
 
 把公钥交给宿主维护者；私钥存放在仓库外或受控密钥设施，不提交到版本库。`keygen` 拒绝覆盖现有文件。`inspect` / `validate` 不会因为签名存在就信任作者；执行许可由宿主 TrustPolicy 决定。
+
+## 离线管理与前台运行
+
+信任文件采用 JSON、TOML 或 YAML，扩展名决定格式。公钥是 `keygen` 输出的 64 位十六进制文本。下面示例授权 `author-key` 为 `example.author` 签署 `example.hello`：
+
+```json title="trust.json"
+{
+  "keys": {
+    "author-key": {
+      "publicKey": "替换为 keygen 输出的 publicKey",
+      "publisher": "example.author",
+      "revoked": false
+    }
+  },
+  "publishers": {"example.author": ["example.hello"]}
+}
+```
+
+还可提供 `revokedPublishers` 和 `publisherChanges`，语义与 `TrustPolicy` 相同。生产管理没有跳过验签开关；签名信息本身不能建立信任。
+
+```sh
+./bin/cordis install -store ./state -trust ./trust.json ./hello.zip
+./bin/cordis select -store ./state -trust ./trust.json 'example.hello@0.1.0#完整摘要'
+./bin/cordis enable -store ./state -trust ./trust.json -package example.hello -config-file ./config.toml hello
+./bin/cordis status -store ./state
+./bin/cordis host -store ./state -trust ./trust.json
+```
+
+`select` 的 ID、version、digest 取自 install/sign 输出，替换示例中的完整引用。`enable` 只保存意图，`host` 才执行插件。前台输出每个实例的状态、等待原因和恢复错误；部分实例失败或缺依赖时继续运行，不自动重试。Ctrl+C 使用独立的关闭期限回收进程，默认 `5s`，可用 `-shutdown-timeout` 调整。
+
+所有离线命令都必须取得 Store 独占锁，包括 list/status；运行中的 Host 持锁时直接拒绝。退出后再执行 status，输出带 `"offline": true`：保存的 `enabled` 和历史 Active 记录不代表当前有活进程。诊断写 stderr，结果写 stdout；输出失败发生在提交之后时会明确报告已提交，不自动撤销或重试。
+
+已有 entry 的 `enable` 保留未指定的 package、definition、parent、config 和 isolate。`-parent ""` 清空父项，`-isolate ""` 清空隔离列表，`-config '{}'` 显式替换配置；新 entry 必须提供 `-package`。`-isolate db@1` 可重复使用，每项是完整服务 key。
+
+不兼容 schema 的升级顺序是：停止前台 Host，disable 受影响子树，从叶到根 remove 旧意图，select 新引用，再用新配置 enable。只 disable 不会删除配置，也不会绕过新版本校验。list/status/disable/remove/uninstall 不要求信任文件；install/select/enable/host 必须明确提供。
+
+## 编辑后自动重启
+
+在作者目录已完成 `go mod tidy` 后：
+
+```sh
+./bin/cordis dev -dev-unsigned -go-package . -config-file ./development.toml ./my-plugin
+```
+
+只接受一个匹配本机的 native target；`-definition` 选择一个定义，默认使用包的默认定义。运行范围包含它创建的同包 children。多目标声明明确报错，不会替你删改；`-startup-timeout` 默认 `30s`，`-shutdown-timeout` 默认 `5s`。
+
+监视最近 Go 模块目录中的源码、资源、作者声明、契约、go.mod/go.sum，以及显式配置文件。模块外依赖用可重复的 `-watch DIRECTORY` 加入；不自动遍历 `replace` 的外部目录。配置可用 `-config` 或 `-config-file`，不能来自 stdin。生成文件、声明产物、`.git` 和工具临时文件不触发自身重建。系统临时根不能位于受监视目录内；这种布局会明确报错，需将 `TMPDIR`（Windows 为 `TMP`）改到外部。
+
+每次候选在作者目录外的临时工作目录中拥有独立 ZIP 和 Store，只许可该候选摘要，因此可以保持发行版本不变连续编辑。Build 仍会更新源码目录中的生成文件、二进制和 build.json；整个源码构建不是事务。Pack 包含作者目录内的全部合法文件，监视排除规则不是打包忽略规则，运行日志与私钥应放在目录外。
+
+编译、Pack、配置预检失败时旧实例继续运行；输入改变后才重试。预检通过才关闭旧 Host，关闭完成后再核对输入 generation，仅启动最新候选。旧 Host 已排空但带历史错误时，输出错误并继续；未完成清理则停止切换、报告保留路径。新插件初始化失败后保持 Failed，等待下次编辑，不恢复旧进程、内存或业务请求。
+
+stdout 输出带 generation 的 `build`、`build_failed`、`runtime` JSON；stderr 输出结构化诊断。退出取消监视与构建进程树，完成 Host 关闭后删除临时目录。
 
 ## 本地运行
 

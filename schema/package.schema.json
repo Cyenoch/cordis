@@ -48,7 +48,8 @@
               "cancel",
               "parent",
               "events",
-              "children"
+              "children",
+              "subscriptions"
             ]
           },
           "maxItems": 10000

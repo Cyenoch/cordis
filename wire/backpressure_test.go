@@ -32,7 +32,7 @@ func TestUnreadResponsesBoundRequestWorkAndDoNotPoisonOtherEndpoints(t *testing.
 					Limits: wire.Limits{Inflight: inflight, Grace: grace},
 					Handler: func(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
 						if method == "initialize" {
-							return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[],"subscriptions":[]}`), nil
+							return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[]}`), nil
 						}
 						if method != "initialize" {
 							handled.Add(1)
@@ -131,7 +131,7 @@ func newBackpressureHealthyEndpoint(t *testing.T) *wire.Endpoint {
 	left, right := net.Pipe()
 	handler := func(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
 		if method == "initialize" {
-			return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[],"subscriptions":[]}`), nil
+			return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[]}`), nil
 		}
 		if method == "health" {
 			return json.RawMessage(`{"ready":true}`), nil

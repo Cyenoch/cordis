@@ -51,6 +51,10 @@ func (c *Client) retire() {
 	c.mu.Lock()
 	c.retiring = true
 	c.work = nil
+	for _, sub := range c.events {
+		sub.handler = nil
+	}
+	clear(c.events)
 	c.cancel()
 	c.mu.Unlock()
 }

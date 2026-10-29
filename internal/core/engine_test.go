@@ -438,7 +438,7 @@ func TestBlockedCleanupsDoNotDelayUnrelatedStop(t *testing.T) {
 			if err := i.Wait(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := e.Stop(t.Context(), i.Status().Identity.Entry); err != nil {
+			if _, err := e.Stop(t.Context(), i); err != nil {
 				t.Fatal(err)
 			}
 		}

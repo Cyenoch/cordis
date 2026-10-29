@@ -9,12 +9,14 @@ description: 从状态和错误定位依赖、启动、调用与清理问题。
 |---|---|
 | Waiting | Status.Waiting 的服务版本或父发布状态；包依赖与服务依赖分开看 |
 | Starting 不结束 | 初始化代码是否等待自己的子实例或循环调用；检查 context 期限 |
-| Failed | Status.Error 与 Wait 返回错误；修正原因后显式 Update |
+| Failed | Status.Error、Outcome.FailureCode 与 Wait 返回错误；按 activation 关联日志，修正后显式 Update |
 | 重复 provider | 一个 Host 的同 key 服务不能被两个 activation 同时提供 |
 | 配置更新被取代 | 后续有效更新已接管期望 revision，检查 UpdateResult.Superseded |
-| Quiescing 不结束 | 是否有未退出的回调、后台工作或清理；取消等待不会释放它们 |
+| Quiescing 不结束 | 用 Instances 查看动态子项及 Owner，定位未退出的回调、后台工作或清理；取消等待不会释放它们 |
 | 包已安装但不能启用 | 是否显式 Select，平台是否匹配，必需包依赖是否选中 |
 | 单次结果超限 | 缩小或分页业务返回值；完整 JSON 编码帧必须符合 frameBytes |
 | 协议会话关闭 | stdout 是否混入日志，消息格式、身份与方向是否正确 |
 
-排查 native 启动可通过 Options.Stderr 收集插件日志。日志转发失败会返回错误，不应通过吞错伪造成功。Go 错误使用 `errors.Is` / `errors.As` 分类。
+初始化失败时，结构化日志会记录 Starting 到 Quiescing/Failed，包含 entry、activation、启动耗时和错误类别，不会记录成功发布。意外 exit 0 仍是 unexpected_exit；主动停止是 requested_stop，Forced 另行表示是否升级为强制终止。清理失败保存在独立 CleanupCode，不覆盖退出原因。
+
+排查 native 启动可通过 `Options.Stderr` 收集带 Owner 的 StderrRecord；Truncated 表示该激活已超过转发预算，管道仍继续排空。转发失败会返回错误，不应通过吞错伪造成功。Go 错误使用 `errors.Is` / `errors.As` 分类，框架不会自动脱敏用户返回的错误文本。

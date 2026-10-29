@@ -8,6 +8,22 @@
     "schema/signature.schema.json"
   ],
   "schemaVectors": [
+    {"name": "subscription-options", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscription", "accept": true, "instance": {"id": "activation/1", "name": "update", "options": {"once": true, "prepend": true}}},
+    {"name": "subscription-default-options", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscription", "accept": true, "instance": {"id": "activation/2", "name": "update"}},
+    {"name": "subscription-missing-id", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscription", "accept": false, "instance": {"name": "update"}},
+    {"name": "subscription-empty-name", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscription", "accept": false, "instance": {"id": "activation/2", "name": ""}},
+    {"name": "subscription-option-type", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscription", "accept": false, "instance": {"id": "activation/2", "name": "update", "options": {"once": 1}}},
+    {"name": "subscription-canonical-sequence", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscriptionID", "accept": false, "instance": "activation/01"},
+    {"name": "subscription-zero-sequence", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscriptionID", "accept": false, "instance": "activation/0"},
+    {"name": "subscription-max-sequence", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscriptionID", "accept": true, "instance": "activation/18446744073709551615"},
+    {"name": "subscription-overflow-sequence", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscriptionID", "accept": false, "instance": "activation/18446744073709551616"},
+    {"name": "subscription-inactive", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscriptionState", "accept": true, "instance": {"inactive": true}},
+    {"name": "subscription-unconfirmed", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscriptionState", "accept": false, "instance": {"inactive": false}},
+    {"name": "subscription-unconfirmed-missing", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscriptionState", "accept": false, "instance": {}},
+    {"name": "event-targeted-delivery", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/eventDelivery", "accept": true, "instance": {"id": "activation/1", "input": null}},
+    {"name": "event-missing-input", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/eventDelivery", "accept": false, "instance": {"id": "activation/1"}},
+    {"name": "event-explicit-handled", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/eventResult", "accept": true, "instance": {"handled": true, "value": false}},
+    {"name": "event-missing-handled", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/eventResult", "accept": false, "instance": {"value": false}},
     {
       "name": "native-package-with-comparator-and-interval-dependencies",
       "validationLevel": "schema",
@@ -66,8 +82,8 @@
     {"name": "protocol-reversed-range-is-structural-only", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/protocol", "accept": true, "instance": {"major": 1, "minMinor": 3, "maxMinor": 2}, "note": "Cross-field ordering and overlap are code validation."},
     {"name": "initialize-minimum", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/initialize", "accept": true, "instance": {"frameBytes": 4096, "identity": {"package": "example", "entry": "one", "activation": "a", "digest": "fixture"}, "protocol": {"major": 1, "minMinor": 0, "maxMinor": 0}, "definition": "main", "config": {}}},
     {"name": "initialize-missing-budget", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/initialize", "accept": false, "instance": {"identity": {"package": "example", "entry": "one", "activation": "a", "digest": "fixture"}, "protocol": {"major": 1, "minMinor": 0, "maxMinor": 0}, "definition": "main", "config": {}}},
-    {"name": "registration-minimum", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/registration", "accept": true, "instance": {"frameBytes": 4096, "minor": 0, "features": [], "services": [], "subscriptions": []}},
-    {"name": "registration-missing-budget", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/registration", "accept": false, "instance": {"minor": 0, "features": [], "services": [], "subscriptions": []}},
+    {"name": "registration-minimum", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/registration", "accept": true, "instance": {"frameBytes": 4096, "minor": 0, "features": [], "services": []}},
+    {"name": "registration-missing-budget", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/registration", "accept": false, "instance": {"minor": 0, "features": [], "services": []}},
     {"name": "frame-budget-minimum", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/initialize/properties/frameBytes", "accept": true, "instance": 4096},
     {"name": "frame-budget-maximum", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/initialize/properties/frameBytes", "accept": true, "instance": 1048576},
     {"name": "frame-budget-too-small", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/initialize/properties/frameBytes", "accept": false, "instance": 4095},
@@ -111,7 +127,11 @@
     {"name": "signature-record", "validationLevel": "schema", "schema": "schema/signature.schema.json", "accept": true, "instance": {"keyId": "fixture-rfc8032-not-for-production", "signature": "21NUJhkpcMruD6F0PwtsIYdFnEGHzlVbKg8iz3TGeJ0N4AA0dBSQbII80v6wlZSfSDkEU1OLx3r+zpc+LalVDw=="}},
     {"name": "signature-content-encoding-is-only-an-annotation", "validationLevel": "schema", "schema": "schema/signature.schema.json", "accept": true, "instance": {"keyId": "fixture", "signature": "not base64!"}, "note": "Draft 2020-12 contentEncoding does not assert decoding or verify a signature. TrustPolicy.verify rejects this."},
     {"name": "signature-nonstring", "validationLevel": "schema", "schema": "schema/signature.schema.json", "accept": false, "instance": {"keyId": "fixture", "signature": 42}},
-    {"name": "signature-unknown-field", "validationLevel": "schema", "schema": "schema/signature.schema.json", "accept": false, "instance": {"keyId": "fixture", "signature": "AA==", "publicKey": "untrusted"}}
+    {"name": "signature-unknown-field", "validationLevel": "schema", "schema": "schema/signature.schema.json", "accept": false, "instance": {"keyId": "fixture", "signature": "AA==", "publicKey": "untrusted"}},
+    {"name": "isolated-service-key-zero", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/serviceKey", "accept": true, "instance": "db@0"},
+    {"name": "isolated-service-key-maximum", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/serviceKey", "accept": true, "instance": "db@4294967295"},
+    {"name": "isolated-service-key-overflow", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/serviceKey", "accept": false, "instance": "db@4294967296"},
+    {"name": "isolated-service-key-noncanonical", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/serviceKey", "accept": false, "instance": "db@01"}
   ],
   "codeVectors": [
     {"name": "activation-utf8-byte-limit", "validationLevel": "code", "validator": "wire.encodeFrame/readFrame", "source": "wire/frame.go", "accept": false, "instance": {"activation": "界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界"}, "reason": "43 code points occupy 129 UTF-8 bytes; structural maxLength alone does not enforce the byte limit. Actual wire checks reject before business handling."},

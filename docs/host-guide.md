@@ -48,8 +48,10 @@ if err := instance.Wait(ctx); err != nil { return err }
 | `host.Replace(ctx, ref)` | 校验新包后替换当前运行实例 |
 | `host.Uninstall(ctx, ref)` | 卸载未被使用且不阻塞启用依赖的代码 |
 
+动态子实例也能通过 `host.Instance("parent.child")` 取得句柄并调用 Wait、Update、Stop；`Instances()` 的 Origin/Owner 区分来源和所属父激活。Update 不生成持久配置，Stop 只停止目标子树。Disable/Remove/Resume 面向静态登记，对动态 ID 明确报错；需要恢复动态子树时重启其所有者。父重建后须重新查找，旧句柄不能控制新 child。
+
 ## 关闭与恢复
 
-退出时调用 `host.Close`，使用独立且有限的 context 并处理错误。取消 Close 的等待不表示资源已释放；不合作的 builtin 仍会阻塞自身依赖树。
+退出时调用 `host.Close`，使用独立且有限的 context 并处理错误。取消 Close 的等待不表示资源已释放；不合作的 builtin 仍会阻塞自身依赖树。只有 `host.Done()` 已关闭才表示清理及目录释放完成；此时即使 Close 有错误，也可以继续下一次宿主启动。
 
-重开目录后，调用 `host.Restore(ctx)` 恢复已启用条目。恢复不会自动重试 Failed，也不会撤销本次 Host 中的临时 Stop。应用业务数据由应用自己管理。
+重开目录后，调用 `host.Restore(ctx)` 恢复已启用条目并创建新 activation。同一个 Host 重复 Restore 不自动重试 Failed，也不会撤销本次 Host 中的临时 Stop；这不代表跨重启的失败隔离。应用业务数据由应用自己管理。

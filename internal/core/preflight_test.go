@@ -48,7 +48,7 @@ func TestConfigurationNormalizationMatchesEveryCoreBoundary(t *testing.T) {
 					t.Fatal(err)
 				}
 				committed := false
-				wait, err := e.Configure(entry.ID, input.raw, func() error { committed = true; return nil })
+				wait, err := e.Configure(i, input.raw, func() error { committed = true; return nil })
 				if err != nil || !committed {
 					t.Fatalf("configuration submission: committed=%v err=%v", committed, err)
 				}
@@ -93,7 +93,7 @@ func TestOmittedConfigurationStillRequiresFullRootValidation(t *testing.T) {
 				}
 				before := i.Status()
 				committed := false
-				if _, err := e.Configure(entry.ID, nil, func() error { committed = true; return nil }); !errors.Is(err, invalid) || committed {
+				if _, err := e.Configure(i, nil, func() error { committed = true; return nil }); !errors.Is(err, invalid) || committed {
 					t.Fatalf("invalid root committed: %v %v", committed, err)
 				}
 				after := i.Status()

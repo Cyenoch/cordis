@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Cyenoch/cordis/contract"
 )
@@ -30,7 +31,11 @@ func TestRunsRetainRunningAndBoundTerminalHistory(t *testing.T) {
 		if err := s.BeginRun(ctx, owner); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.EndRun(ctx, owner, "stopped"); err != nil {
+		largeError := contract.Fail("business_failure", strings.Repeat("large-error", 1<<14))
+		code := 17
+		outcome := contract.Outcome{Reason: contract.ExitUnexpected, ExitCode: &code,
+			FailureCode: contract.ErrorCode(largeError), CleanupCode: contract.Internal, StartupDuration: time.Second}
+		if err := s.EndRun(ctx, owner, "failed", outcome); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -41,7 +46,7 @@ func TestRunsRetainRunningAndBoundTerminalHistory(t *testing.T) {
 	runs[0].State = "failed"
 	wrong := live
 	wrong.Digest = strings.Repeat("b", 64)
-	if err := s.EndRun(ctx, wrong, "stopped"); err == nil {
+	if err := s.EndRun(ctx, wrong, "stopped", contract.Outcome{}); err == nil {
 		t.Fatal("mismatched owner ended run")
 	}
 	if err := s.BeginRun(ctx, live); err != nil {
@@ -55,13 +60,21 @@ func TestRunsRetainRunningAndBoundTerminalHistory(t *testing.T) {
 	if err != nil || len(runs) != 256 || runs[len(runs)-1].Owner != live || runs[len(runs)-1].State != "interrupted" || runs[len(runs)-1].EndedAt.IsZero() {
 		t.Fatalf("recovery failed to record interruption: %+v, %v", runs, err)
 	}
+	if runs[0].Outcome.FailureCode != contract.PluginFailed || runs[0].Outcome.CleanupCode != contract.Internal || runs[0].Outcome.ExitCode == nil || *runs[0].Outcome.ExitCode != 17 {
+		t.Fatalf("bounded history lost structured outcome: %+v", runs[0])
+	}
+	*runs[0].Outcome.ExitCode = 99
+	snapshot, err := s.Runs()
+	if err != nil || *snapshot[0].Outcome.ExitCode != 17 {
+		t.Fatal("run snapshot exposed mutable outcome", err)
+	}
 	if err := s.BeginRun(ctx, live); err == nil {
 		t.Fatal("reused retained activation")
 	}
-	if err := s.EndRun(ctx, live, "stopped"); err == nil {
+	if err := s.EndRun(ctx, live, "stopped", contract.Outcome{}); err == nil {
 		t.Fatal("terminal state changed")
 	}
-	if err := s.EndRun(ctx, live, "interrupted"); err != nil {
+	if err := s.EndRun(ctx, live, "interrupted", contract.Outcome{}); err != nil {
 		t.Fatal("terminal repeat was not idempotent", err)
 	}
 	ended := runs[len(runs)-1].EndedAt
@@ -99,7 +112,7 @@ func TestRunCancellationRespectsAtomicBoundary(t *testing.T) {
 				if operation == "begin" {
 					err = s.BeginRun(ctx, owner)
 				} else {
-					err = s.EndRun(ctx, owner, "stopped")
+					err = s.EndRun(ctx, owner, "stopped", contract.Outcome{})
 				}
 				committed := stage == commitRunsSwapped
 				if committed && err != nil || !committed && !errors.Is(err, context.Canceled) {

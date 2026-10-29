@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/Cyenoch/cordis/contract"
 )
@@ -15,12 +17,6 @@ import (
 type provider struct {
 	service contract.Service
 	handler contract.Handler
-	owner   *activation
-}
-type subscription struct {
-	name    string
-	handler contract.EventHandler
-	order   uint64
 	owner   *activation
 }
 type revisionResult struct {
@@ -32,7 +28,10 @@ type revisionResult struct {
 
 // Hooks connects activation retirement to owned child registration cleanup.
 type Hooks struct {
-	OnRetire func(contract.Identity)
+	OnRetire     func(contract.Identity)
+	OnDisposed   func(contract.Identity, contract.Outcome) error
+	Logger       *slog.Logger
+	CapturePanic bool
 }
 
 // Engine owns the registry, dependency graph, and all instance transitions.
@@ -41,7 +40,7 @@ type Engine struct {
 	mu            sync.Mutex
 	configMu      sync.Mutex
 	instances     map[string]*instance
-	services      map[string]*provider
+	services      map[serviceKey]*provider
 	events        []*subscription
 	edges         map[*activation]map[*activation]int
 	instanceEdges map[*activation]map[*instance]int
@@ -51,11 +50,13 @@ type Engine struct {
 	closed        bool
 	sequence      uint64
 	hooks         Hooks
+	diagnostics   []slog.Record
 }
 
 type instance struct {
 	engine     *Engine
 	entry      contract.Entry
+	parent     *instance
 	definition contract.Definition
 	identity   contract.Identity
 	desired    uint64
@@ -67,6 +68,7 @@ type instance struct {
 	removing   bool
 	activation *activation
 	pending    *revisionResult
+	outcome    contract.Outcome
 }
 
 type activation struct {
@@ -91,7 +93,7 @@ type activation struct {
 	retireNotified chan struct{}
 	bindings       map[string]*provider
 	provided       map[string]*provider
-	subscriptions  []*subscription
+	subscriptions  map[uint64]*subscription
 	cleanups       []contract.Cleanup
 	retiring       bool
 	committed      bool
@@ -100,12 +102,14 @@ type activation struct {
 	startErr       error
 	forcedErr      error
 	cleanupErr     error
+	startedAt      time.Time
+	outcome        contract.Outcome
 }
 
 func New() *Engine { return NewWithHooks(Hooks{}) }
 
 func NewWithHooks(hooks Hooks) *Engine {
-	e := &Engine{instances: map[string]*instance{}, services: map[string]*provider{}, edges: map[*activation]map[*activation]int{}, instanceEdges: map[*activation]map[*instance]int{}, changed: make(chan struct{}), wake: make(chan struct{}, 1), done: make(chan struct{}), hooks: hooks}
+	e := &Engine{instances: map[string]*instance{}, services: map[serviceKey]*provider{}, edges: map[*activation]map[*activation]int{}, instanceEdges: map[*activation]map[*instance]int{}, changed: make(chan struct{}), wake: make(chan struct{}, 1), done: make(chan struct{}), hooks: hooks}
 	go e.coordinate()
 	return e
 }
@@ -127,6 +131,7 @@ func (e *Engine) AddWithCommit(entry contract.Entry, definition contract.Definit
 }
 
 func (e *Engine) add(entry contract.Entry, definition contract.Definition, identity contract.Identity, owner *contract.Identity, commit func() error) (contract.Instance, error) {
+	defer e.flushDiagnostics()
 	config := normalizeConfig(entry.Config)
 	entry.Config = config
 	if err := validateAdmission(entry, definition); err != nil {
@@ -155,14 +160,17 @@ func (e *Engine) add(entry contract.Entry, definition contract.Definition, ident
 	definition.Requires = slices.Clone(definition.Requires)
 	definition.Provides = slices.Clone(definition.Provides)
 	entry.Config = slices.Clone(config)
+	entry.Isolate = slices.Clone(entry.Isolate)
 	identity.Entry = entry.ID
 	if identity.Package == "" {
 		identity.Package = entry.Package
 	}
 	identity.Activation = ""
-	i := &instance{engine: e, entry: entry, definition: definition, identity: identity, desired: 1, config: config, state: contract.Waiting, enabled: entry.Enabled, pending: &revisionResult{done: make(chan struct{})}}
+	i := &instance{engine: e, entry: entry, definition: definition, identity: identity, desired: 1, config: config, enabled: entry.Enabled, pending: &revisionResult{done: make(chan struct{})}}
+	i.parent = e.instances[entry.Parent]
+	e.stateLocked(i, contract.Waiting)
 	if !entry.Enabled {
-		i.state = contract.Stopped
+		e.stateLocked(i, contract.Stopped)
 	}
 	e.instances[entry.ID] = i
 	e.signalLocked()
@@ -188,16 +196,16 @@ func validate(def contract.Definition, config json.RawMessage) error {
 	return nil
 }
 
-func (e *Engine) resolveLocked(requirement contract.Requirement) *provider {
-	p := e.visibleProviderLocked(requirement.Key())
+func (e *Engine) resolveLocked(i *instance, requirement contract.Requirement) *provider {
+	p := e.visibleProviderLocked(i, requirement.Key())
 	if p != nil && requirement.Accepts(p.service) {
 		return p
 	}
 	return nil
 }
 
-func (e *Engine) visibleProviderLocked(key string) *provider {
-	p := e.services[key]
+func (e *Engine) visibleProviderLocked(i *instance, key string) *provider {
+	p := e.services[serviceAddress(i, key)]
 	if p != nil && !p.owner.retiring {
 		return p
 	}
@@ -230,7 +238,7 @@ func (e *Engine) coordinate() {
 			bindings := map[string]*provider{}
 			ready := true
 			for _, req := range i.definition.Requires {
-				p := e.resolveLocked(req)
+				p := e.resolveLocked(i, req)
 				if p == nil || !p.owner.ready {
 					ready = false
 					break
@@ -238,16 +246,16 @@ func (e *Engine) coordinate() {
 				bindings[req.Key()] = p
 			}
 			if !ready {
-				i.state = contract.Waiting
+				e.stateLocked(i, contract.Waiting)
 				continue
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			identity := i.identity
 			identity.Activation = contract.NewID()
-			a := &activation{instance: i, identity: identity, revision: i.desired, config: slices.Clone(i.config), ctx: ctx, cancel: cancel, publishDone: make(chan struct{}), retireNotified: make(chan struct{}), done: make(chan struct{}), gate: make(chan struct{}, 1), bindings: bindings, provided: map[string]*provider{}}
+			a := &activation{instance: i, identity: identity, revision: i.desired, config: slices.Clone(i.config), ctx: ctx, cancel: cancel, publishDone: make(chan struct{}), retireNotified: make(chan struct{}), done: make(chan struct{}), gate: make(chan struct{}, 1), bindings: bindings, provided: map[string]*provider{}, subscriptions: map[uint64]*subscription{}, startedAt: time.Now()}
 			i.activation = a
-			i.state = contract.Starting
 			i.failure = nil
+			e.stateLocked(i, contract.Starting)
 			go e.start(a)
 		}
 		allStopped := e.closed
@@ -261,6 +269,7 @@ func (e *Engine) coordinate() {
 		}
 		e.signalChangedLocked()
 		e.mu.Unlock()
+		e.flushDiagnostics()
 		if allStopped {
 			return
 		}
@@ -271,16 +280,18 @@ func (e *Engine) signalChangedLocked() { close(e.changed); e.changed = make(chan
 func invokeStart(a *activation) (err error) {
 	ctx, cancel := context.WithCancel(context.WithValue(a.ctx, actorKey{}, a))
 	defer cancel()
-	defer recoverCallback("plugin start", &err)
+	defer recoverCallback(ctx, "plugin start", &err)
 	return a.instance.definition.Start(ctx, &Scope{activation: a})
 }
 func (e *Engine) start(a *activation) {
+	defer e.flushDiagnostics()
 	defer close(a.publishDone)
 	a.gate <- struct{}{}
 	err := invokeStart(a)
 	<-a.gate
 	e.mu.Lock()
 	a.startFinished = true
+	a.outcome.StartupDuration = time.Since(a.startedAt)
 	a.startErr = errors.Join(a.forcedErr, err)
 	i := a.instance
 	if a.retiring {
@@ -299,7 +310,7 @@ func (e *Engine) start(a *activation) {
 	}
 	if err == nil {
 		for key := range a.provided {
-			if p := e.services[key]; p != nil && p.owner != a {
+			if p := e.services[serviceAddress(i, key)]; p != nil && p.owner != a {
 				err = contract.Fail(contract.Conflict, "duplicate provider: "+key)
 				break
 			}
@@ -315,18 +326,11 @@ func (e *Engine) start(a *activation) {
 		e.retireLocked(a, contract.Waiting)
 	} else {
 		for key, p := range a.provided {
-			e.services[key] = p
+			e.services[serviceAddress(i, key)] = p
 		}
-		e.events = append(e.events, a.subscriptions...)
-		slices.SortFunc(e.events, func(a, b *subscription) int {
-			if a.order < b.order {
-				return -1
-			}
-			if a.order > b.order {
-				return 1
-			}
-			return 0
-		})
+		for _, sub := range a.subscriptions {
+			e.publishSubscriptionLocked(sub)
+		}
 		a.committed = true
 		e.mu.Unlock()
 		err = e.publish(a)
@@ -345,7 +349,8 @@ func (e *Engine) start(a *activation) {
 			a.managedWork.Add(1)
 			go e.runManaged(a, work)
 		}
-		i.state = contract.Active
+		a.outcome.StartupDuration = time.Since(a.startedAt)
+		e.stateLocked(i, contract.Active)
 		i.applied = a.revision
 		i.finishRevisionLocked(a.revision, contract.UpdateResult{Revision: a.revision, Applied: true}, nil)
 		e.rebindLocked()
@@ -363,7 +368,7 @@ func (e *Engine) rebindLocked() {
 			continue
 		}
 		for _, req := range consumer.definition.Requires {
-			p := e.visibleProviderLocked(req.Key())
+			p := e.visibleProviderLocked(consumer, req.Key())
 			if p != nil && !p.owner.ready {
 				continue
 			}
@@ -382,12 +387,12 @@ func (e *Engine) checkPublicationCycleLocked(a *activation) error {
 	// Resolve against the proposed snapshot before publishing it. The graph
 	// includes ownership, so a parent's new binding cannot depend on its child.
 	previous := e.services
-	proposed := make(map[string]*provider, len(previous)+len(a.provided))
+	proposed := make(map[serviceKey]*provider, len(previous)+len(a.provided))
 	for key, p := range previous {
 		proposed[key] = p
 	}
 	for key, p := range a.provided {
-		proposed[key] = p
+		proposed[serviceAddress(a.instance, key)] = p
 	}
 	e.services = proposed
 	defer func() { e.services = previous }()
@@ -405,7 +410,7 @@ func (e *Engine) checkPublicationCycleLocked(a *activation) error {
 			return true
 		}
 		for _, req := range i.definition.Requires {
-			if p := e.resolveLocked(req); p != nil && visit(p.owner.instance) {
+			if p := e.resolveLocked(i, req); p != nil && visit(p.owner.instance) {
 				return true
 			}
 		}
@@ -430,8 +435,11 @@ func (e *Engine) retireLocked(root *activation, terminal contract.State) {
 		return
 	}
 	root.retiring = true
+	for _, sub := range root.subscriptions {
+		e.removeSubscriptionLocked(sub)
+	}
 	root.terminal = terminal
-	root.instance.state = contract.Quiescing
+	e.stateLocked(root.instance, contract.Quiescing)
 	root.cancel()
 	dependents := []*activation{}
 	for _, i := range e.instances {
@@ -454,10 +462,12 @@ func (e *Engine) retireLocked(root *activation, terminal contract.State) {
 	go e.dispose(root, dependents)
 }
 func invokeCleanup(fn contract.Cleanup, ctx context.Context) (err error) {
-	defer recoverCallback("cleanup", &err)
+	defer recoverCallback(ctx, "cleanup", &err)
 	return fn(ctx)
 }
 func (e *Engine) dispose(a *activation, dependents []*activation) {
+	defer e.flushDiagnostics()
+	e.flushDiagnostics()
 	e.notifyRetire(a)
 	// Open the per-scope barrier before the global hook, which may remove and
 	// synchronously wait for children that need this provider for cleanup.
@@ -507,27 +517,48 @@ func (e *Engine) dispose(a *activation, dependents []*activation) {
 		}
 	}
 	e.mu.Lock()
+	outcome := a.outcome.Clone()
+	if a.startErr != nil {
+		outcome.FailureCode = failureCode(a.startErr)
+	}
+	if cleanupErr := errors.Join(errs...); cleanupErr != nil {
+		outcome.CleanupCode = failureCode(cleanupErr)
+	}
+	if outcome.Reason == "" && outcome.FailureCode == "" {
+		outcome.Reason = contract.ExitStopped
+	}
+	e.mu.Unlock()
+	if e.hooks.OnDisposed != nil {
+		if err := e.hooks.OnDisposed(a.identity, outcome); err != nil {
+			errs = append(errs, err)
+			outcome.CleanupCode = failureCode(errors.Join(errs...))
+		}
+	}
+	e.mu.Lock()
 	if a.startErr != nil && a.terminal == contract.Failed {
 		errs = append(errs, a.startErr)
 	}
 	for key, p := range a.provided {
-		if e.services[key] == p {
-			delete(e.services, key)
+		address := serviceAddress(a.instance, key)
+		if e.services[address] == p {
+			delete(e.services, address)
 		}
 	}
-	e.events = slices.DeleteFunc(e.events, func(s *subscription) bool { return s.owner == a })
 	a.cleanupErr = errors.Join(errs...)
 	i := a.instance
 	if i.activation == a {
 		i.activation = nil
-		i.state = a.terminal
+		i.identity = a.identity
+		i.outcome = outcome
+		state := a.terminal
 		i.failure = a.cleanupErr
 		if !i.enabled || e.closed {
-			i.state = contract.Stopped
+			state = contract.Stopped
 		}
-		if a.cleanupErr != nil && i.state != contract.Stopped {
-			i.state = contract.Failed
+		if a.cleanupErr != nil && state != contract.Stopped {
+			state = contract.Failed
 		}
+		e.stateLocked(i, state)
 		if i.state == contract.Failed {
 			i.finishRevisionLocked(i.desired, contract.UpdateResult{Revision: i.desired}, a.cleanupErr)
 		}
@@ -543,6 +574,7 @@ func (e *Engine) dispose(a *activation, dependents []*activation) {
 }
 
 func (e *Engine) Close(ctx context.Context) error {
+	defer e.flushDiagnostics()
 	e.configMu.Lock()
 	e.mu.Lock()
 	e.closed = true
@@ -552,7 +584,7 @@ func (e *Engine) Close(ctx context.Context) error {
 		if i.activation != nil {
 			e.retireLocked(i.activation, contract.Stopped)
 		} else {
-			i.state = contract.Stopped
+			e.stateLocked(i, contract.Stopped)
 		}
 	}
 	e.signalLocked()
@@ -583,6 +615,7 @@ func (e *Engine) IsActive(identity contract.Identity) bool {
 
 // FailActivation rejects a late failure from an already replaced session.
 func (e *Engine) FailActivation(identity contract.Identity, cause error) error {
+	defer e.flushDiagnostics()
 	if cause == nil {
 		return contract.Fail(contract.Invalid, "failure cause is required")
 	}
@@ -640,6 +673,7 @@ func (e *Engine) Remove(ctx context.Context, entryID string) error {
 
 // Resume submits the enable intent without waiting for dependencies or Start.
 func (e *Engine) Resume(entryID string) (contract.Instance, error) {
+	defer e.flushDiagnostics()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	i := e.instances[entryID]
@@ -656,15 +690,15 @@ func (e *Engine) Resume(entryID string) (contract.Instance, error) {
 		}
 	}
 	i.enabled = true
-	i.state = contract.Waiting
 	i.failure = nil
+	e.stateLocked(i, contract.Waiting)
 	i.pending = &revisionResult{done: make(chan struct{})}
 	e.signalLocked()
 	return i, nil
 }
 
 func invokeRetire(hook func(contract.Identity), identity contract.Identity) (err error) {
-	defer recoverCallback("retirement hook", &err)
+	defer recoverCallback(context.Background(), "retirement hook", &err)
 	hook(identity)
 	return nil
 }
@@ -684,7 +718,7 @@ func (e *Engine) detectWaitingCyclesLocked() {
 			}
 		}
 		for _, req := range i.definition.Requires {
-			if e.resolveLocked(req) != nil {
+			if e.resolveLocked(i, req) != nil {
 				continue
 			}
 			var candidates []*instance
@@ -693,7 +727,7 @@ func (e *Engine) detectWaitingCyclesLocked() {
 					continue
 				}
 				for _, service := range p.definition.Provides {
-					if req.Accepts(service) {
+					if req.Accepts(service) && serviceAddress(i, req.Key()) == serviceAddress(p, service.Key()) {
 						candidates = append(candidates, p)
 						break
 					}
@@ -715,8 +749,8 @@ func (e *Engine) detectWaitingCyclesLocked() {
 			for n, p := range stack {
 				if p == i {
 					for _, member := range stack[n:] {
-						member.state = contract.Failed
 						member.failure = contract.Fail(contract.Reentrant, "service dependency activation cycle")
+						e.stateLocked(member, contract.Failed)
 						member.finishRevisionLocked(member.desired, contract.UpdateResult{Revision: member.desired}, member.failure)
 					}
 					break

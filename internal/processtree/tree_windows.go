@@ -1,8 +1,9 @@
-package process
+package processtree
 
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
@@ -11,9 +12,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-type processTree struct{ job windows.Handle }
+type Tree struct{ job windows.Handle }
 
-func startTree(cmd *exec.Cmd) (*processTree, error) {
+func Start(cmd *exec.Cmd) (*Tree, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create job object: %w", err)
@@ -47,14 +48,14 @@ func startTree(cmd *exec.Cmd) (*processTree, error) {
 	if err := windows.CloseHandle(process); err != nil {
 		return nil, errors.Join(err, windows.TerminateJobObject(job, 1), cmd.Wait(), windows.CloseHandle(job))
 	}
-	return &processTree{job: job}, nil
+	return &Tree{job: job}, nil
 }
 
 // Windows has no general SIGTERM equivalent; pipe closure provides the grace
 // interval, after which the job is forcibly terminated.
-func (p *processTree) terminate() error { return nil }
-func (p *processTree) kill() error      { return windows.TerminateJobObject(p.job, 0xC0D15001) }
-func (p *processTree) close() error {
+func (p *Tree) Terminate() error { return nil }
+func (p *Tree) Kill() error      { return windows.TerminateJobObject(p.job, 0xC0D15001) }
+func (p *Tree) Close() error {
 	// TerminateJobObject is asynchronous. Waiting only for the leader leaves
 	// descendants holding the activation executable and inherited handles.
 	deadline := time.Now().Add(30 * time.Second)
@@ -75,6 +76,8 @@ func (p *processTree) close() error {
 		time.Sleep(time.Millisecond)
 	}
 }
-func (p *processTree) expectedExit(err *exec.ExitError) bool {
+func (p *Tree) ExpectedExit(err *exec.ExitError) bool {
 	return uint32(err.ExitCode()) == 0xC0D15001
 }
+
+func (*Tree) ExitSignal(*os.ProcessState) string { return "" }

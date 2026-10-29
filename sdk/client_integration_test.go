@@ -30,8 +30,20 @@ func TestNativeCommandAuthorSDK(t *testing.T) {
 		t.Fatalf("author build %v: %s", err, data)
 	}
 	identity := contract.Identity{Package: "example.counter", Entry: "one", Activation: contract.NewID(), Digest: "fixture"}
-	session, err := native.New().Start(t.Context(), contract.Launch{FrameBytes: contract.MaxFrameBytes, Identity: identity, Directory: dir, Artifact: plugin, Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
-		return json.RawMessage(`{"message":"host callback"}`), nil
+	registered := make(chan string, 1)
+	session, err := native.New().Start(t.Context(), contract.Launch{FrameBytes: contract.MaxFrameBytes, Identity: identity, Directory: dir, Artifact: plugin, Handle: func(_ context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+		if method != "event.subscribe" {
+			return nil, contract.Fail(contract.Invalid, "unexpected host method")
+		}
+		var spec contract.SubscriptionSpec
+		if err := contract.Decode(input, &spec); err != nil {
+			return nil, err
+		}
+		if _, err := contract.SubscriptionNumber(identity.Activation, spec.ID); err != nil {
+			return nil, err
+		}
+		registered <- spec.ID
+		return json.RawMessage(`{}`), nil
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +68,10 @@ func TestNativeCommandAuthorSDK(t *testing.T) {
 	startupCancel()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
+	delivery, _ := json.Marshal(contract.EventDelivery{ID: <-registered, Input: json.RawMessage(`null`)})
+	if _, err := session.Call(ctx, "event", delivery); err != nil {
+		t.Fatalf("native SDK event: %v", err)
+	}
 	input, err = json.Marshal(contract.Invocation{Service: contract.Service{Name: "example.counter", Major: 1}, Input: json.RawMessage(`{"method":"execute","input":{"operation":"get","delta":0}}`)})
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +87,7 @@ func TestNativeCommandAuthorSDK(t *testing.T) {
 	if err := contract.Decode(data, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Value != 4 {
+	if result.Value != 4 || result.Events != 1 {
 		t.Fatalf("wrong guest result: %s", data)
 	}
 	waitInput, err := json.Marshal(contract.Invocation{Service: contract.Service{Name: "example.counter", Major: 1}, Input: json.RawMessage(`{"method":"execute","input":{"operation":"wait","delta":0}}`)})

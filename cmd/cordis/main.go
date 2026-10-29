@@ -23,6 +23,7 @@ import (
 const sdkModule = "github.com/Cyenoch/cordis"
 
 func main() {
+	ignoreBrokenPipe()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := exitCode(execute(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr), os.Stderr)
 	stop()
@@ -46,17 +47,27 @@ func exitCode(err error, errOut io.Writer) int {
 }
 
 var commandUsage = map[string]string{
-	"help":     "help [COMMAND]",
-	"init":     "init -module MODULE [-sdk-version VERSION] [-id ID] [-publisher NAME] DIRECTORY",
-	"build":    "build -go-package PACKAGE -goos OS -goarch ARCH [FLAGS] DIRECTORY",
-	"pack":     "pack DIRECTORY ARCHIVE.zip",
-	"sign":     "sign ARCHIVE.zip KEY_ID PRIVATE_KEY_FILE",
-	"keygen":   "keygen PRIVATE_KEY_FILE",
-	"inspect":  "inspect ARCHIVE.zip",
-	"validate": "validate ARCHIVE.zip",
-	"generate": "generate -output FILE|- [-package NAME] [-format FORMAT] CONTRACT...",
-	"run":      "run -dev-unsigned [FLAGS] ARCHIVE.zip",
-	"version":  "version",
+	"help":      "help [COMMAND]",
+	"init":      "init -module MODULE [-sdk-version VERSION] [-id ID] [-publisher NAME] DIRECTORY",
+	"build":     "build -go-package PACKAGE -goos OS -goarch ARCH [FLAGS] DIRECTORY",
+	"pack":      "pack DIRECTORY ARCHIVE.zip",
+	"sign":      "sign ARCHIVE.zip KEY_ID PRIVATE_KEY_FILE",
+	"keygen":    "keygen PRIVATE_KEY_FILE",
+	"inspect":   "inspect ARCHIVE.zip",
+	"validate":  "validate ARCHIVE.zip",
+	"generate":  "generate -output FILE|- [-package NAME] [-format FORMAT] CONTRACT...",
+	"run":       "run -dev-unsigned [FLAGS] ARCHIVE.zip",
+	"version":   "version",
+	"list":      "list -store DIR",
+	"install":   "install -store DIR -trust FILE ARCHIVE.zip",
+	"select":    "select -store DIR -trust FILE ID@VERSION#DIGEST",
+	"enable":    "enable -store DIR -trust FILE [-package ID] [-definition ID] [-parent ID] [-isolate KEY] [-config JSON|-config-file FILE] ENTRY",
+	"disable":   "disable -store DIR ENTRY",
+	"remove":    "remove -store DIR ENTRY",
+	"uninstall": "uninstall -store DIR ID@VERSION#DIGEST",
+	"status":    "status -store DIR [ENTRY]",
+	"host":      "host -store DIR -trust FILE [-shutdown-timeout DURATION]",
+	"dev":       "dev -dev-unsigned -go-package PACKAGE [-definition ID] [-config JSON|-config-file FILE] [-watch DIR] DIRECTORY",
 }
 
 // Subcommand-local stdlib flag sets avoid hidden environment/config layering.
@@ -124,6 +135,12 @@ func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 		return generateCommand(flags, parse, out)
 	case "run":
 		return runCommand(ctx, flags, parse, in, out, errOut)
+	case "list", "install", "select", "enable", "disable", "remove", "uninstall", "status":
+		return manageCommand(ctx, args[0], flags, parse, in, out, errOut)
+	case "host":
+		return hostCommand(ctx, flags, parse, out, errOut)
+	case "dev":
+		return devCommand(ctx, flags, parse, in, out, errOut)
 	}
 	if done, err := parse(); done {
 		return err
@@ -184,7 +201,7 @@ func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 }
 
 func printHelp(out io.Writer) error {
-	_, err := fmt.Fprintln(out, "cordis: init | build | pack | sign | keygen | inspect | validate | generate | run | version\nUsage: cordis help [COMMAND]")
+	_, err := fmt.Fprintln(out, "cordis: init | build | pack | sign | keygen | inspect | validate | generate | run | list | install | select | enable | disable | remove | uninstall | status | host | dev | version\nUsage: cordis help [COMMAND]")
 	return err
 }
 

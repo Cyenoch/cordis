@@ -114,7 +114,9 @@ func (e *Engine) runManaged(a *activation, work func(context.Context) error) {
 	if retiring {
 		return
 	}
-	if err := invokeLifecycle("managed work", work, a.ctx); err != nil {
+	if err := invokeLifecycle("managed work", func(context.Context) error {
+		return work(a.ctx)
+	}, context.WithValue(a.ctx, actorKey{}, a)); err != nil {
 		if a.ctx.Err() != nil && errors.Is(err, a.ctx.Err()) {
 			return
 		}
@@ -126,19 +128,20 @@ func (e *Engine) runManaged(a *activation, work func(context.Context) error) {
 }
 
 func invokeLifecycle(stage string, fn func(context.Context) error, ctx context.Context) (err error) {
-	defer recoverCallback(stage, &err)
+	defer recoverCallback(ctx, stage, &err)
 	if err := fn(ctx); err != nil {
 		return fmt.Errorf("%s: %w", stage, err)
 	}
 	return nil
 }
 
-func recoverCallback(stage string, err *error) {
+func recoverCallback(ctx context.Context, stage string, err *error) {
 	if value := recover(); value != nil {
 		if cause, ok := value.(error); ok {
 			*err = fmt.Errorf("%s panic: %w", stage, cause)
 		} else {
 			*err = fmt.Errorf("%s panic: %v", stage, value)
 		}
+		*err = capturePanic(ctx, *err)
 	}
 }

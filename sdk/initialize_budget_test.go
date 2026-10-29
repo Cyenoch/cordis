@@ -18,12 +18,12 @@ func TestOversizedRegistrationReportsDisconnectedCleanupFailure(t *testing.T) {
 	done := make(chan error, 1)
 	cleanup := errors.New("remote cleanup could not finish")
 	go func() {
-		done <- sdk.RunTransport(t.Context(), contract.Definition{ID: "budget", Start: func(_ context.Context, scope contract.Scope) error {
+		done <- sdk.RunTransport(t.Context(), contract.Definition{ID: "budget", Start: func(ctx context.Context, scope contract.Scope) error {
 			if err := scope.Defer(func(context.Context) error { return cleanup }); err != nil {
 				return err
 			}
-			return scope.On(strings.Repeat("x", 8192), func(context.Context, json.RawMessage) (contract.EventResult, error) {
-				return contract.EventResult{}, nil
+			return scope.Provide(contract.Service{Name: strings.Repeat("x", 8192), Major: 1}, func(context.Context, json.RawMessage) (json.RawMessage, error) {
+				return nil, nil
 			})
 		}}, right)
 	}()

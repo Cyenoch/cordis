@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"sync"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -27,7 +26,9 @@ type Client struct {
 	cancel        context.CancelFunc
 	services      map[string]contract.Handler
 	serviceInfo   []contract.Service
-	events        map[string][]contract.EventHandler
+	events        map[string]*subscription
+	register      chan struct{}
+	sequence      uint64
 	cleanups      resource.Group
 	work          []func(context.Context) error
 	workers       sync.WaitGroup
@@ -45,10 +46,10 @@ type Client struct {
 
 func serve(ctx context.Context, definitions map[string]contract.Definition, transport io.ReadWriteCloser) error {
 	client := &Client{serial: make(chan struct{}, 1), definitions: definitions, services: map[string]contract.Handler{},
-		events: map[string][]contract.EventHandler{}, serviceInfo: []contract.Service{},
+		events: map[string]*subscription{}, register: make(chan struct{}, 1), serviceInfo: []contract.Service{},
 		closeDone: make(chan struct{}), endpointReady: make(chan struct{})}
 	client.ctx, client.cancel = context.WithCancel(ctx)
-	endpoint, err := wire.New(wire.Options{Transport: transport, Guest: true, Handler: client.handle})
+	endpoint, err := wire.New(wire.Options{Transport: transport, Guest: true, Handler: client.handle, Prepare: client.prepare})
 	if err != nil {
 		client.cancel()
 		return err
@@ -112,19 +113,6 @@ func (c *Client) Call(ctx context.Context, required contract.Requirement, input 
 	return c.endpoint.Call(ctx, "call", data)
 }
 
-func (c *Client) On(name string, handler contract.EventHandler) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.retiring || c.closed || c.initialized {
-		return contract.Fail(contract.NotReady, "subscriptions register during initialization only")
-	}
-	if name == "" || handler == nil {
-		return contract.Fail(contract.Invalid, "invalid event subscription")
-	}
-	c.events[name] = append(c.events[name], handler)
-	return nil
-}
-
 func (c *Client) Emit(ctx context.Context, name string, input json.RawMessage, mode contract.Dispatch) ([]contract.EventResult, error) {
 	data, err := json.Marshal(contract.Event{Name: name, Input: input, Mode: mode})
 	if err != nil {
@@ -148,6 +136,24 @@ func (c *Client) handle(ctx context.Context, method string, input json.RawMessag
 		return nil, ctx.Err()
 	}
 	switch method {
+	case "event.unsubscribe":
+		var request contract.SubscriptionCancel
+		if err := contract.Decode(input, &request); err != nil {
+			return nil, err
+		}
+		c.mu.Lock()
+		_, err := contract.SubscriptionNumber(c.identity.Activation, request.ID)
+		if err == nil {
+			if sub := c.events[request.ID]; sub != nil {
+				sub.inactive = true
+				c.removeSubscriptionLocked(sub)
+			}
+		}
+		c.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(contract.SubscriptionState{Inactive: true})
 	case "activation.publish":
 		return c.publish(input)
 	case "activation.retire":
@@ -172,14 +178,31 @@ func (c *Client) handle(ctx context.Context, method string, input json.RawMessag
 	case "initialize":
 		return c.start(ctx, input)
 	}
-	var invocation contract.Invocation
-	cleanup := false
-	if method == "call" {
-		if err := contract.Decode(input, &invocation); err != nil {
-			return nil, err
-		}
-		cleanup = invocation.Cleanup
+	if method != "call" {
+		return nil, contract.Fail(contract.Invalid, "unknown plugin method")
 	}
+	var invocation contract.Invocation
+	if err := contract.Decode(input, &invocation); err != nil {
+		return nil, err
+	}
+	return c.business(ctx, invocation.Cleanup, func(ctx context.Context) (json.RawMessage, error) {
+		c.mu.Lock()
+		handler := c.services[invocation.Service.Key()]
+		compatible := false
+		for _, service := range c.serviceInfo {
+			if service.Key() == invocation.Service.Key() && service.Minor >= invocation.Service.Minor {
+				compatible = true
+			}
+		}
+		c.mu.Unlock()
+		if handler == nil || !compatible {
+			return nil, contract.Fail(contract.NotReady, "compatible service not provided")
+		}
+		return handler(ctx, invocation.Input)
+	})
+}
+
+func (c *Client) business(ctx context.Context, cleanup bool, invoke func(context.Context) (json.RawMessage, error)) (json.RawMessage, error) {
 	if !cleanup {
 		callbackCtx, cancel := context.WithCancel(ctx)
 		stop := context.AfterFunc(c.ctx, cancel)
@@ -198,52 +221,10 @@ func (c *Client) handle(ctx context.Context, method string, input json.RawMessag
 	if !ready {
 		return nil, contract.Fail(contract.NotReady, "plugin is not active")
 	}
-	switch method {
-	case "call":
-		request := invocation
-		c.mu.Lock()
-		handler := c.services[request.Service.Key()]
-		compatible := false
-		for _, service := range c.serviceInfo {
-			if service.Key() == request.Service.Key() && service.Minor >= request.Service.Minor {
-				compatible = true
-			}
-		}
-		c.mu.Unlock()
-		if handler == nil || !compatible {
-			return nil, contract.Fail(contract.NotReady, "compatible service not provided")
-		}
-		return handler(ctx, request.Input)
-	case "event":
-		var event contract.Event
-		if err := contract.Decode(input, &event); err != nil {
-			return nil, err
-		}
-		c.mu.Lock()
-		handlers := slices.Clone(c.events[event.Name])
-		c.mu.Unlock()
-		results := []contract.EventResult{}
-		var failures []error
-		for n, handler := range handlers {
-			result, err := handler(ctx, event.Input)
-			if err != nil {
-				if event.Mode != contract.Parallel {
-					return nil, err
-				}
-				failures = append(failures, fmt.Errorf("event %s listener %d: %w", event.Name, n, err))
-			}
-			results = append(results, result)
-			if event.Mode == contract.First && result.Handled {
-				break
-			}
-		}
-		if len(failures) > 0 {
-			return nil, errors.Join(failures...)
-		}
-		return json.Marshal(results)
-	default:
-		return nil, contract.Fail(contract.Invalid, "unknown plugin method")
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
+	return invoke(ctx)
 }
 
 func (c *Client) initialize(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
@@ -280,12 +261,8 @@ func (c *Client) initialize(ctx context.Context, input json.RawMessage) (json.Ra
 		return nil, contract.Fail(contract.Canceled, "initialization canceled")
 	}
 	c.initialized = true
-	subscriptions := make([]string, 0, len(c.events))
-	for name := range c.events {
-		subscriptions = append(subscriptions, name)
-	}
 	return json.Marshal(contract.Registration{FrameBytes: init.FrameBytes, Minor: minor, Features: capabilities.Features,
-		Services: c.serviceInfo, Subscriptions: subscriptions})
+		Services: c.serviceInfo})
 }
 
 func (c *Client) close(ctx context.Context) error {

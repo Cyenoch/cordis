@@ -1,6 +1,6 @@
 ---
 title: 快速开始
-description: 从 TOML 声明生成独立插件，完成 init、build、test、pack、run。
+description: 从 TOML 声明生成独立插件，完成构建、调试和签名包前台运行。
 ---
 
 # 快速开始
@@ -148,6 +148,40 @@ printf '%s' '{"prefix":"hello, "}' | "$CORDIS" run -dev-unsigned -service exampl
 ```
 
 stdin 只允许一个输入使用，且必须指定格式；内联与对应文件参数不能同时使用。Windows PowerShell 的原生命令 JSON 转义依版本不同，优先使用文件参数。
+
+## 持续开发与签名运行
+
+仍在插件目录，用同一份配置进入编辑循环：
+
+```sh
+"$CORDIS" dev -dev-unsigned -go-package . -config-file config.toml .
+```
+
+修改 `prefix` 或业务 Go 并保存，stdout 会报告新的构建 generation 与 activation。编译或配置失败保留旧实例；修复后自动重建。Ctrl+C 等待进程清理；更详细的输入范围与失败边界见 [CLI 的 dev 说明](cli.md#编辑后自动重启)。
+
+正式签名流程也不需要编写 Go 宿主。先退出 dev、重新 build/pack，再把密钥和信任文件放在作者目录外：
+
+```sh
+"$CORDIS" keygen "$PLUGIN.author.private"
+"$CORDIS" sign "$PLUGIN.zip" author-key "$PLUGIN.author.private"
+```
+
+按 [CLI 信任文件示例](cli.md#离线管理与前台运行)填写 `trust.json`，把 `publicKey` 替换为 keygen 的输出，publisher 使用 `example.author`，包 ID 使用 `example.hello`。下面 select 的完整引用取自 sign 输出：
+
+```sh
+"$CORDIS" install -store "$PLUGIN.state" -trust "$PLUGIN.trust.json" "$PLUGIN.zip"
+"$CORDIS" select -store "$PLUGIN.state" -trust "$PLUGIN.trust.json" 'example.hello@0.1.0#完整摘要'
+"$CORDIS" enable -store "$PLUGIN.state" -trust "$PLUGIN.trust.json" -package example.hello -config-file config.toml hello
+"$CORDIS" host -store "$PLUGIN.state" -trust "$PLUGIN.trust.json"
+```
+
+Ctrl+C 退出后再查询：
+
+```sh
+"$CORDIS" status -store "$PLUGIN.state" hello
+```
+
+此时 enabled 仍表示下次恢复的意图，最近运行记录显示已结束的 activation；`offline: true` 明确说明这不是实时进程查询。运行期间离线命令会因目录占用而失败。
 
 ## 继续阅读
 

@@ -2,6 +2,7 @@ package packagehost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ type RunRecord struct {
 	State     string            `json:"state"`
 	StartedAt time.Time         `json:"startedAt"`
 	EndedAt   time.Time         `json:"endedAt"`
+	Outcome   contract.Outcome  `json:"outcome"`
 }
 
 func validRunOwner(owner contract.Identity) bool {
@@ -77,7 +79,7 @@ func (s *Store) BeginRun(ctx context.Context, owner contract.Identity) error {
 
 // EndRun finishes exactly the matching activation. Repeating its terminal state
 // is idempotent; stale identities and conflicting terminal transitions fail.
-func (s *Store) EndRun(ctx context.Context, owner contract.Identity, state string) error {
+func (s *Store) EndRun(ctx context.Context, owner contract.Identity, state string, outcome contract.Outcome) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.check(); err != nil {
@@ -85,6 +87,9 @@ func (s *Store) EndRun(ctx context.Context, owner contract.Identity, state strin
 	}
 	if !terminalRunState(state) {
 		return fmt.Errorf("invalid terminal run state %q", state)
+	}
+	if err := validateOutcome(outcome); err != nil {
+		return err
 	}
 	for i, run := range s.runs {
 		if run.Owner != owner {
@@ -97,6 +102,7 @@ func (s *Store) EndRun(ctx context.Context, owner contract.Identity, state strin
 			return fmt.Errorf("activation %s is already %s", owner.Activation, run.State)
 		}
 		run.State, run.EndedAt = state, time.Now().UTC()
+		run.Outcome = outcome.Clone()
 		runs := slices.Delete(slices.Clone(s.runs), i, i+1)
 		runs = append(runs, run)
 		return s.commitRuns(ctx, trimRuns(runs))
@@ -112,7 +118,11 @@ func (s *Store) Runs() ([]RunRecord, error) {
 	if err := s.check(); err != nil {
 		return nil, err
 	}
-	return slices.Clone(s.runs), nil
+	runs := slices.Clone(s.runs)
+	for n := range runs {
+		runs[n].Outcome = runs[n].Outcome.Clone()
+	}
+	return runs, nil
 }
 
 func trimRuns(runs []RunRecord) []RunRecord {
@@ -136,7 +146,14 @@ func (s *Store) commitRuns(ctx context.Context, runs []RunRecord) error {
 		return err
 	}
 	next := filepath.Join(s.root, "runs.next")
-	if err := durableJSON(next, runs); err != nil {
+	raw, err := json.MarshalIndent(runs, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode runs: %w", err)
+	}
+	if len(raw) > maxRunsBytes {
+		return fmt.Errorf("run history exceeds byte quota")
+	}
+	if err := durableBytes(next, raw); err != nil {
 		return fmt.Errorf("write runs candidate: %w", err)
 	}
 	s.observeCommit(commitRunsSynced)
@@ -174,6 +191,9 @@ func (s *Store) recoverRuns() error {
 	seen := map[string]bool{}
 	running, terminal := 0, 0
 	for _, run := range s.runs {
+		if err := validateOutcome(run.Outcome); err != nil {
+			return err
+		}
 		if !validRunOwner(run.Owner) || seen[run.Owner.Activation] || run.StartedAt.IsZero() {
 			return fmt.Errorf("invalid or duplicate durable run owner")
 		}
@@ -200,6 +220,7 @@ func (s *Store) recoverRuns() error {
 		for _, run := range s.runs {
 			if run.State == "running" {
 				run.State, run.EndedAt = "interrupted", now
+				run.Outcome.Reason = contract.ExitInterrupted
 				runs = append(runs, run)
 			}
 		}
@@ -211,4 +232,25 @@ func (s *Store) recoverRuns() error {
 		return err
 	}
 	return syncDir(s.root)
+}
+
+func validateOutcome(outcome contract.Outcome) error {
+	switch outcome.Reason {
+	case "", contract.ExitStopped, contract.ExitUnexpected, contract.ExitProtocol, contract.ExitInterrupted:
+	default:
+		return fmt.Errorf("invalid run exit reason")
+	}
+	for _, code := range []contract.Code{outcome.FailureCode, outcome.CleanupCode} {
+		switch code {
+		case "", contract.Invalid, contract.Incompatible, contract.NotReady, contract.Denied,
+			contract.Timeout, contract.Canceled, contract.Reentrant, contract.PluginFailed,
+			contract.Internal, contract.Conflict, contract.Superseded, contract.Panicked:
+		default:
+			return fmt.Errorf("invalid run error classification")
+		}
+	}
+	if len(outcome.Signal) > 64 || outcome.StartupDuration < 0 {
+		return fmt.Errorf("invalid run outcome")
+	}
+	return nil
 }

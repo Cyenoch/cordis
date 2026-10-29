@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -55,6 +56,7 @@ type Store struct {
 	lock    *os.File
 	closed  bool
 	runs    []RunRecord
+	logger  *slog.Logger
 	// commitObserver is set only by internal tests, before starting a mutation.
 	// It runs under mu and must not call Store methods. Production leaves it nil.
 	commitObserver func(commitStage)
@@ -125,7 +127,7 @@ func OpenWithOptions(root string, options Options) (s *Store, err error) {
 	if err != nil {
 		return nil, err
 	}
-	s = &Store{root: root, trust: copyTrust(trust), limits: limits, catalog: newCatalog(), lock: lock}
+	s = &Store{root: root, trust: copyTrust(trust), limits: limits, catalog: newCatalog(), lock: lock, logger: options.Logger}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, releaseLock(lock))
@@ -439,8 +441,11 @@ func (s *Store) ImportDirectory(ctx context.Context, dir string) (Package, error
 	return s.install(ctx, dir, true)
 }
 func (s *Store) install(ctx context.Context, source string, dev bool) (p Package, err error) {
+	var committed bool
+	defer func() { s.logMutation(ctx, "install", p.Ref, "", committed, err) }()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	revision := s.catalog.Revision
+	defer func() { committed = s.catalog.Revision != revision; s.mu.Unlock() }()
 	if err = s.check(); err != nil {
 		return p, err
 	}
@@ -726,9 +731,12 @@ func (s *Store) prepareSelection(ctx context.Context, ref contract.PackageRef, o
 }
 
 // Select changes the selected code only after all checks pass.
-func (s *Store) Select(ctx context.Context, ref contract.PackageRef, opt ChangeOptions) error {
+func (s *Store) Select(ctx context.Context, ref contract.PackageRef, opt ChangeOptions) (err error) {
+	var committed bool
+	defer func() { s.logMutation(ctx, "select", ref, "", committed, err) }()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	revision := s.catalog.Revision
+	defer func() { committed = s.catalog.Revision != revision; s.mu.Unlock() }()
 	if err := s.check(); err != nil {
 		return err
 	}
@@ -744,6 +752,9 @@ func (s *Store) Select(ctx context.Context, ref contract.PackageRef, opt ChangeO
 }
 
 func validateEntry(m contract.Manifest, e contract.Entry) error {
+	if err := contract.CheckIsolate(e.Isolate); err != nil {
+		return err
+	}
 	if !validName(e.ID) || e.Parent != "" && !validName(e.Parent) || e.Package != m.ID {
 		return fmt.Errorf("invalid entry identity")
 	}
@@ -768,21 +779,27 @@ func (s *Store) Entries() ([]contract.Entry, error) {
 	var out []contract.Entry
 	for _, e := range s.catalog.Entries {
 		e.Config = slices.Clone(e.Config)
+		e.Isolate = slices.Clone(e.Isolate)
 		out = append(out, e)
 	}
 	slices.SortFunc(out, func(a, b contract.Entry) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil
 }
-func (s *Store) SaveEntry(ctx context.Context, e contract.Entry) error {
+func (s *Store) SaveEntry(ctx context.Context, e contract.Entry) (err error) {
+	var committed bool
+	var ref contract.PackageRef
+	defer func() { s.logMutation(ctx, "entry.save", ref, e.ID, committed, err) }()
 	if len(e.Config) == 0 {
 		e.Config = json.RawMessage(`{}`)
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	revision := s.catalog.Revision
+	defer func() { committed = s.catalog.Revision != revision; s.mu.Unlock() }()
 	if err := s.check(); err != nil {
 		return err
 	}
-	ref, ok := s.catalog.Selected[e.Package]
+	var ok bool
+	ref, ok = s.catalog.Selected[e.Package]
 	if !ok {
 		return fmt.Errorf("entry package %s is not selected", e.Package)
 	}
@@ -795,14 +812,25 @@ func (s *Store) SaveEntry(ctx context.Context, e contract.Entry) error {
 	}
 	c := s.cloneCatalog()
 	e.Config = slices.Clone(e.Config)
+	e.Isolate = slices.Clone(e.Isolate)
 	c.Entries[e.ID] = e
 	return s.mutate(ctx, c)
 }
-func (s *Store) DeleteEntry(ctx context.Context, id string) error {
+func (s *Store) DeleteEntry(ctx context.Context, id string) (err error) {
+	var committed bool
+	defer func() { s.logMutation(ctx, "entry.remove", contract.PackageRef{}, id, committed, err) }()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	revision := s.catalog.Revision
+	defer func() { committed = s.catalog.Revision != revision; s.mu.Unlock() }()
 	if err := s.check(); err != nil {
 		return err
+	}
+	entry, exists := s.catalog.Entries[id]
+	if !exists {
+		return contract.Fail(contract.NotReady, "entry does not exist")
+	}
+	if entry.Enabled {
+		return contract.Fail(contract.Conflict, "disable entry before removing its intent")
 	}
 	c := s.cloneCatalog()
 	delete(c.Entries, id)
@@ -931,8 +959,11 @@ func (s *Store) checkUninstall(ref contract.PackageRef, opt ChangeOptions) error
 }
 
 func (s *Store) Uninstall(ctx context.Context, ref contract.PackageRef, opt ChangeOptions) (result Removal, err error) {
+	var committed bool
+	defer func() { s.logMutation(ctx, "uninstall", ref, "", committed, err) }()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	revision := s.catalog.Revision
+	defer func() { committed = s.catalog.Revision != revision; s.mu.Unlock() }()
 	if err = s.check(); err != nil {
 		return result, err
 	}

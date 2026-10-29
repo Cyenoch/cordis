@@ -6,10 +6,12 @@ import (
 )
 
 // Child names a same-package definition owned by the current activation.
+// Isolate starts child-owned boundaries; all other service keys are inherited.
 type Child struct {
 	ID         string          `json:"id"`
 	Definition string          `json:"definition"`
 	Config     json.RawMessage `json:"config"`
+	Isolate    []string        `json:"isolate,omitempty"`
 }
 
 type ChildScope interface {

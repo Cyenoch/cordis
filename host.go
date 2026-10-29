@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"runtime"
+	"slices"
 	"sync"
 	"time"
 
@@ -22,8 +24,13 @@ type Options struct {
 	Trust      packagehost.TrustPolicy
 	Runtime    contract.Runtime
 	FrameBytes int
-	Stderr     func([]byte) error
+	Stderr     func(contract.StderrRecord) error
 	Grace      time.Duration
+	// Logger is optional and called synchronously outside state locks. Handlers
+	// must return promptly and must not reenter Host management methods.
+	Logger *slog.Logger
+	// CapturePanic includes builtin stacks in the configured logger, never Status.
+	CapturePanic bool
 }
 
 type Host struct {
@@ -41,14 +48,17 @@ type Host struct {
 	admissions map[string]bool
 	controls   map[string]bool
 	packageOps map[string]bool
+	runs       map[contract.Identity]bool
 	closed     bool
+	done       chan struct{}
+	doneOnce   sync.Once
 }
 
 func Open(options Options) (*Host, error) {
 	if options.Directory == "" {
 		return nil, contract.Fail(contract.Invalid, "package directory required")
 	}
-	store, err := packagehost.Open(options.Directory, options.Trust)
+	store, err := packagehost.OpenWithOptions(options.Directory, packagehost.Options{Trust: options.Trust, Logger: options.Logger})
 	if err != nil {
 		return nil, err
 	}
@@ -62,15 +72,22 @@ func Open(options Options) (*Host, error) {
 		entries: map[string]*hostInstance{}, entrySpecs: map[string]contract.Entry{},
 		packages: map[string]contract.PackageRef{}, builtins: map[string]contract.Definition{},
 		dynamic: map[string]ownedChild{}, admissions: map[string]bool{},
-		controls: map[string]bool{}, packageOps: map[string]bool{}}
+		controls: map[string]bool{}, packageOps: map[string]bool{}, runs: map[contract.Identity]bool{}, done: make(chan struct{})}
 	if h.options.Grace == 0 {
 		h.options.Grace = time.Second
 	}
-	h.engine = core.NewWithHooks(core.Hooks{OnRetire: h.onRetire})
+	h.engine = core.NewWithHooks(core.Hooks{
+		OnRetire: h.onRetire, OnDisposed: h.onDisposed,
+		Logger: options.Logger, CapturePanic: options.CapturePanic,
+	})
 	return h, nil
 }
 
 func (h *Host) Store() *packagehost.Store { return h.store }
+
+// Done closes after the engine drains and the Store is released. Close may
+// still return historical or cleanup errors after this signal is satisfied.
+func (h *Host) Done() <-chan struct{} { return h.done }
 func (h *Host) lockOperation(ctx context.Context) error {
 	select {
 	case h.operations <- struct{}{}:
@@ -94,6 +111,12 @@ func (h *Host) unlockOperation() { <-h.operations }
 func (h *Host) Call(ctx context.Context, required contract.Requirement, input json.RawMessage) (json.RawMessage, error) {
 	return h.engine.Call(ctx, required, input)
 }
+
+// Caller resolves services from a current entry's inherited isolation boundaries.
+// It retains host call authority and becomes invalid when that entry is removed.
+func (h *Host) Caller(entryID string) (contract.Caller, error) {
+	return h.engine.Caller(entryID)
+}
 func (h *Host) Emit(ctx context.Context, name string, input json.RawMessage, mode contract.Dispatch) ([]contract.EventResult, error) {
 	return h.engine.Emit(ctx, name, input, mode)
 }
@@ -102,6 +125,23 @@ func (h *Host) onRetire(owner contract.Identity) {
 	if err := h.removeChildren(owner); err != nil {
 		h.engine.FailActivation(owner, err)
 	}
+}
+
+func (h *Host) onDisposed(owner contract.Identity, outcome contract.Outcome) error {
+	h.mu.Lock()
+	recorded := h.runs[owner]
+	delete(h.runs, owner)
+	h.mu.Unlock()
+	if !recorded {
+		return nil
+	}
+	state := "stopped"
+	if outcome.FailureCode == contract.Canceled {
+		state = "canceled"
+	} else if outcome.FailureCode != "" || outcome.CleanupCode != "" {
+		state = "failed"
+	}
+	return h.store.EndRun(context.Background(), owner, state, outcome)
 }
 
 func (h *Host) Install(ctx context.Context, archive string) (packagehost.Package, error) {
@@ -171,7 +211,8 @@ func (h *Host) enable(ctx context.Context, entry contract.Entry) (contract.Insta
 }
 
 func (h *Host) enableEntry(ctx context.Context, entry contract.Entry, owner *contract.Identity) (contract.Instance, error) {
-	release, err := h.reserveEntry(entry.ID)
+	entry.Isolate = slices.Clone(entry.Isolate)
+	release, err := h.reserveEntry(entry.ID, owner != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -247,12 +288,13 @@ func (h *Host) enableEntry(ctx context.Context, entry contract.Entry, owner *con
 		return nil, err
 	}
 	h.mu.Lock()
+	wrapped := &hostInstance{Instance: instance, host: h, id: entry.ID, diagnostics: diagnostics, owner: owner}
 	if owner != nil {
-		h.dynamic[entry.ID] = ownedChild{owner: *owner, instance: instance}
+		entry.Config = append(json.RawMessage(nil), entry.Config...)
+		h.dynamic[entry.ID] = ownedChild{owner: *owner, instance: wrapped, entry: entry, ref: pkg.Ref}
 		h.mu.Unlock()
-		return instance, nil
+		return wrapped, nil
 	}
-	wrapped := &hostInstance{Instance: instance, host: h, id: entry.ID, diagnostics: diagnostics}
 	h.entries[entry.ID] = wrapped
 	h.entrySpecs[entry.ID] = entry
 	h.packages[entry.ID] = pkg.Ref
@@ -261,25 +303,22 @@ func (h *Host) enableEntry(ctx context.Context, entry contract.Entry, owner *con
 }
 
 func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg packagehost.Package, entry contract.Entry, adapter contract.Runtime) error {
-	scope = &hostScope{Scope: scope, host: h}
 	owner := scope.Identity()
+	subscriptions := &remoteSubscriptions{scope: scope.(*core.Scope), owner: owner,
+		entries: map[string]*remoteSubscription{}, grace: h.options.Grace,
+		fail: func(err error) { h.engine.FailActivation(owner, err) }}
+	scope = &hostScope{Scope: scope, host: h}
 	if err := contract.ValidateFrameBytes(h.options.FrameBytes); err != nil {
 		return err
 	}
-	if err := h.store.BeginRun(ctx, owner); err != nil {
-		if catalogCommitted(err) {
-			return errors.Join(err, h.store.EndRun(context.Background(), owner, "failed"))
-		}
-		return err
+	beginErr := h.store.BeginRun(ctx, owner)
+	if beginErr == nil || catalogCommitted(beginErr) {
+		h.mu.Lock()
+		h.runs[owner] = true
+		h.mu.Unlock()
 	}
-	if err := scope.Defer(func(cleanupCtx context.Context) error {
-		state := "stopped"
-		if core.FailedCleanup(cleanupCtx) {
-			state = "failed"
-		}
-		return h.store.EndRun(cleanupCtx, owner, state)
-	}); err != nil {
-		return errors.Join(err, h.store.EndRun(context.Background(), owner, "failed"))
+	if beginErr != nil {
+		return beginErr
 	}
 	minor, err := pkg.Manifest.Protocol.Negotiate(contract.Protocol{Major: 1})
 	if err != nil {
@@ -298,34 +337,59 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 	}
 	launch := contract.Launch{Identity: owner, Directory: snapshot.Directory, Artifact: artifact, Grace: h.options.Grace, FrameBytes: h.options.FrameBytes, Stderr: h.options.Stderr}
 	launch.Handle = func(callCtx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
-		return h.handleGuest(callCtx, scope, method, input)
+		return h.handleGuest(callCtx, scope, subscriptions, method, input)
 	}
 	session, err := adapter.Start(ctx, launch)
 	if err != nil {
 		return err
 	}
+	closeSession := func() error {
+		err := session.Close()
+		if process, ok := session.(contract.ProcessSession); ok {
+			outcome := process.Outcome()
+			h.engine.SetOutcome(owner, outcome)
+			if outcome.FailureCode != "" && err != nil {
+				h.engine.FailActivation(owner, err)
+				if outcome.CleanupCode == "" {
+					return nil
+				}
+			}
+		}
+		return err
+	}
 	plugin := genericPlugin{session: session}
+	subscriptions.plugin = plugin
 	lifecycle := scope.(contract.ActivationScope)
 	if err := lifecycle.OnPublish(func(publishCtx context.Context) error {
 		publishCtx, cancel := context.WithTimeout(publishCtx, h.options.Grace)
 		defer cancel()
 		return plugin.Publish(publishCtx)
 	}); err != nil {
-		return errors.Join(err, session.Close())
+		return errors.Join(err, closeSession())
 	}
 	if err := lifecycle.OnRetire(func(retireCtx context.Context) error {
+		select {
+		case <-session.Done():
+			return nil
+		default:
+		}
 		retireCtx, cancel := context.WithTimeout(retireCtx, h.options.Grace)
 		defer cancel()
 		return plugin.Retire(retireCtx)
 	}); err != nil {
-		return errors.Join(err, session.Close())
+		return errors.Join(err, closeSession())
 	}
 	if err := scope.Defer(func(cleanupCtx context.Context) error {
+		select {
+		case <-session.Done():
+			return closeSession()
+		default:
+		}
 		shutdownCtx, cancel := context.WithTimeout(cleanupCtx, h.options.Grace)
 		defer cancel()
 		shutdownCtx = context.WithValue(shutdownCtx, externalCleanupKey{}, owner)
 		shutdownErr := plugin.Shutdown(shutdownCtx)
-		return errors.Join(shutdownErr, session.Close())
+		return errors.Join(shutdownErr, closeSession())
 	}); err != nil {
 		return err
 	}
@@ -378,23 +442,6 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 	if len(declared) > 0 {
 		return contract.Fail(contract.Invalid, "plugin omitted declared service")
 	}
-	for _, name := range registration.Subscriptions {
-		name := name
-		if err := scope.On(name, func(callCtx context.Context, input json.RawMessage) (contract.EventResult, error) {
-			results, err := plugin.Deliver(callCtx, contract.Event{Name: name, Input: input, Mode: core.DispatchMode(callCtx)})
-			if err != nil {
-				return contract.EventResult{}, err
-			}
-			for _, result := range results {
-				if result.Handled {
-					return result, nil
-				}
-			}
-			return contract.EventResult{}, nil
-		}); err != nil {
-			return err
-		}
-	}
 	go func() {
 		<-session.Done()
 		if err := session.Err(); err != nil {
@@ -404,7 +451,7 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 	return nil
 }
 
-func (h *Host) handleGuest(ctx context.Context, scope contract.Scope, method string, input json.RawMessage) (json.RawMessage, error) {
+func (h *Host) handleGuest(ctx context.Context, scope contract.Scope, subscriptions *remoteSubscriptions, method string, input json.RawMessage) (json.RawMessage, error) {
 	cleanupOwner, _ := ctx.Value(externalCleanupKey{}).(contract.Identity)
 	cleanupCall := method == "call" && cleanupOwner == scope.Identity()
 	if !cleanupCall {
@@ -417,6 +464,24 @@ func (h *Host) handleGuest(ctx context.Context, scope contract.Scope, method str
 		ctx = callCtx
 	}
 	switch method {
+	case "event.subscribe":
+		var spec contract.SubscriptionSpec
+		if err := contract.Decode(input, &spec); err != nil {
+			return nil, err
+		}
+		if err := subscriptions.subscribe(ctx, spec); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{}`), nil
+	case "event.unsubscribe":
+		var request contract.SubscriptionCancel
+		if err := contract.Decode(input, &request); err != nil {
+			return nil, err
+		}
+		if err := subscriptions.unsubscribe(ctx, request.ID); err != nil {
+			return nil, err
+		}
+		return json.Marshal(contract.SubscriptionState{Inactive: true})
 	case "child":
 		return h.handleChild(ctx, scope, input)
 	case "call":
@@ -450,6 +515,9 @@ func (h *Host) Disable(ctx context.Context, id string) error {
 		return err
 	}
 	defer release()
+	if err := h.requireStatic(id); err != nil {
+		return err
+	}
 	return h.disable(ctx, id)
 }
 
@@ -517,7 +585,7 @@ func (h *Host) retireOne(ctx context.Context, id string, disable bool) error {
 	if disable {
 		wait, err = h.engine.Disable(ctx, id)
 	} else {
-		wait, err = h.engine.Stop(ctx, id)
+		wait, err = h.engine.Stop(ctx, instance.Instance)
 	}
 	if err != nil {
 		return errors.Join(persistErr, err)
@@ -662,7 +730,9 @@ func (h *Host) Close(ctx context.Context) error {
 	if !h.engine.Drained() {
 		return err
 	}
-	return errors.Join(err, h.store.Close())
+	storeErr := h.store.Close()
+	h.doneOnce.Do(func() { close(h.done) })
+	return errors.Join(err, storeErr)
 }
 
 func (h *Host) AddBuiltin(ctx context.Context, entry contract.Entry, definition contract.Definition) (contract.Instance, error) {
@@ -677,7 +747,8 @@ func (h *Host) AddBuiltin(ctx context.Context, entry contract.Entry, definition 
 }
 
 func (h *Host) addBuiltin(entry contract.Entry, definition contract.Definition) (contract.Instance, error) {
-	release, err := h.reserveEntry(entry.ID)
+	entry.Isolate = slices.Clone(entry.Isolate)
+	release, err := h.reserveEntry(entry.ID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -711,11 +782,9 @@ func (h *Host) addBuiltin(entry contract.Entry, definition contract.Definition) 
 }
 
 func (h *Host) Status(id string) (contract.Status, error) {
-	h.mu.Lock()
-	instance := h.entries[id]
-	h.mu.Unlock()
-	if instance == nil {
-		return contract.Status{}, contract.Fail(contract.NotReady, "entry does not exist")
+	instance, err := h.Instance(id)
+	if err != nil {
+		return contract.Status{}, err
 	}
 	return instance.Status(), nil
 }
@@ -728,6 +797,11 @@ func (h *Host) Resume(ctx context.Context, id string) error {
 	}
 	release, err := h.reserveTree(id)
 	if err != nil {
+		h.unlockOperation()
+		return err
+	}
+	if err := h.requireStatic(id); err != nil {
+		release()
 		h.unlockOperation()
 		return err
 	}

@@ -129,6 +129,13 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 	if first.Err() == nil {
 		t.Fatal("panic exit lost its failure reason")
 	}
+	panicOutcome := first.(contract.ProcessSession).Outcome()
+	if panicOutcome.Reason != contract.ExitUnexpected || panicOutcome.ExitCode == nil || *panicOutcome.ExitCode == 0 {
+		t.Fatalf("panic exit facts: %+v", panicOutcome)
+	}
+	if runtime.GOOS == "windows" && panicOutcome.Signal != "" {
+		t.Fatalf("Windows reported a fabricated signal: %+v", panicOutcome)
+	}
 	if strings.Contains(first.Err().Error(), "runtime-test-secret") {
 		t.Fatal("guest stderr leaked in diagnostics")
 	}
@@ -162,17 +169,45 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 		if session.Err() == nil {
 			t.Fatal("unexpected successful process exit lost activation failure")
 		}
+		outcome := session.(contract.ProcessSession).Outcome()
+		if outcome.Reason != contract.ExitUnexpected || outcome.ExitCode == nil || *outcome.ExitCode != 0 {
+			t.Fatalf("zero exit facts: %+v", outcome)
+		}
+	})
+	t.Run("forced-stop", func(t *testing.T) {
+		session := start(t)
+		call(t, session, "stubborn", nil)
+		if err := session.Close(); err != nil {
+			t.Fatal(err)
+		}
+		outcome := session.(contract.ProcessSession).Outcome()
+		if outcome.Reason != contract.ExitStopped || !outcome.Forced {
+			t.Fatalf("forced shutdown facts: %+v", outcome)
+		}
+	})
+	t.Run("host-interruption", func(t *testing.T) {
+		previous := adapter
+		lifetime, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		adapter = native.New(native.Options{Lifetime: lifetime, Grace: 100 * time.Millisecond})
+		defer func() { adapter = previous }()
+		session := start(t)
+		cancel()
+		awaitReaped(t, session)
+		if outcome := session.(contract.ProcessSession).Outcome(); outcome.Reason != contract.ExitInterrupted {
+			t.Fatalf("host interruption facts: %+v", outcome)
+		}
 	})
 	t.Run("final-stderr-before-exit", func(t *testing.T) {
 		var chunks []string
 		session := start(t, func(launch *contract.Launch) {
 			launch.Grace = 2 * time.Second
-			launch.Stderr = func(chunk []byte) error {
+			launch.Stderr = func(record contract.StderrRecord) error {
 				if len(chunks) == 0 {
 					// A slow diagnostic sink leaves the final write unread when the process exits.
 					time.Sleep(200 * time.Millisecond)
 				}
-				chunks = append(chunks, string(chunk))
+				chunks = append(chunks, string(record.Data))
 				return nil
 			}
 		})
@@ -186,8 +221,20 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 	})
 	t.Run("stderr-forwarding-bounded", func(t *testing.T) {
 		forwarded := 0
+		truncations := 0
+		var owner contract.Identity
 		session := start(t, func(launch *contract.Launch) {
-			launch.Stderr = func(chunk []byte) error { forwarded += len(chunk); return nil }
+			owner = launch.Identity
+			launch.Stderr = func(record contract.StderrRecord) error {
+				if record.Owner != owner {
+					return errors.New("stderr identity mismatch")
+				}
+				if record.Truncated {
+					truncations++
+				}
+				forwarded += len(record.Data)
+				return nil
+			}
 		})
 		for range 2 {
 			if got := string(call(t, session, "stderr", nil)); got != "true" {
@@ -200,8 +247,8 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 		if err := session.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if forwarded != 1024 {
-			t.Fatalf("forwarded %d stderr bytes, want the activation's 1024-byte budget", forwarded)
+		if forwarded != 1024 || truncations != 1 {
+			t.Fatalf("forwarded=%d truncations=%d, want 1024 bytes and one truncation", forwarded, truncations)
 		}
 	})
 	t.Run("stderr-without-sink-keeps-draining", func(t *testing.T) {
@@ -216,7 +263,7 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 		broken := errors.New("diagnostic sink failure")
 		calls := 0
 		session := start(t, func(launch *contract.Launch) {
-			launch.Stderr = func([]byte) error { calls++; return broken }
+			launch.Stderr = func(contract.StderrRecord) error { calls++; return broken }
 		})
 		// More than a pipe's capacity must drain even after forwarding fails.
 		call(t, session, "stderr", nil)
@@ -232,7 +279,7 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 		release := make(chan struct{})
 		session := start(t, func(launch *contract.Launch) {
 			launch.Grace = 200 * time.Millisecond
-			launch.Stderr = func([]byte) error { <-release; return nil }
+			launch.Stderr = func(contract.StderrRecord) error { <-release; return nil }
 		})
 		t.Cleanup(func() { close(release) })
 		if _, err := session.Call(t.Context(), "exit-after-stderr", nil); err == nil {

@@ -133,10 +133,12 @@ def main():
             seen.add(name)
             require(vector["validationLevel"] == "schema", f"{name}: wrong validation level")
             require(type(vector["accept"]) is bool, f"{name}: accept must be boolean")
-            selected = pointer(schemas[vector["schema"]], vector.get("pointer", ""))
+            document = schemas[vector["schema"]]
+            selected = pointer(document, vector.get("pointer", ""))
             # No format/contentEncoding assertion extensions: those are code-level
             # guarantees, not structural Draft 2020-12 guarantees.
-            errors = list(Draft202012Validator(selected).iter_errors(vector["instance"]))
+            validator = Draft202012Validator(document).evolve(schema=selected)
+            errors = list(validator.iter_errors(vector["instance"]))
             actual = not errors
             if actual != vector["accept"]:
                 detail = errors[0].message if errors else "instance was unexpectedly accepted"

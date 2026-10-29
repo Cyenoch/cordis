@@ -1,24 +1,25 @@
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
 
-package process
+package processtree
 
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"syscall"
 )
 
-type processTree struct{ pid int }
+type Tree struct{ pid int }
 
-func startTree(cmd *exec.Cmd) (*processTree, error) {
+func Start(cmd *exec.Cmd) (*Tree, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return &processTree{pid: cmd.Process.Pid}, nil
+	return &Tree{pid: cmd.Process.Pid}, nil
 }
-func (p *processTree) signal(signal syscall.Signal) error {
+func (p *Tree) signal(signal syscall.Signal) error {
 	err := syscall.Kill(-p.pid, signal)
 	if errors.Is(err, syscall.ESRCH) {
 		return nil
@@ -37,10 +38,18 @@ func (p *processTree) signal(signal syscall.Signal) error {
 	}
 	return nil
 }
-func (p *processTree) terminate() error { return p.signal(syscall.SIGTERM) }
-func (p *processTree) kill() error      { return p.signal(syscall.SIGKILL) }
-func (p *processTree) close() error     { return nil }
-func (p *processTree) expectedExit(err *exec.ExitError) bool {
+func (p *Tree) Terminate() error { return p.signal(syscall.SIGTERM) }
+func (p *Tree) Kill() error      { return p.signal(syscall.SIGKILL) }
+func (p *Tree) Close() error     { return nil }
+func (p *Tree) ExpectedExit(err *exec.ExitError) bool {
 	status, ok := err.Sys().(syscall.WaitStatus)
 	return ok && status.Signaled() && (status.Signal() == syscall.SIGTERM || status.Signal() == syscall.SIGKILL)
+}
+
+func (*Tree) ExitSignal(state *os.ProcessState) string {
+	status, ok := state.Sys().(syscall.WaitStatus)
+	if ok && status.Signaled() {
+		return status.Signal().String()
+	}
+	return ""
 }

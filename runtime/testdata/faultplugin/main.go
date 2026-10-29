@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -55,9 +57,12 @@ func main() {
 			if err := json.Unmarshal(request.Payload, &input); err != nil {
 				panic(err)
 			}
-			value = map[string]any{"frameBytes": input.FrameBytes, "minor": 0, "features": []any{}, "services": []any{}, "subscriptions": []any{}}
+			value = map[string]any{"frameBytes": input.FrameBytes, "minor": 0, "features": []any{}, "services": []any{}}
 		case "health":
 			value = map[string]bool{"healthy": true}
+		case "stubborn":
+			signal.Ignore(syscall.SIGTERM)
+			value = true
 		case "counter":
 			counter++
 			value = counter
@@ -153,6 +158,11 @@ func main() {
 		response := frame{Schema: request.Schema, Kind: "response", Activation: request.Activation, ID: request.ID, Method: request.Method, Payload: payload}
 		if err := encoder.Encode(response); err != nil {
 			return
+		}
+		if request.Method == "stubborn" {
+			for {
+				time.Sleep(time.Hour)
+			}
 		}
 	}
 }

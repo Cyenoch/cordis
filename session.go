@@ -39,20 +39,48 @@ func (s genericPlugin) Invoke(ctx context.Context, input contract.Invocation) (j
 	}
 	return s.session.Call(ctx, "call", data)
 }
-func (s genericPlugin) Deliver(ctx context.Context, input contract.Event) ([]contract.EventResult, error) {
+func (s genericPlugin) Deliver(ctx context.Context, input contract.EventDelivery, receipt func(bool)) (contract.EventResult, error) {
 	data, err := json.Marshal(input)
 	if err != nil {
-		return nil, err
+		receipt(false)
+		return contract.EventResult{}, err
 	}
-	data, err = s.session.Call(ctx, "event", data)
+	data, err = s.session.CallWithReceipt(ctx, "event", data, receipt)
 	if err != nil {
-		return nil, err
+		return contract.EventResult{}, err
 	}
-	var results []contract.EventResult
-	err = contract.Decode(data, &results)
-	return results, err
+	var result struct {
+		Handled *bool           `json:"handled"`
+		Value   json.RawMessage `json:"value"`
+	}
+	if err := contract.Decode(data, &result); err != nil {
+		return contract.EventResult{}, err
+	}
+	if result.Handled == nil {
+		return contract.EventResult{}, contract.Fail(contract.Invalid, "event result requires handled")
+	}
+	return contract.EventResult{Handled: *result.Handled, Value: result.Value}, nil
 }
 func (s genericPlugin) Shutdown(ctx context.Context) error {
 	_, err := s.session.Call(ctx, "shutdown", json.RawMessage(`{}`))
 	return err
+}
+
+func (s genericPlugin) ForgetSubscription(ctx context.Context, id string) error {
+	data, err := json.Marshal(contract.SubscriptionCancel{ID: id})
+	if err != nil {
+		return err
+	}
+	data, err = s.session.Call(ctx, "event.unsubscribe", data)
+	if err != nil {
+		return err
+	}
+	var state contract.SubscriptionState
+	if err := contract.Decode(data, &state); err != nil {
+		return err
+	}
+	if !state.Inactive {
+		return contract.Fail(contract.Invalid, "subscription retirement not acknowledged")
+	}
+	return nil
 }

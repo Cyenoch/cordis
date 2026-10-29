@@ -43,6 +43,14 @@ func TestCloseDrainsFailedBuiltinCleanupAndReleasesStore(t *testing.T) {
 		t.Fatalf("Close lost cleanup failure: %v", err)
 	}
 	select {
+	case <-host.Done():
+	default:
+		t.Fatal("cleanup error prevented reporting completed close")
+	}
+	if status := instance.Status(); status.Identity.Activation == "" || status.Outcome.Reason != contract.ExitStopped || status.Outcome.CleanupCode == "" || status.Outcome.FailureCode != "" {
+		t.Fatalf("cleanup failure conflated with stop cause: %+v", status)
+	}
+	select {
 	case <-cleaned:
 	default:
 		t.Fatal("Close returned before builtin cleanup drained")

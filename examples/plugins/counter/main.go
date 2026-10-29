@@ -22,7 +22,7 @@ type counter struct {
 	value, events int64
 }
 
-func start(_ context.Context, scope contract.Scope, config CounterConfig) error {
+func start(ctx context.Context, scope contract.Scope, config CounterConfig) error {
 	c := &counter{}
 	if config.Initial.Present {
 		value, err := config.Initial.Value.Float64()
@@ -31,7 +31,7 @@ func start(_ context.Context, scope contract.Scope, config CounterConfig) error 
 		}
 		c.value = int64(value) // The generated integer codec already enforces the safe integer range.
 	}
-	if err := scope.On("counter.changed", func(context.Context, json.RawMessage) (contract.EventResult, error) {
+	if _, err := scope.On(ctx, "counter.changed", contract.SubscriptionOptions{}, func(context.Context, json.RawMessage) (contract.EventResult, error) {
 		c.events++
 		return contract.EventResult{}, nil
 	}); err != nil {

@@ -13,7 +13,10 @@ func (h *Host) Instance(id string) (contract.Instance, error) {
 	defer h.mu.Unlock()
 	i := h.entries[id]
 	if i == nil {
-		return nil, contract.Fail(contract.NotReady, "entry does not exist")
+		i = h.dynamic[id].instance
+		if i == nil {
+			return nil, contract.Fail(contract.NotReady, "entry does not exist")
+		}
 	}
 	return i, nil
 }
@@ -25,8 +28,20 @@ func (h *Host) Instances() []contract.InstanceInfo {
 	for id, i := range h.entries {
 		entry := h.entrySpecs[id]
 		entry.Config = slices.Clone(entry.Config)
-		result = append(result, contract.InstanceInfo{Entry: entry, Package: h.packages[id]})
+		entry.Isolate = slices.Clone(entry.Isolate)
+		origin := "persistent"
+		if _, builtin := h.builtins[id]; builtin {
+			origin = "builtin"
+		}
+		result = append(result, contract.InstanceInfo{Entry: entry, Package: h.packages[id], Origin: origin})
 		instances = append(instances, i)
+	}
+	for _, child := range h.dynamic {
+		entry, owner := child.entry, child.owner
+		entry.Config = slices.Clone(entry.Config)
+		entry.Isolate = slices.Clone(entry.Isolate)
+		result = append(result, contract.InstanceInfo{Entry: entry, Package: child.ref, Origin: "dynamic", Owner: &owner})
+		instances = append(instances, child.instance)
 	}
 	h.mu.Unlock()
 	for n, instance := range instances {
@@ -54,6 +69,7 @@ func (h *Host) entrySnapshot() ([]contract.Entry, error) {
 	for id, entry := range h.entrySpecs {
 		if _, builtin := h.builtins[id]; builtin {
 			entry.Config = slices.Clone(entry.Config)
+			entry.Isolate = slices.Clone(entry.Isolate)
 			entries = append(entries, entry)
 		}
 	}
@@ -111,6 +127,9 @@ func (h *Host) Remove(ctx context.Context, id string) error {
 		return err
 	}
 	defer release()
+	if err := h.requireStatic(id); err != nil {
+		return err
+	}
 	entries, err := h.entrySnapshot()
 	if err != nil {
 		return err
@@ -130,6 +149,16 @@ func (h *Host) Remove(ctx context.Context, id string) error {
 		}
 	}
 	return result
+}
+
+func (h *Host) requireStatic(id string) error {
+	h.mu.Lock()
+	_, dynamic := h.dynamic[id]
+	h.mu.Unlock()
+	if dynamic {
+		return contract.Fail(contract.Invalid, "dynamic child: use its instance handle or restart its owner")
+	}
+	return nil
 }
 
 func (h *Host) controlBusy(id, parent string) bool {

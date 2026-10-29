@@ -18,18 +18,20 @@ func (i *instance) Status() contract.Status {
 		Identity: i.identity, State: i.state, Desired: i.desired, Applied: i.applied,
 		// Durable intent is separate from the runtime stop request, even in Quiescing.
 		Enabled: i.entry.Enabled, TemporaryStopped: !i.enabled && i.entry.Enabled,
+		Outcome: i.outcome.Clone(),
 	}
 	if i.activation != nil {
 		status.Identity = i.activation.identity
+		status.Outcome = i.activation.outcome.Clone()
 	}
 	if i.failure != nil {
 		status.Error = i.failure.Error()
 	}
 	if i.state == contract.Waiting {
 		for _, req := range i.definition.Requires {
-			if p := e.resolveLocked(req); p == nil || !p.owner.ready {
+			if p := e.resolveLocked(i, req); p == nil || !p.owner.ready {
 				reason := contract.WaitReason{Kind: "service", Requirement: &req, Reason: "missing"}
-				reason.Visible = e.visibleServicesLocked(req)
+				reason.Visible = e.visibleServicesLocked(i, req)
 				if len(reason.Visible) != 0 {
 					reason.Reason = "incompatible"
 				}
@@ -46,10 +48,10 @@ func (i *instance) Status() contract.Status {
 	return status
 }
 
-func (e *Engine) visibleServicesLocked(req contract.Requirement) []contract.Service {
+func (e *Engine) visibleServicesLocked(i *instance, req contract.Requirement) []contract.Service {
 	visible := []contract.Service{}
-	for _, p := range e.services {
-		if p.service.Name == req.Name && p.owner.ready && !p.owner.retiring {
+	for key, p := range e.services {
+		if key == serviceAddress(i, p.service.Key()) && p.service.Name == req.Name && p.owner.ready && !p.owner.retiring {
 			visible = append(visible, p.service)
 		}
 	}
@@ -153,6 +155,7 @@ func (i *instance) Update(ctx context.Context, config json.RawMessage) (contract
 }
 
 func (i *instance) configure(config json.RawMessage, commit func() error) (func(context.Context) (contract.UpdateResult, error), error) {
+	defer i.engine.flushDiagnostics()
 	config = normalizeConfig(config)
 	if err := validate(i.definition, config); err != nil {
 		return nil, err
@@ -188,7 +191,7 @@ func (i *instance) configure(config json.RawMessage, commit func() error) (func(
 		i.activation.terminal = contract.Waiting
 		e.retireLocked(i.activation, contract.Waiting)
 	} else {
-		i.state = contract.Waiting
+		e.stateLocked(i, contract.Waiting)
 	}
 	e.signalLocked()
 	e.mu.Unlock()
@@ -219,11 +222,9 @@ func (i *instance) Stop(ctx context.Context) error {
 }
 
 // Stop submits retirement synchronously; the returned waiter owns no admission lock.
-func (e *Engine) Stop(ctx context.Context, entryID string) (func(context.Context) error, error) {
-	e.mu.Lock()
-	i := e.instances[entryID]
-	e.mu.Unlock()
-	if i == nil {
+func (e *Engine) Stop(ctx context.Context, target contract.Instance) (func(context.Context) error, error) {
+	i, ok := target.(*instance)
+	if !ok || i.engine != e {
 		return nil, contract.Fail(contract.NotReady, "entry not found")
 	}
 	return i.stop(ctx, false)
@@ -241,6 +242,7 @@ func (e *Engine) Disable(ctx context.Context, entryID string) (func(context.Cont
 }
 
 func (i *instance) stop(ctx context.Context, disable bool) (func(context.Context) error, error) {
+	defer i.engine.flushDiagnostics()
 	e := i.engine
 	e.configMu.Lock()
 	e.mu.Lock()
@@ -285,7 +287,7 @@ func (i *instance) stop(ctx context.Context, disable bool) (func(context.Context
 		if owner.activation != nil {
 			e.retireLocked(owner.activation, contract.Stopped)
 		} else {
-			owner.state = contract.Stopped
+			e.stateLocked(owner, contract.Stopped)
 		}
 	}
 	stopTree(i)
@@ -362,11 +364,9 @@ func ownedByLocked(e *Engine, i *instance, parent string) bool {
 // Configure validates, durably records the desired configuration through the
 // host's commit, then submits it. Caller serializes entry mutations; no engine
 // lock is held while commit performs I/O. Waiting is separate from submission.
-func (e *Engine) Configure(id string, config json.RawMessage, commit func() error) (func(context.Context) (contract.UpdateResult, error), error) {
-	e.mu.Lock()
-	i := e.instances[id]
-	e.mu.Unlock()
-	if i == nil {
+func (e *Engine) Configure(target contract.Instance, config json.RawMessage, commit func() error) (func(context.Context) (contract.UpdateResult, error), error) {
+	i, ok := target.(*instance)
+	if !ok || i.engine != e {
 		return nil, contract.Fail(contract.NotReady, "entry not found")
 	}
 	return i.configure(config, commit)

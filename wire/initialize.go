@@ -16,7 +16,7 @@ func decodeInitialize(data json.RawMessage) (contract.Initialize, error) {
 
 func decodeRegistration(data json.RawMessage, frameBytes int) error {
 	var registration contract.Registration
-	if err := decodeRequired(data, &registration, "frameBytes", "minor", "features", "services", "subscriptions"); err != nil {
+	if err := decodeRequired(data, &registration, "frameBytes", "minor", "features", "services"); err != nil {
 		return err
 	}
 	if registration.FrameBytes != frameBytes {

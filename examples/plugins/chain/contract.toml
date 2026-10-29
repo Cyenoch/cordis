@@ -58,4 +58,4 @@ requires = [{ name = "upstream", service = "chain.b", minMinor = 1, maxMinor = 3
 
 [[definitions]]
 id = "optional-parent"
-config = { "$ref" = "#/types/Settings" }
+config = { type = "object", properties = { label = { type = "string" }, childIsolate = { type = "array", items = { type = "string" } } } }

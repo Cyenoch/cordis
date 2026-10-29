@@ -24,17 +24,22 @@ func main() {
 }
 
 func optionalParent() contract.Definition {
-	return NewOptionalParentDefinition(func(ctx context.Context, scope contract.Scope, _ OptionalParentConfig) error {
-		child, err := contract.CreateChild(ctx, scope, contract.Child{ID: "optional", Definition: MiddleDefinitionSpec().ID, Config: scope.Config()})
+	return NewOptionalParentDefinition(func(ctx context.Context, scope contract.Scope, settings OptionalParentConfig) error {
+		config, err := json.Marshal(MiddleConfig{Label: settings.Label})
 		if err != nil {
 			return err
 		}
-		return scope.On("chain.optional-ready", func(ctx context.Context, _ json.RawMessage) (contract.EventResult, error) {
+		child, err := contract.CreateChild(ctx, scope, contract.Child{ID: "optional", Definition: MiddleDefinitionSpec().ID, Config: config, Isolate: settings.ChildIsolate.Value})
+		if err != nil {
+			return err
+		}
+		_, subscribeErr := scope.On(ctx, "chain.optional-ready", contract.SubscriptionOptions{}, func(ctx context.Context, _ json.RawMessage) (contract.EventResult, error) {
 			if err := child.Wait(ctx); err != nil {
 				return contract.EventResult{}, err
 			}
 			return contract.EventResult{Handled: true, Value: json.RawMessage(`true`)}, nil
 		})
+		return subscribeErr
 	})
 }
 
@@ -45,19 +50,19 @@ type providerServer struct {
 }
 
 func provider() contract.Definition {
-	return NewProviderDefinition(func(_ context.Context, scope contract.Scope, settings ProviderConfig) error {
+	return NewProviderDefinition(func(ctx context.Context, scope contract.Scope, settings ProviderConfig) error {
 		if rejectInitialization == "true" {
 			return contract.Fail(contract.PluginFailed, "intentional version-specific initialization failure")
 		}
 		if settings.Label.Value == "fail-initialize" {
 			return contract.Fail(contract.PluginFailed, "intentional failed initialization")
 		}
-		if err := scope.On("chain.handled", func(context.Context, json.RawMessage) (contract.EventResult, error) {
+		if _, err := scope.On(ctx, "chain.handled", contract.SubscriptionOptions{}, func(context.Context, json.RawMessage) (contract.EventResult, error) {
 			return contract.EventResult{Handled: true, Value: json.RawMessage(`0`)}, nil
 		}); err != nil {
 			return err
 		}
-		if err := scope.On("chain.handled", func(context.Context, json.RawMessage) (contract.EventResult, error) {
+		if _, err := scope.On(ctx, "chain.handled", contract.SubscriptionOptions{}, func(context.Context, json.RawMessage) (contract.EventResult, error) {
 			return contract.EventResult{}, contract.Fail(contract.PluginFailed, "second listener must not run in First")
 		}); err != nil {
 			return err

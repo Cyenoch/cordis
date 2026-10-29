@@ -237,7 +237,7 @@ func (v *Settings) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-const ConsumerDefinitionDeclarationFingerprint = "dcb7df1ff4bd981ef4bae88031f09c62de8693dd76dec97f487082c4c0b7690b"
+const ConsumerDefinitionDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
 const ConsumerConfigSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}"
 
 var compiledConsumerConfig, compiledConsumerConfigError = schema.Compile(json.RawMessage(ConsumerConfigSchemaJSON))
@@ -319,7 +319,7 @@ func NewConsumerDefinition(start func(context.Context, contract.Scope, ConsumerC
 	}}
 }
 
-const MiddleDefinitionDeclarationFingerprint = "dcb7df1ff4bd981ef4bae88031f09c62de8693dd76dec97f487082c4c0b7690b"
+const MiddleDefinitionDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
 const MiddleConfigSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}"
 
 var compiledMiddleConfig, compiledMiddleConfigError = schema.Compile(json.RawMessage(MiddleConfigSchemaJSON))
@@ -401,8 +401,8 @@ func NewMiddleDefinition(start func(context.Context, contract.Scope, MiddleConfi
 	}}
 }
 
-const OptionalParentDefinitionDeclarationFingerprint = "dcb7df1ff4bd981ef4bae88031f09c62de8693dd76dec97f487082c4c0b7690b"
-const OptionalParentConfigSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}"
+const OptionalParentDefinitionDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
+const OptionalParentConfigSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"childIsolate\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}"
 
 var compiledOptionalParentConfig, compiledOptionalParentConfigError = schema.Compile(json.RawMessage(OptionalParentConfigSchemaJSON))
 
@@ -414,11 +414,21 @@ func validateOptionalParentConfig(data []byte) error {
 }
 
 type OptionalParentConfig struct {
-	Label schema.Optional[string] `json:"label"`
+	ChildIsolate schema.Optional[[]string] `json:"childIsolate"`
+	Label        schema.Optional[string]   `json:"label"`
 }
 
 func (v OptionalParentConfig) MarshalJSON() ([]byte, error) {
-	object := make(map[string]json.RawMessage, 1)
+	object := make(map[string]json.RawMessage, 2)
+	if v.ChildIsolate.Present {
+		{
+			data, err := contract.Encode(v.ChildIsolate.Value)
+			if err != nil {
+				return nil, fmt.Errorf("encode field childIsolate: %w", err)
+			}
+			object["childIsolate"] = data
+		}
+	}
 	if v.Label.Present {
 		{
 			data, err := contract.Encode(v.Label.Value)
@@ -449,6 +459,12 @@ func (v *OptionalParentConfig) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	var value OptionalParentConfig
+	if raw, exists := object["childIsolate"]; exists {
+		value.ChildIsolate.Present = true
+		if err := json.Unmarshal(raw, &value.ChildIsolate.Value); err != nil {
+			return fmt.Errorf("decode field childIsolate: %w", err)
+		}
+	}
 	if raw, exists := object["label"]; exists {
 		value.Label.Present = true
 		if err := json.Unmarshal(raw, &value.Label.Value); err != nil {
@@ -476,7 +492,7 @@ func NewOptionalParentDefinition(start func(context.Context, contract.Scope, Opt
 	}}
 }
 
-const ProviderDefinitionDeclarationFingerprint = "dcb7df1ff4bd981ef4bae88031f09c62de8693dd76dec97f487082c4c0b7690b"
+const ProviderDefinitionDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
 const ProviderConfigSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}"
 
 var compiledProviderConfig, compiledProviderConfigError = schema.Compile(json.RawMessage(ProviderConfigSchemaJSON))
@@ -553,7 +569,7 @@ func NewProviderDefinition(start func(context.Context, contract.Scope, ProviderC
 	}}
 }
 
-const ChainAServiceDeclarationFingerprint = "dcb7df1ff4bd981ef4bae88031f09c62de8693dd76dec97f487082c4c0b7690b"
+const ChainAServiceDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
 const ChainAExecuteRequestSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"operation\":{\"type\":\"string\"},\"owner\":{\"type\":\"string\"}},\"required\":[\"operation\"],\"type\":\"object\"}"
 
 var compiledChainAExecuteRequest, compiledChainAExecuteRequestError = schema.Compile(json.RawMessage(ChainAExecuteRequestSchemaJSON))
@@ -806,7 +822,7 @@ func RegisterChainAServer(registrar contract.Registrar, implementation ChainASer
 	})
 }
 
-const ChainBServiceDeclarationFingerprint = "dcb7df1ff4bd981ef4bae88031f09c62de8693dd76dec97f487082c4c0b7690b"
+const ChainBServiceDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
 const ChainBExecuteRequestSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"operation\":{\"type\":\"string\"},\"owner\":{\"type\":\"string\"}},\"required\":[\"operation\"],\"type\":\"object\"}"
 
 var compiledChainBExecuteRequest, compiledChainBExecuteRequestError = schema.Compile(json.RawMessage(ChainBExecuteRequestSchemaJSON))
@@ -1059,7 +1075,7 @@ func RegisterChainBServer(registrar contract.Registrar, implementation ChainBSer
 	})
 }
 
-const ChainCServiceDeclarationFingerprint = "dcb7df1ff4bd981ef4bae88031f09c62de8693dd76dec97f487082c4c0b7690b"
+const ChainCServiceDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
 const ChainCExecuteRequestSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"operation\":{\"type\":\"string\"},\"owner\":{\"type\":\"string\"}},\"required\":[\"operation\"],\"type\":\"object\"}"
 
 var compiledChainCExecuteRequest, compiledChainCExecuteRequestError = schema.Compile(json.RawMessage(ChainCExecuteRequestSchemaJSON))

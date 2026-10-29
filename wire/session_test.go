@@ -52,7 +52,7 @@ func testInitialize(activation string) json.RawMessage {
 }
 
 func testRegistration() json.RawMessage {
-	return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[],"subscriptions":[]}`)
+	return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[]}`)
 }
 
 func TestEndpointBidirectionalCalls(t *testing.T) {

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/internal/processtree"
 	"github.com/Cyenoch/cordis/wire"
 )
 
@@ -41,6 +42,7 @@ type Session struct {
 	once         sync.Once
 	mu           sync.Mutex
 	err          error
+	outcome      contract.Outcome
 	expectedStop atomic.Bool
 }
 
@@ -50,8 +52,20 @@ func (s *Session) Call(ctx context.Context, method string, input json.RawMessage
 	}
 	return s.endpoint.Call(ctx, method, input)
 }
+
+func (s *Session) CallWithReceipt(ctx context.Context, method string, input json.RawMessage, receipt func(bool)) (json.RawMessage, error) {
+	if method == "shutdown" {
+		s.expectedStop.Store(true)
+	}
+	return s.endpoint.CallWithReceipt(ctx, method, input, receipt)
+}
 func (s *Session) Done() <-chan struct{} { return s.done }
 func (s *Session) Err() error            { s.mu.Lock(); defer s.mu.Unlock(); return s.err }
+func (s *Session) Outcome() contract.Outcome {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.outcome.Clone()
+}
 func (s *Session) Close() error {
 	s.once.Do(func() { close(s.stop) })
 	<-s.done
@@ -203,7 +217,7 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	cmd := exec.Command(path, args...)
 	cmd.Dir, cmd.Env = cwd, environment
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinR, stdoutW, stderrW
-	tree, err := startTree(cmd)
+	tree, err := processtree.Start(cmd)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("start activation: %w", err), cleanupPipes(), cleanupDirectory())
 	}
@@ -220,9 +234,9 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 			}
 			closed <- closeErr
 		}()
-		killErr := tree.kill()
+		killErr := tree.Kill()
 		waitErr := cmd.Wait()
-		return nil, errors.Join(err, killErr, waitErr, <-closed, tree.close(), cleanupPipes(), cleanupDirectory())
+		return nil, errors.Join(err, killErr, waitErr, <-closed, tree.Close(), cleanupPipes(), cleanupDirectory())
 	}
 	s := &Session{endpoint: endpoint, stop: make(chan struct{}), done: make(chan struct{})}
 	exited := make(chan error, 1)
@@ -230,16 +244,23 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	stderrDone := make(chan error, 1)
 	go func() {
 		remaining := stderrLimit
+		truncated := false
 		var buffer [4096]byte
 		// A failed callback stops forwarding, never draining: a stalled reader
 		// would block the guest on a full pipe even after the forwarding budget.
 		var forwardErr error
 		for {
 			n, readErr := stderrR.Read(buffer[:])
-			if n > 0 && launch.Stderr != nil && forwardErr == nil && remaining > 0 {
-				forward := buffer[:min(int64(n), remaining)]
-				forwardErr = launch.Stderr(slices.Clone(forward))
-				remaining -= int64(len(forward))
+			if n > 0 && launch.Stderr != nil && forwardErr == nil {
+				size := min(int64(n), remaining)
+				record := contract.StderrRecord{Owner: launch.Identity, Data: slices.Clone(buffer[:size])}
+				if int64(n) > size && !truncated {
+					record.Truncated, truncated = true, true
+				}
+				if size > 0 || record.Truncated {
+					forwardErr = launch.Stderr(record)
+				}
+				remaining -= size
 			}
 			if readErr != nil {
 				if errors.Is(readErr, io.EOF) || errors.Is(readErr, os.ErrClosed) {
@@ -252,6 +273,7 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	}()
 	go func() {
 		var reason, waitErr error
+		outcome := contract.Outcome{Reason: contract.ExitUnexpected}
 		var lifetimeDone <-chan struct{}
 		if options.Lifetime != nil {
 			lifetimeDone = options.Lifetime.Done()
@@ -261,12 +283,17 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 		select {
 		case <-s.stop:
 			requested = true
+			outcome.Reason = contract.ExitStopped
 		case <-endpoint.Done():
 			reason = endpoint.Err()
+			if reason != nil && !errors.Is(reason, io.EOF) {
+				outcome.Reason = contract.ExitProtocol
+			}
 		case waitErr = <-exited:
 			reaped = true
 		case <-lifetimeDone:
 			reason = options.Lifetime.Err()
+			outcome.Reason = contract.ExitInterrupted
 		}
 		if reaped && s.expectedStop.Load() {
 			timer := time.NewTimer(grace)
@@ -285,26 +312,27 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 		closed := make(chan closeResult, 1)
 		go func() { closed <- closeResult{transport: transport.Close(), endpoint: endpoint.Close()} }()
 		// Closing transport unblocks protocol I/O; signal the whole managed tree.
-		terminateErr := tree.terminate()
+		terminateErr := tree.Terminate()
 		if !reaped {
 			timer := time.NewTimer(grace)
 			select {
 			case waitErr = <-exited:
 			case <-timer.C:
-				forcedErr := tree.kill()
+				forcedErr := tree.Kill()
+				outcome.Forced = forcedErr == nil
 				terminateErr = errors.Join(terminateErr, forcedErr)
 				waitErr = <-exited // Always reap: never leave an operating-system zombie.
 			}
 			timer.Stop()
 		}
 		// Also remove descendants after a leader exits while holding inherited fds.
-		killErr := tree.kill()
+		killErr := tree.Kill()
 		// A just-exited Darwin leader can race SIGTERM with reaping. The final
 		// kill is authoritative: retain permission failures unless it succeeds.
 		if errors.Is(terminateErr, syscall.EPERM) && killErr == nil {
 			terminateErr = nil
 		}
-		treeErr := tree.close()
+		treeErr := tree.Close()
 		closeErrors := <-closed
 		// The leader is reaped and the tree killed, so its stderr writers are
 		// closing: drain to EOF so output written before exit is delivered. A
@@ -331,17 +359,32 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 		if errors.Is(reason, io.EOF) {
 			reason = nil
 		}
+		if (requested || s.expectedStop.Load()) && outcome.Reason != contract.ExitInterrupted && outcome.Reason != contract.ExitProtocol {
+			outcome.Reason = contract.ExitStopped
+		}
+		if cmd.ProcessState != nil {
+			code := cmd.ProcessState.ExitCode()
+			if code >= 0 {
+				outcome.ExitCode = &code
+			}
+			outcome.Signal = tree.ExitSignal(cmd.ProcessState)
+		}
 		if !requested && !s.expectedStop.Load() && reason == nil && waitErr == nil {
 			reason = contract.Fail(contract.PluginFailed, "activation exited without shutdown")
 		}
 		if requested || s.expectedStop.Load() {
 			var exited *exec.ExitError
-			if errors.As(waitErr, &exited) && tree.expectedExit(exited) {
+			if errors.As(waitErr, &exited) && tree.ExpectedExit(exited) {
 				waitErr = nil
 			}
 		}
+		failure := errors.Join(reason, waitErr)
+		cleanupErr := errors.Join(parentCloseErr, closeErrors.transport, closeErrors.endpoint, terminateErr, killErr, treeErr, pipeErr, stderrErr, cleanupDirectory())
+		outcome.FailureCode = contract.ErrorCode(failure)
+		outcome.CleanupCode = contract.ErrorCode(cleanupErr)
 		s.mu.Lock()
-		s.err = errors.Join(reason, waitErr, parentCloseErr, closeErrors.transport, closeErrors.endpoint, terminateErr, killErr, treeErr, pipeErr, stderrErr, cleanupDirectory())
+		s.err = errors.Join(failure, cleanupErr)
+		s.outcome = outcome
 		s.mu.Unlock()
 		close(s.done)
 	}()

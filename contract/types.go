@@ -27,6 +27,7 @@ const (
 	Internal     Code = "internal"
 	Conflict     Code = "conflict"
 	Superseded   Code = "superseded"
+	Panicked     Code = "panic"
 )
 
 type Error struct {
@@ -70,7 +71,7 @@ func (p Protocol) Negotiate(other Protocol) (uint32, error) {
 	for _, features := range [][]string{p.RequiredFeatures, other.RequiredFeatures} {
 		for _, feature := range features {
 			switch feature {
-			case "cancel", "parent", "events", "children":
+			case "cancel", "parent", "events", "children", "subscriptions":
 			default:
 				return 0, Fail(Incompatible, "unsupported required session feature: "+feature)
 			}
@@ -169,6 +170,7 @@ type Status struct {
 	TemporaryStopped bool         `json:"temporaryStopped"`
 	Desired          uint64       `json:"desired"`
 	Applied          uint64       `json:"applied"`
+	Outcome          Outcome      `json:"outcome"`
 	Waiting          []WaitReason `json:"waiting"`
 	Error            string       `json:"error,omitempty"`
 	Diagnostics      []string     `json:"diagnostics,omitempty"`
@@ -186,6 +188,8 @@ type InstanceInfo struct {
 	Entry   Entry      `json:"entry"`
 	Package PackageRef `json:"package"`
 	Status  Status     `json:"status"`
+	Origin  string     `json:"origin"`
+	Owner   *Identity  `json:"owner,omitempty"`
 }
 
 type RestoreEntry struct {
@@ -230,7 +234,7 @@ type Scope interface {
 	Defer(Cleanup) error
 	Provide(Service, Handler) error
 	Call(context.Context, Requirement, json.RawMessage) (json.RawMessage, error)
-	On(string, EventHandler) error
+	On(context.Context, string, SubscriptionOptions, EventHandler) (Subscription, error)
 	Emit(context.Context, string, json.RawMessage, Dispatch) ([]EventResult, error)
 }
 
@@ -243,6 +247,10 @@ type Definition struct {
 	Start    func(context.Context, Scope) error
 }
 
+// Entry fixes ownership and service isolation for one registration.
+// Isolate contains complete service keys (name@major). Each key starts a boundary
+// inherited by descendants; other keys retain their nearest ancestor boundary.
+// Update changes configuration only. Re-register to change these boundaries.
 type Entry struct {
 	ID         string          `json:"id"`
 	Package    string          `json:"package"`
@@ -250,6 +258,7 @@ type Entry struct {
 	Parent     string          `json:"parent,omitempty"`
 	Config     json.RawMessage `json:"config"`
 	Enabled    bool            `json:"enabled"`
+	Isolate    []string        `json:"isolate,omitempty"`
 }
 
 type Invocation struct {
@@ -267,15 +276,18 @@ type Initialize struct {
 }
 
 type Registration struct {
-	FrameBytes    int       `json:"frameBytes"`
-	Minor         uint32    `json:"minor"`
-	Features      []string  `json:"features"`
-	Services      []Service `json:"services"`
-	Subscriptions []string  `json:"subscriptions"`
+	FrameBytes int       `json:"frameBytes"`
+	Minor      uint32    `json:"minor"`
+	Features   []string  `json:"features"`
+	Services   []Service `json:"services"`
 }
 
 type Session interface {
 	Call(context.Context, string, json.RawMessage) (json.RawMessage, error)
+	// CallWithReceipt invokes a non-nil receipt exactly once before awaiting a
+	// response: true means queued in session order; false means never sent.
+	// The receipt must return promptly and does not acknowledge peer receipt.
+	CallWithReceipt(context.Context, string, json.RawMessage, func(bool)) (json.RawMessage, error)
 	Done() <-chan struct{}
 	Err() error
 	Close() error
@@ -302,7 +314,7 @@ type Launch struct {
 	Handle     SessionHandler
 	FrameBytes int
 	Grace      time.Duration
-	Stderr     func([]byte) error
+	Stderr     func(StderrRecord) error
 }
 
 type Runtime interface {

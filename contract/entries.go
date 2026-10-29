@@ -1,5 +1,27 @@
 package contract
 
+import (
+	"strconv"
+	"strings"
+)
+
+// CheckIsolate validates complete, canonical service keys without naming realms.
+func CheckIsolate(keys []string) error {
+	seen := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		at := strings.LastIndexByte(key, '@')
+		if at <= 0 {
+			return Fail(Invalid, "isolation requires full service key: "+key)
+		}
+		major, err := strconv.ParseUint(key[at+1:], 10, 32)
+		if err != nil || strconv.FormatUint(major, 10) != key[at+1:] || seen[key] {
+			return Fail(Invalid, "invalid or duplicate isolation key: "+key)
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
 func CheckEntryGraph(entries []Entry) error {
 	byID := make(map[string]Entry, len(entries))
 	for _, entry := range entries {

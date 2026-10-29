@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/internal/processtree"
 )
 
 const BuildSchema = "cordis-go.build/v1"
@@ -231,23 +232,28 @@ func validateBuildPath(name string) error {
 	return nil
 }
 
-func runGo(ctx context.Context, dir string, o BuildOptions, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "go", args...)
+func runGo(ctx context.Context, dir string, o BuildOptions, args ...string) (output []byte, result error) {
+	temporary, err := os.MkdirTemp(os.Getenv("GOTMPDIR"), ".cordis-go-")
+	if err != nil {
+		return nil, fmt.Errorf("create Go build workspace: %w", err)
+	}
+	defer func() { result = errors.Join(result, os.RemoveAll(temporary)) }()
+	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
 	cmd.Env = []string{}
 	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, "GOOS=") && !strings.HasPrefix(entry, "GOARCH=") {
+		if !strings.HasPrefix(entry, "GOOS=") && !strings.HasPrefix(entry, "GOARCH=") && !strings.HasPrefix(entry, "GOTMPDIR=") {
 			cmd.Env = append(cmd.Env, entry)
 		}
 	}
-	cmd.Env = append(cmd.Env, "GOOS="+o.GOOS, "GOARCH="+o.GOARCH)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	cmd.Env = append(cmd.Env, "GOOS="+o.GOOS, "GOARCH="+o.GOARCH, "GOTMPDIR="+temporary)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err = processtree.Run(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("go %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
-	return out, nil
+	return stdout.Bytes(), nil
 }
 
 func resolveSDK(ctx context.Context, dir string, options BuildOptions) (SDKBuild, error) {

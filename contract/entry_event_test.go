@@ -101,8 +101,9 @@ func TestTypedEventStrictDecodeAndFirstHandledZero(t *testing.T) {
 				add := func(id string, handler func(context.Context, message) (contract.EventResult, error)) {
 					t.Helper()
 					instance, err := engine.Add(contract.Entry{ID: id, Enabled: true}, contract.Definition{
-						Start: func(_ context.Context, scope contract.Scope) error {
-							return contract.Subscribe(scope, event, handler)
+						Start: func(ctx context.Context, scope contract.Scope) error {
+							_, subscribeErr := contract.Subscribe(ctx, scope, event, contract.SubscriptionOptions{}, handler)
+							return subscribeErr
 						},
 					}, contract.Identity{})
 					if err != nil {

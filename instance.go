@@ -15,6 +15,15 @@ type hostInstance struct {
 	host        *Host
 	id          string
 	diagnostics []string
+	owner       *contract.Identity
+}
+
+func (i *hostInstance) currentLocked() bool {
+	if i.owner == nil {
+		return i.host.entries[i.id] == i
+	}
+	child, exists := i.host.dynamic[i.id]
+	return exists && child.instance == i && child.owner == *i.owner
 }
 
 func (i *hostInstance) Status() contract.Status {
@@ -29,11 +38,14 @@ func (i *hostInstance) Update(ctx context.Context, config json.RawMessage) (cont
 		return contract.UpdateResult{}, err
 	}
 	h.mu.Lock()
-	current := h.entries[i.id]
+	current := i.currentLocked()
 	entry := h.entrySpecs[i.id]
+	if i.owner != nil {
+		entry = h.dynamic[i.id].entry
+	}
 	_, builtin := h.builtins[i.id]
 	h.mu.Unlock()
-	if current != i {
+	if !current {
 		h.unlockOperation()
 		return contract.UpdateResult{}, contract.Fail(contract.NotReady, "instance has been replaced")
 	}
@@ -47,15 +59,20 @@ func (i *hostInstance) Update(ctx context.Context, config json.RawMessage) (cont
 	}
 	entry.Config = slices.Clone(config)
 	var commitErr error
-	wait, err := h.engine.Configure(i.id, config, func() error {
-		if !builtin {
+	wait, err := h.engine.Configure(i.Instance, config, func() error {
+		if !builtin && i.owner == nil {
 			commitErr = h.store.SaveEntry(ctx, entry)
 			if commitErr != nil && !catalogCommitted(commitErr) {
 				return commitErr
 			}
 		}
 		h.mu.Lock()
-		h.entrySpecs[i.id] = entry
+		if i.owner == nil {
+			h.entrySpecs[i.id] = entry
+		} else if child, exists := h.dynamic[i.id]; exists && child.instance == i {
+			child.entry = entry
+			h.dynamic[i.id] = child
+		}
 		h.mu.Unlock()
 		return nil
 	})
@@ -81,9 +98,9 @@ func (i *hostInstance) Stop(ctx context.Context) error {
 		return err
 	}
 	h.mu.Lock()
-	current := h.entries[i.id]
+	current := i.currentLocked()
 	h.mu.Unlock()
-	if current != i {
+	if !current {
 		h.unlockOperation()
 		return contract.Fail(contract.NotReady, "instance has been replaced")
 	}
@@ -93,7 +110,7 @@ func (i *hostInstance) Stop(ctx context.Context) error {
 		return err
 	}
 	defer release()
-	wait, err := h.engine.Stop(ctx, i.id)
+	wait, err := h.engine.Stop(ctx, i.Instance)
 	h.unlockOperation()
 	if err != nil {
 		return err
@@ -163,7 +180,7 @@ func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
 		h.mu.Unlock()
 		if exists {
 			selected, selectErr := h.store.Selected(entry.Package)
-			if selectErr != nil || ref != selected.Ref || current.Package != entry.Package || current.Parent != entry.Parent || current.Definition != entry.Definition {
+			if selectErr != nil || ref != selected.Ref || current.Package != entry.Package || current.Parent != entry.Parent || current.Definition != entry.Definition || !slices.Equal(current.Isolate, entry.Isolate) {
 				record.Action = "conflict"
 				record.Error = errors.Join(contract.Fail(contract.Conflict, "restore target differs from current registration"), selectErr)
 				blocked[entry.ID] = true
@@ -175,6 +192,7 @@ func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
 				}
 			}
 			report.Entries = append(report.Entries, record)
+			h.restoreFailure(ctx, record)
 			result = errors.Join(result, record.Error)
 			continue
 		}
@@ -183,6 +201,7 @@ func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
 			record.Error = contract.Fail(contract.NotReady, "restore parent could not be registered")
 			blocked[entry.ID] = true
 			report.Entries = append(report.Entries, record)
+			h.restoreFailure(ctx, record)
 			result = errors.Join(result, record.Error)
 			continue
 		}
@@ -191,6 +210,7 @@ func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
 			record.Error = contract.Fail(contract.Conflict, "restore target has a package or ownership tree operation in progress")
 			blocked[entry.ID] = true
 			report.Entries = append(report.Entries, record)
+			h.restoreFailure(ctx, record)
 			result = errors.Join(result, record.Error)
 			continue
 		}
@@ -205,6 +225,7 @@ func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
 			instances[len(report.Entries)] = instance
 		}
 		report.Entries = append(report.Entries, record)
+		h.restoreFailure(ctx, record)
 	}
 	h.unlockOperation()
 	for index, instance := range instances {
@@ -214,4 +235,11 @@ func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
 		result = errors.Join(result, err)
 	}
 	return report, result
+}
+
+func (h *Host) restoreFailure(ctx context.Context, entry contract.RestoreEntry) {
+	if entry.Error != nil && h.options.Logger != nil {
+		h.options.Logger.ErrorContext(ctx, "entry restore failed", "operation", "restore",
+			"entry", entry.ID, "stage", entry.Action, "errorCode", contract.ErrorCode(entry.Error), "error", entry.Error)
+	}
 }

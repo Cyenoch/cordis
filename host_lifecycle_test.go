@@ -27,9 +27,15 @@ func (fixtureRuntime) Start(context.Context, contract.Launch) (contract.Session,
 }
 func (s *fixtureSession) Call(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
 	if method == "initialize" {
-		return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[],"subscriptions":[]}`), nil
+		return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[]}`), nil
 	}
 	return json.RawMessage(`{}`), nil
+}
+func (s *fixtureSession) CallWithReceipt(ctx context.Context, method string, input json.RawMessage, receipt func(bool)) (json.RawMessage, error) {
+	if receipt != nil {
+		receipt(true)
+	}
+	return s.Call(ctx, method, input)
 }
 func (s *fixtureSession) Done() <-chan struct{} { return s.done }
 func (s *fixtureSession) Err() error            { return nil }

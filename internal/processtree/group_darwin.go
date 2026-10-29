@@ -1,4 +1,4 @@
-package process
+package processtree
 
 import (
 	"golang.org/x/sys/unix"

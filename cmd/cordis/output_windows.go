@@ -2,6 +2,8 @@ package main
 
 import "golang.org/x/sys/windows"
 
+func ignoreBrokenPipe() {}
+
 func renameOutput(source, target string) error {
 	from, err := windows.UTF16PtrFromString(source)
 	if err != nil {

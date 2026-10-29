@@ -1,11 +1,11 @@
 ---
 title: 组合实操
-description: 父定义直接携带子定义，等待 provider 到达，再按所有权释放资源。
+description: 父子定义、显式服务隔离、宿主解析视图与资源清理。
 ---
 
 # 组合实操
 
-这个完整程序演示 builtin 组合：父实例先发布，子实例等待依赖；provider 到达后子实例开始提供服务；停用父实例时先清理子实例。一个 Host 共享服务表，父子关系只表达所有权。
+这个完整程序演示 builtin 组合：父实例显式隔离两个服务 key，子实例等待本组 provider；宿主通过子实例的 Caller 视图调用，停用父实例时先清理子实例。父子关系本身只表达所有权，未隔离的 key 仍然共享。
 
 在独立 Go module 中将 `github.com/Cyenoch/cordis` replace 到本地检出，执行 `go mod tidy` 和 `go run .`。项目尚未发布，具体设置见[快速开始](getting-started.md)。
 
@@ -64,7 +64,9 @@ func run() error {
             })
         },
     }
-    parent, err := host.AddBuiltin(ctx, contract.Entry{ID: "parent", Package: "tutorial"}, contract.Definition{
+    parent, err := host.AddBuiltin(ctx, contract.Entry{
+        ID: "parent", Package: "tutorial", Isolate: []string{base.Key(), result.Key()},
+    }, contract.Definition{
         ID: "parent",
         Children: []contract.Definition{childDefinition},
         Start: func(ctx context.Context, scope contract.Scope) error {
@@ -84,7 +86,7 @@ func run() error {
     fmt.Println("parent ready")
     fmt.Println("child", child.Status().State)
 
-    provider, err := host.AddBuiltin(ctx, contract.Entry{ID: "provider", Package: "tutorial"}, contract.Definition{
+    provider, err := host.AddBuiltin(ctx, contract.Entry{ID: "provider", Parent: "parent", Package: "tutorial"}, contract.Definition{
         ID: "provider",
         Provides: []contract.Service{base},
         Start: func(_ context.Context, scope contract.Scope) error {
@@ -96,7 +98,13 @@ func run() error {
     if err != nil { return err }
     if err := provider.Wait(ctx); err != nil { return err }
     if err := child.Wait(ctx); err != nil { return err }
-    value, err := host.Call(ctx, contract.Requirement{Name: result.Name, Major: result.Major}, json.RawMessage(`null`))
+    required := contract.Requirement{Name: result.Name, Major: result.Major}
+    if _, err := host.Call(ctx, required, json.RawMessage(`null`)); contract.ErrorCode(err) != contract.NotReady {
+        return fmt.Errorf("root unexpectedly resolved isolated service: %v", err)
+    }
+    view, err := host.Caller(child.Status().Identity.Entry)
+    if err != nil { return err }
+    value, err := view.Call(ctx, required, json.RawMessage(`null`))
     if err != nil { return err }
     fmt.Println("child value", string(value))
     return host.Disable(ctx, "parent")
@@ -113,4 +121,6 @@ parent stopped
 
 `Definition.Children` 把可用子定义放在父旁边。CreateChild 在父发布后启动子实例，所以父初始化只登记、不等待。`Defer` 将资源绑定到当前 activation，父停用会等待子清理。
 
-同样的父子 API 可用于 native 插件：在作者契约中声明多个定义，通过 `sdk.Run` 一次提供它们；子实例从相同包版本选择定义，每个 activation 独占进程。完整构建方式见[快速开始](getting-started.md)。
+再创建一组不同 entry ID、相同 Isolate 声明的父子树，就能复用这些服务名称；两组只绑定各自的 provider。要共享日志服务，保持日志 key 不在 Isolate 列表中即可。嵌套子项可显式建立更近的边界，缺服务不向外回退。服务隔离不影响事件：事件仍广播到整个 Host。
+
+同样的父子 API 可用于 native 插件：在作者契约中声明多个定义，通过 `sdk.Run` 一次提供它们；子实例从相同包版本选择定义，每个 activation 独占进程。仓库 chain 示例的 `optional-parent` 接受 `childIsolate` 配置并传给 `contract.Child.Isolate`；`TestNativeIsolationRestoreAndChildBoundaries` 实际执行两组签名 native 插件、独立更新/停用和重开恢复。完整构建方式见[快速开始](getting-started.md)。

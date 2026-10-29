@@ -24,7 +24,7 @@ func TestConfigurationCommitCannotRacePastStopOrClose(t *testing.T) {
 			submitted := make(chan error, 1)
 			var commits atomic.Int32
 			go func() {
-				_, err := e.Configure("configured", json.RawMessage(`{"revision":2}`), func() error { close(entered); <-release; commits.Add(1); return nil })
+				_, err := e.Configure(i, json.RawMessage(`{"revision":2}`), func() error { close(entered); <-release; commits.Add(1); return nil })
 				submitted <- err
 			}()
 			<-entered
@@ -51,7 +51,7 @@ func TestConfigurationCommitCannotRacePastStopOrClose(t *testing.T) {
 			if err := <-stopped; err != nil {
 				t.Fatal(err)
 			}
-			_, err := e.Configure("configured", json.RawMessage(`{"revision":3}`), func() error { commits.Add(1); return nil })
+			_, err := e.Configure(i, json.RawMessage(`{"revision":3}`), func() error { commits.Add(1); return nil })
 			if err == nil || commits.Load() != 1 {
 				t.Fatalf("%s admitted later durable update: err=%v commits=%d", transition, err, commits.Load())
 			}

@@ -18,11 +18,11 @@ func TestMissingEntryControlsReturnNotReady(t *testing.T) {
 		name string
 		run  func() error
 	}{
-		{name: "stop", run: func() error { _, err := e.Stop(t.Context(), "missing"); return err }},
+		{name: "stop", run: func() error { _, err := e.Stop(t.Context(), nil); return err }},
 		{name: "disable", run: func() error { _, err := e.Disable(t.Context(), "missing"); return err }},
 		{name: "resume", run: func() error { _, err := e.Resume("missing"); return err }},
 		{name: "remove", run: func() error { return e.Remove(t.Context(), "missing") }},
-		{name: "configure", run: func() error { _, err := e.Configure("missing", nil, nil); return err }},
+		{name: "configure", run: func() error { _, err := e.Configure(nil, nil, nil); return err }},
 	} {
 		t.Run(operation.name, func(t *testing.T) {
 			var coded *contract.Error
@@ -47,7 +47,7 @@ func TestStopAndResumeSubmitWithoutLifecycleWaiting(t *testing.T) {
 		if err := p.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		wait, err := e.Stop(t.Context(), "provider")
+		wait, err := e.Stop(t.Context(), p)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -109,7 +109,7 @@ func TestStopWaiterRetainsOriginalCleanupResultAfterResume(t *testing.T) {
 		if err := i.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		wait, err := e.Stop(t.Context(), "entry")
+		wait, err := e.Stop(t.Context(), i)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -181,9 +181,10 @@ func TestStopSubmissionRejectsSelfControlBeforeRetirement(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := core.New()
 		defer closeEngine(t, e)
-		i := add(t, e, "self", contract.Definition{Provides: []contract.Service{service}, Start: func(_ context.Context, s contract.Scope) error {
+		var i contract.Instance
+		i = add(t, e, "self", contract.Definition{Provides: []contract.Service{service}, Start: func(_ context.Context, s contract.Scope) error {
 			return s.Provide(service, func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
-				_, err := e.Stop(ctx, "self")
+				_, err := e.Stop(ctx, i)
 				return nil, err
 			})
 		}})
@@ -203,9 +204,10 @@ func TestStopWaiterParticipatesInServiceWaitGraph(t *testing.T) {
 		e := core.New()
 		failure := make(chan error, 1)
 		cleanupEntered, allowCleanup := make(chan struct{}), make(chan struct{})
+		var b contract.Instance
 		a := add(t, e, "caller", contract.Definition{Provides: []contract.Service{service}, Start: func(_ context.Context, s contract.Scope) error {
 			return s.Provide(service, func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
-				wait, err := e.Stop(ctx, "target")
+				wait, err := e.Stop(ctx, b)
 				if err != nil {
 					return nil, err
 				}
@@ -215,7 +217,7 @@ func TestStopWaiterParticipatesInServiceWaitGraph(t *testing.T) {
 		if err := a.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		b := add(t, e, "target", contract.Definition{Requires: []contract.Requirement{requirement}, Start: func(_ context.Context, s contract.Scope) error {
+		b = add(t, e, "target", contract.Definition{Requires: []contract.Requirement{requirement}, Start: func(_ context.Context, s contract.Scope) error {
 			return s.Defer(func(ctx context.Context) error {
 				close(cleanupEntered)
 				<-allowCleanup

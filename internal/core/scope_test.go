@@ -18,18 +18,20 @@ func TestEventDispatchHandledZeroAndParallelErrors(t *testing.T) {
 		defer closeEngine(t, e)
 		var later atomic.Int32
 		first := add(t, e, "first", contract.Definition{Start: func(ctx context.Context, s contract.Scope) error {
-			return s.On("value", func(context.Context, json.RawMessage) (contract.EventResult, error) {
+			_, subscribeErr := s.On(ctx, "value", contract.SubscriptionOptions{}, func(context.Context, json.RawMessage) (contract.EventResult, error) {
 				return contract.EventResult{Handled: true, Value: json.RawMessage(`0`)}, nil
 			})
+			return subscribeErr
 		}})
 		if err := first.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		second := add(t, e, "second", contract.Definition{Start: func(ctx context.Context, s contract.Scope) error {
-			return s.On("value", func(context.Context, json.RawMessage) (contract.EventResult, error) {
+			_, subscribeErr := s.On(ctx, "value", contract.SubscriptionOptions{}, func(context.Context, json.RawMessage) (contract.EventResult, error) {
 				later.Add(1)
 				return contract.EventResult{}, nil
 			})
+			return subscribeErr
 		}})
 		if err := second.Wait(t.Context()); err != nil {
 			t.Fatal(err)
@@ -47,19 +49,21 @@ func TestEventDispatchHandledZeroAndParallelErrors(t *testing.T) {
 		entered, release := make(chan struct{}), make(chan struct{})
 		failure := errors.New("listener failed")
 		slow := add(t, e, "slow", contract.Definition{Start: func(ctx context.Context, s contract.Scope) error {
-			return s.On("parallel", func(context.Context, json.RawMessage) (contract.EventResult, error) {
+			_, subscribeErr := s.On(ctx, "parallel", contract.SubscriptionOptions{}, func(context.Context, json.RawMessage) (contract.EventResult, error) {
 				close(entered)
 				<-release
 				return contract.EventResult{Handled: true}, nil
 			})
+			return subscribeErr
 		}})
 		if err := slow.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		broken := add(t, e, "broken-listener", contract.Definition{Start: func(ctx context.Context, s contract.Scope) error {
-			return s.On("parallel", func(context.Context, json.RawMessage) (contract.EventResult, error) {
+			_, subscribeErr := s.On(ctx, "parallel", contract.SubscriptionOptions{}, func(context.Context, json.RawMessage) (contract.EventResult, error) {
 				return contract.EventResult{}, failure
 			})
+			return subscribeErr
 		}})
 		if err := broken.Wait(t.Context()); err != nil {
 			t.Fatal(err)
@@ -94,10 +98,11 @@ func TestInstanceCallbacksRemainSerialAndStopRejectsQueue(t *testing.T) {
 				<-ctx.Done()
 				return contract.EventResult{}, ctx.Err()
 			}
-			if err := s.On("event", handler); err != nil {
+			if _, err := s.On(ctx, "event", contract.SubscriptionOptions{}, handler); err != nil {
 				return err
 			}
-			return s.On("event", handler)
+			_, subscribeErr := s.On(ctx, "event", contract.SubscriptionOptions{}, handler)
+			return subscribeErr
 		}})
 		if err := i.Wait(t.Context()); err != nil {
 			t.Fatal(err)

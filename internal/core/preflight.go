@@ -18,6 +18,9 @@ func (e *Engine) Preflight(entry contract.Entry, definition contract.Definition)
 }
 
 func validateAdmission(entry contract.Entry, definition contract.Definition) error {
+	if err := contract.CheckIsolate(entry.Isolate); err != nil {
+		return err
+	}
 	if entry.ID == "" || definition.Start == nil {
 		return contract.Fail(contract.Invalid, "entry id and start callback are required")
 	}

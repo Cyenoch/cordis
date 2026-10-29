@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -11,7 +12,9 @@ import (
 
 type ownedChild struct {
 	owner    contract.Identity
-	instance contract.Instance
+	instance *hostInstance
+	entry    contract.Entry
+	ref      contract.PackageRef
 }
 
 type hostScope struct {
@@ -46,13 +49,13 @@ const maxChildrenPerActivation = 256
 
 // Reserve across preflight, durable intent and registration without holding a
 // mutex during storage I/O or blocking activation retirement.
-func (h *Host) reserveEntry(id string) (func(), error) {
+func (h *Host) reserveEntry(id string, dynamic bool) (func(), error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
 		return nil, contract.Fail(contract.NotReady, "host is closed")
 	}
-	if h.admissions[id] {
+	if h.admissions[id] || dynamic && h.controls[id] {
 		return nil, contract.Fail(contract.Conflict, "entry registration is already in progress")
 	}
 	h.admissions[id] = true
@@ -91,7 +94,7 @@ func (s *hostScope) CreateChild(ctx context.Context, child contract.Child) (cont
 		return nil, contract.Fail(contract.Denied, "child instance quota exceeded")
 	}
 	entry := contract.Entry{ID: owner.Entry + "." + child.ID, Parent: owner.Entry, Package: owner.Package,
-		Definition: child.Definition, Config: child.Config, Enabled: true}
+		Definition: child.Definition, Config: child.Config, Enabled: true, Isolate: slices.Clone(child.Isolate)}
 	if owner.Digest != "builtin" {
 		instance, err := h.enableEntry(ctx, entry, &owner)
 		if err != nil {
@@ -99,7 +102,7 @@ func (s *hostScope) CreateChild(ctx context.Context, child contract.Child) (cont
 		}
 		return localChild{instance}, nil
 	}
-	release, err := h.reserveEntry(entry.ID)
+	release, err := h.reserveEntry(entry.ID, true)
 	if err != nil {
 		return nil, err
 	}
@@ -127,9 +130,12 @@ func (s *hostScope) CreateChild(ctx context.Context, child contract.Child) (cont
 		return nil, err
 	}
 	h.mu.Lock()
-	h.dynamic[entry.ID] = ownedChild{owner: owner, instance: instance}
+	entry.Config = slices.Clone(entry.Config)
+	wrapped := &hostInstance{Instance: instance, host: h, id: entry.ID, owner: &owner}
+	h.dynamic[entry.ID] = ownedChild{owner: owner, instance: wrapped, entry: entry,
+		ref: contract.PackageRef{ID: owner.Package, Digest: owner.Digest}}
 	h.mu.Unlock()
-	return localChild{instance}, nil
+	return localChild{wrapped}, nil
 }
 
 func (h *Host) removeChildren(owner contract.Identity) error {
@@ -141,15 +147,22 @@ func (h *Host) removeChildren(owner contract.Identity) error {
 	for id, child := range h.dynamic {
 		if child.owner == owner {
 			children[id] = child
-			delete(h.dynamic, id)
 		}
 	}
 	h.mu.Unlock()
 	h.childMu.Unlock()
 	var result error
 	for id, child := range children {
-		result = errors.Join(result, child.instance.Stop(context.Background()))
+		// Retirement does not acquire Host management admission while waiting.
+		result = errors.Join(result, child.instance.Instance.Stop(context.Background()))
 		result = errors.Join(result, h.engine.Remove(context.Background(), id))
+		if h.engine.Missing(id) {
+			h.mu.Lock()
+			if current, exists := h.dynamic[id]; exists && current.instance == child.instance {
+				delete(h.dynamic, id)
+			}
+			h.mu.Unlock()
+		}
 	}
 	return result
 }

@@ -111,10 +111,10 @@ func start(_ context.Context,s contract.Scope,_ MainConfig)error{
 	var rawStderr []string
 	h, err := Open(Options{Directory: t.TempDir(), Trust: trust,
 		Runtime: native.New(), FrameBytes: contract.MaxFrameBytes,
-		Stderr: func(chunk []byte) error {
+		Stderr: func(record contract.StderrRecord) error {
 			mu.Lock()
 			defer mu.Unlock()
-			rawStderr = append(rawStderr, string(chunk))
+			rawStderr = append(rawStderr, string(record.Data))
 			return nil
 		},
 	})

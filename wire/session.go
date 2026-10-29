@@ -17,11 +17,16 @@ import (
 
 type Handler func(context.Context, string, json.RawMessage) (json.RawMessage, error)
 
+// Prepare captures request references before the reader advances to another
+// frame. It must not block or run business callbacks. A nil handler uses Handler.
+type Prepare func(context.Context, string, json.RawMessage) (Handler, error)
+
 type Options struct {
 	Transport io.ReadWriteCloser
 	Identity  contract.Identity
 	Guest     bool
 	Handler   Handler
+	Prepare   Prepare
 	Limits    Limits
 	// FrameBytes is required for hosts. Guests bind it from initialize.
 	FrameBytes int
@@ -60,6 +65,7 @@ type Endpoint struct {
 	issue            chan struct{}
 	transport        io.ReadWriteCloser
 	handler          Handler
+	prepare          Prepare
 	limits           Limits
 	guest            bool
 	identity         contract.Identity
@@ -113,7 +119,7 @@ func New(options Options) (*Endpoint, error) {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	e := &Endpoint{transport: options.Transport, handler: options.Handler, limits: limits, guest: options.Guest,
+	e := &Endpoint{transport: options.Transport, handler: options.Handler, prepare: options.Prepare, limits: limits, guest: options.Guest,
 		identity: options.Identity, frameBytes: options.FrameBytes, pending: map[string]*pending{}, incoming: map[string]incoming{},
 		canceled: map[string]*cancellation{}, cancelOrder: []string{}, issue: make(chan struct{}, 1),
 		out: make(chan outbound, limits.Inflight+4), done: make(chan struct{}), ctx: ctx, cancel: cancel}
@@ -152,6 +158,17 @@ func (e *Endpoint) shutdown(err error) {
 }
 
 func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+	return e.CallWithReceipt(ctx, method, input, nil)
+}
+
+func (e *Endpoint) CallWithReceipt(ctx context.Context, method string, input json.RawMessage, receipt func(bool)) (json.RawMessage, error) {
+	settle := func(sent bool) {
+		if receipt != nil {
+			receipt(sent)
+			receipt = nil
+		}
+	}
+	defer settle(false)
 	if len(input) == 0 {
 		input = json.RawMessage(`{}`)
 	}
@@ -233,6 +250,7 @@ func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessag
 		return nil, err
 	}
 	<-e.issue
+	settle(true)
 	select {
 	case result := <-p.result:
 		if err := ctx.Err(); err != nil {
@@ -334,7 +352,7 @@ func (e *Endpoint) enqueue(ctx context.Context, message outbound) error {
 
 func controlMethod(method string) bool {
 	switch method {
-	case "initialize", "health", "shutdown", "activation.publish", "activation.retire":
+	case "initialize", "health", "shutdown", "activation.publish", "activation.retire", "event.subscribe", "event.unsubscribe":
 		return true
 	default:
 		return false
@@ -590,11 +608,20 @@ func (e *Endpoint) receive(frame Frame) error {
 	e.incoming[frame.ID] = incoming{cancel: cancel, method: frame.Method, recoverable: e.ready && !controlMethod(frame.Method)}
 	e.activeIncoming++
 	e.mu.Unlock()
-	e.wg.Go(func() { e.handle(ctx, cancel, frame) })
+	handler := e.handler
+	var prepareErr error
+	if e.prepare != nil {
+		prepared, err := e.prepare(ctx, frame.Method, frame.Payload)
+		if prepared != nil {
+			handler = prepared
+		}
+		prepareErr = err
+	}
+	e.wg.Go(func() { e.handle(ctx, cancel, frame, handler, prepareErr) })
 	return nil
 }
 
-func (e *Endpoint) handle(ctx context.Context, cancel context.CancelFunc, frame Frame) {
+func (e *Endpoint) handle(ctx context.Context, cancel context.CancelFunc, frame Frame, handler Handler, prepareErr error) {
 	defer cancel()
 	defer func() {
 		e.mu.Lock()
@@ -607,7 +634,10 @@ func (e *Endpoint) handle(ctx context.Context, cancel context.CancelFunc, frame 
 	var payload json.RawMessage
 	err := ctx.Err()
 	if err == nil {
-		payload, err = e.handler(ctx, frame.Method, frame.Payload)
+		err = prepareErr
+	}
+	if err == nil {
+		payload, err = handler(ctx, frame.Method, frame.Payload)
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		err = contract.Fail(contract.Timeout, "request deadline exceeded")

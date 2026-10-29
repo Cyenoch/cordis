@@ -80,7 +80,7 @@ func TestPublicationAcknowledgmentGatesAdmission(t *testing.T) {
 			}); err != nil {
 				return err
 			}
-			if err := s.On("ready", func(context.Context, json.RawMessage) (contract.EventResult, error) {
+			if _, err := s.On(ctx, "ready", contract.SubscriptionOptions{}, func(context.Context, json.RawMessage) (contract.EventResult, error) {
 				events.Add(1)
 				return contract.EventResult{}, nil
 			}); err != nil {
@@ -171,7 +171,7 @@ func TestLatePublicationCannotReviveRetiredWork(t *testing.T) {
 			return lifecycle.OnPublish(func(context.Context) error { close(publishing); <-ack; return nil })
 		}})
 		<-publishing
-		wait, err := e.Stop(t.Context(), "late")
+		wait, err := e.Stop(t.Context(), i)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -273,7 +273,7 @@ func TestRetireNotificationPrecedesConsumerAndGlobalCleanup(t *testing.T) {
 		if err := child.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		wait, err := e.Stop(t.Context(), "provider")
+		wait, err := e.Stop(t.Context(), p)
 		if err != nil {
 			t.Fatal(err)
 		}
