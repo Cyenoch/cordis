@@ -106,7 +106,7 @@ func TestCanceledParentChildInTransitKeepsSessionHealthy(t *testing.T) {
 		var guest *Endpoint
 		guest, err = New(Options{Transport: gate, Guest: true, Handler: func(ctx context.Context, m string, p json.RawMessage) (json.RawMessage, error) {
 			if m == "call" {
-				return guest.Call(ctx, "host.invoke", p)
+				return guest.Call(ctx, "call", p)
 			}
 			return auditHandler(ctx, m, p)
 		}})

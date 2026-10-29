@@ -115,10 +115,10 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	if launch.Identity.Activation == "" || launch.Handle == nil {
 		return nil, errors.New("activation identity and host handler are required")
 	}
-	if err := launch.SessionFactory.Validate(launch.FrameBytes); err != nil {
+	if err := contract.ValidateFrameBytes(launch.FrameBytes); err != nil {
 		return nil, err
 	}
-	if !launch.SessionFactory.IsCustom() && options.Limits.Inflight != 0 && options.Limits.Inflight != wire.DefaultLimits().Inflight {
+	if options.Limits.Inflight != 0 && options.Limits.Inflight != wire.DefaultLimits().Inflight {
 		return nil, contract.Fail(contract.Invalid, "generic v1 sessions require 64 inflight requests")
 	}
 	path, err := Executable(executable)
@@ -210,24 +210,7 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	// The child owns duplicated handles; parent copies must not hold pipes open.
 	parentCloseErr := errors.Join(stdinR.Close(), stdoutW.Close(), stderrW.Close())
 	transport := &wire.Transport{Reader: stdoutR, Writer: stdinW, Closers: []io.Closer{stdinW, stdoutR}}
-	var endpoint contract.Session
-	if launch.SessionFactory != nil {
-		endpoint, err = launch.SessionFactory.Open(transport, launch.Identity, launch.Handle, launch.FrameBytes)
-	} else {
-		endpoint, err = wire.New(wire.Options{Transport: transport, Identity: launch.Identity, Handler: wire.Handler(launch.Handle), Limits: options.Limits, FrameBytes: launch.FrameBytes})
-	}
-	if err == nil && endpoint == nil {
-		err = errors.New("session factory returned a nil session")
-	}
-	if err == nil && launch.SessionFactory.IsCustom() {
-		if _, ok := endpoint.(contract.PluginSession); !ok {
-			err = errors.New("custom session requires PluginSession")
-		}
-	} else if err == nil {
-		if _, ok := endpoint.(contract.PluginSession); ok {
-			err = errors.New("generic factory returned a custom PluginSession")
-		}
-	}
+	endpoint, err := wire.New(wire.Options{Transport: transport, Identity: launch.Identity, Handler: wire.Handler(launch.Handle), Limits: options.Limits, FrameBytes: launch.FrameBytes})
 	if err != nil {
 		closed := make(chan error, 1)
 		go func() {

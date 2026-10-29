@@ -1,5 +1,7 @@
 # Tasks
 
+> 历史记录：外部宿主专名与路径已匿名化，原始内容可从 Git 查看。本记录不定义当前能力。
+
 当前源码写集相对于 Cordis 独立仓库根。本 change 随框架整体迁移，MIT 不变，不复制平行规划源。下方第 1–10 组及平台表原样保留迁出前的任务、旧路径、旧模块名和运行事实，不表示重命名后已重新验证；当前布局以 design 为准，迁出验证单独记录。
 
 协作：Integrator 独占根公开契约、`go.mod`/`go.sum`、`contract/`、`wire/`、`schema/` 与 OpenSpec。其他写集使用独立 worktree，不同时修改共享文件；契约变更交 Integrator 合并。每组自带其行为测试、作者文档和真实 smoke，不能把这些推迟到最后。任务全部未完成前不能把 core-only 或单运行时版本称为本 change 已交付。
@@ -8,8 +10,8 @@
 
 ## 1. Integrator：独立落点与公共契约
 
-- [x] 1.1 在 `cordis-go/` 建立独立 module 落点并保留唯一 change 与固定 Cordis 参考引用；验证 OpenSpec 可读取本 change，框架不导入 VortexGo 根 module 或内部包。
-- [x] 1.2 建立 `github.com/cyenoch/vortexgo/cordis-go` module 与 MIT/第三方声明，审查 wazero v1.12.0 及传递依赖许可证；验证 `go mod download` 成功并交付可追溯清单，不创建远端或发布。
+- [x] 1.1 在 `cordis-go/` 建立独立 module 落点并保留唯一 change 与固定 Cordis 参考引用；验证 OpenSpec 可读取本 change，框架不导入 外部宿主 根 module 或内部包。
+- [x] 1.2 建立 `[原嵌套 module]` module 与 MIT/第三方声明，审查 wazero v1.12.0 及传递依赖许可证；验证 `go mod download` 成功并交付可追溯清单，不创建远端或发布。
 - [x] 1.3 定义公开 Scope/Definition/Entry/Identity/Runtime、archive/ImportDirectory 包来源、MetadataDecoder 与宿主策略 seam，以及稳定错误和配置结果；用公开消费示例验证多实例、取消结果与调用者错误处理可表达，交付 Interface 文档，不开放宿主内部对象。
 - [x] 1.4 在 `schema/`、`contract/`、`wire/` 定义 Manifest、签名输入、会话和受限数据契约的完整 schema 与互操作向量；验证边界版本、64 位整数、nullable、错误与方法方向向量可被独立读写，字段和签名字节布局无歧义。
 
@@ -69,14 +71,14 @@
 
 ## 9. Integration owner：`conformance/`
 
-- [x] 9.1 固定 VortexGo 三项 spec delta 与 design 契约的来源摘要，构建不依赖 VortexGo/MyGo 的 Manifest/NDJSON Adapter 和 fixture host；运行现有契约正反向消息及 drift fixture，验证不重写宿主 schema、方法和错误码，文档明确这是契约验收而非真实 UI 认证。
-- [x] 9.2 使用真实 Go WASM 和独立 worker 验证 VortexGo 的 command/query/event/capability/job 映射、默认拒绝、凭据不可见与裁剪结果；覆盖 job/event 请求确认和超时，不能靠 mock 转发回声通过。
+- [x] 9.1 固定 外部宿主 三项 spec delta 与 design 契约的来源摘要，构建不依赖 外部宿主/MyGo 的 Manifest/NDJSON Adapter 和 fixture host；运行现有契约正反向消息及 drift fixture，验证不重写宿主 schema、方法和错误码，文档明确这是契约验收而非真实 UI 认证。
+- [x] 9.2 使用真实 Go WASM 和独立 worker 验证 外部宿主 的 command/query/event/capability/job 映射、默认拒绝、凭据不可见与裁剪结果；覆盖 job/event 请求确认和超时，不能靠 mock 转发回声通过。
 - [x] 9.3 验证宿主贡献 validator、批量发布/撤销、插件崩溃、旧 activation 消息、受管任务取消与已接管事务任务存活；运行完整 fixture host smoke，输出已覆盖契约及明确未覆盖的 MyGo/游戏/真实部署范围。
 
 ## 10. Integrator 与独立 Review：完整交付验证
 
 - [x] 10.1 在独立仓库跑全套 `go test -race ./...`、独立作者 module 的检查及公开宿主双运行时 smoke，验证五项 capability 的场景都映射到行为证据；不是只凭编译、单元测试或静态注册演示宣布完成。
-- [x] 10.2 在 Windows amd64、Linux amd64/arm64、macOS amd64/arm64 实际执行包安装/恢复、两种 Runtime 调用/超时/停止/卸载及 VortexGo 契约 smoke；交付逐目标命令与输出，不能用交叉编译填补运行证据。
+- [x] 10.2 在 Windows amd64、Linux amd64/arm64、macOS amd64/arm64 实际执行包安装/恢复、两种 Runtime 调用/超时/停止/卸载及 外部宿主 契约 smoke；交付逐目标命令与输出，不能用交叉编译填补运行证据。
 - [x] 10.3 测量进程内分发、IPC 调用、冷启动与 WASM 缓存的延时和分配，运行相应 benchmark 与真实负载 smoke；记录结果和限制，不引入缺乏场景的数字门禁或为追指标改变契约。
 - [x] 10.4 由非作者独立 review 公开契约、包/签名、路径、生命周期、取消和 worker 安全面；修复真实发现并运行对应回归，确认五项规格无遗漏后才准备首个稳定发布，发布仍需所有者明确授权。
 
@@ -84,7 +86,7 @@
 
 ### 证据约束
 
-以下路径均相对 `cordis-go/`。Go 版本为 1.27.3；工作区没有可引用的有效 HEAD，因此不虚构提交号。每个平台脚本重新构建独立作者 module 和真实 worker；历史构建、交叉编译、静态 review 与实际执行分别记录。VortexGo 相邻规格并行修订时，来源检查实际报 drift，审查并补齐 12 方法、维护模式及精确依赖后才更新摘要。五项 capability 共 49 requirements / 66 scenarios，逐项映射如下；最终目标结果见平台记录。
+以下路径均相对 `cordis-go/`。Go 版本为 1.27.3；工作区没有可引用的有效 HEAD，因此不虚构提交号。每个平台脚本重新构建独立作者 module 和真实 worker；历史构建、交叉编译、静态 review 与实际执行分别记录。外部宿主 相邻规格并行修订时，来源检查实际报 drift，审查并补齐 12 方法、维护模式及精确依赖后才更新摘要。五项 capability 共 49 requirements / 66 scenarios，逐项映射如下；最终目标结果见平台记录。
 
 ### 已执行的通用框架行为
 
@@ -171,7 +173,7 @@ CLI 实际构建并对 native/WASM 分别执行 pack → keygen → sign → val
 
 已执行 `go test -run '^$' -fuzz '^FuzzFrame$' -fuzztime=3s ./wire`、原始 codec 的 `FuzzDecodeEnvelope`，以及 `go test -tags=integration -run '^$' -fuzz '^FuzzExtractZIP$' -fuzztime=3s ./packagehost`。一次后期样本分别 307,360 / 231,279 / 2,438 次执行通过；更早更长样本保留为历史。尝试不存在的 FuzzEnvelope 只输出 no fuzz tests to fuzz，不计入证据。有限 fuzz 无法证明不存在所有非规范输入。
 
-当前 12 方法 Adapter 完成后另执行 `go test -run '^$' -fuzz '^FuzzDecodeEnvelope$' -fuzztime=3s -parallel=2 ./conformance/vortexgo`：69,485 次执行通过；随后 `go vet ./...`、`go mod verify` 通过。来源检查逐一确认五个已审查文档摘要，当前宿主 design 为 `3419ec2c08f05dc4fe90c2aa8352e22fcc64d204b364a3e28b6594347b2b5dc8`。真实原始 WASI smoke 已通过原 13 项及新增 `real-maintenance-pure-plan`；签名正常 Host 链实际通过无 gateway 的精确 provider 绑定、两个同 contract provider、命令共存、越界输入路由前拒绝及完整大快照/分页。
+当前 12 方法 Adapter 完成后另执行 `go test -run '^$' -fuzz '^FuzzDecodeEnvelope$' -fuzztime=3s -parallel=2 ./[外部宿主验收目录]`：69,485 次执行通过；随后 `go vet ./...`、`go mod verify` 通过。来源检查逐一确认五个已审查文档摘要，当前宿主 design 为 `3419ec2c08f05dc4fe90c2aa8352e22fcc64d204b364a3e28b6594347b2b5dc8`。真实原始 WASI smoke 已通过原 13 项及新增 `real-maintenance-pure-plan`；签名正常 Host 链实际通过无 gateway 的精确 provider 绑定、两个同 contract provider、命令共存、越界输入路由前拒绝及完整大快照/分页。
 
 ### 性能证据
 
@@ -186,16 +188,16 @@ darwin/arm64、Apple M5 Pro、Go 1.27.3、GOMAXPROCS=18；正常多任务负载�
 
 ### 独立审查与已修复问题
 
-2026-10-27 宿主接入发现的反向请求 deadline 修正：唯一 VortexGo Session 按单次 `ctx.Err()` 观察区分 timeout/canceled。`TestGuestRequestDeadlineReturnsTimeoutWithoutRetiringSession` 在旧逻辑下实际失败，修复后 race 100次通过；独立 Review 发现并复现首版两次读取 Err 的竞态，已收敛为 switch，修正后未再次独立复审。根 App 的独立签名 WASI 作者 fixture 经真实 worker 发出100ms请求、宿主等待期限后返回，观察 timeout 且同 activation 后续调用成功。darwin arm64 的 `go test -tags=integration -race -count=1 -timeout 180s ./...` 与 vet 通过；Windows 11 ARM64 普通用户实际通过 Session 100次及签名插件回归的 ARM64/amd64兼容进程，具体边界见相邻平台任务的宿主入口记录。不改变此前各目标的历史证据，也不冒报真实游戏闭环。
+2026-10-27 宿主接入发现的反向请求 deadline 修正：唯一 外部宿主 Session 按单次 `ctx.Err()` 观察区分 timeout/canceled。`TestGuestRequestDeadlineReturnsTimeoutWithoutRetiringSession` 在旧逻辑下实际失败，修复后 race 100次通过；独立 Review 发现并复现首版两次读取 Err 的竞态，已收敛为 switch，修正后未再次独立复审。根 App 的独立签名 WASI 作者 fixture 经真实 worker 发出100ms请求、宿主等待期限后返回，观察 timeout 且同 activation 后续调用成功。darwin arm64 的 `go test -tags=integration -race -count=1 -timeout 180s ./...` 与 vet 通过；Windows 11 ARM64 普通用户实际通过 Session 100次及签名插件回归的 ARM64/amd64兼容进程，具体边界见相邻平台任务的宿主入口记录。不改变此前各目标的历史证据，也不冒报真实游戏闭环。
 
 非作者 review 已实际提出并关闭：响应背压/内存无界、failed Start 误用 initialize parent 清理、持久父子环、历史失败阻挡移除恢复、外部 First 零值丢失、公开 typed event/middleware 缺口、非法 UTF-8 替换、builtin child Replace/Disable 遗漏、配置 durable commit 与 Stop/Remove/Close 交错、shutdown 匹配/发布及进程退出丢确认、Windows poll 长度溢出/重叠。通用生命周期和 Windows errno/私有副本窄复核无剩余 finding。当前 ABI 由另两位非作者 reviewer 分别复核维护隔离/分页与服务绑定/授权；发现逻辑服务长度和贡献连续点限制后已修复，真实签名边界回归及原始包链通过，复核均为 findings: []。Review 为静态确认，运行证据由集成者提供；不冒称独立 reviewer 运行了检查。
 
 恢复测试模拟进程退出，不代表断电/文件系统掉盘认证。原生插件拥有用户权限，非 OS sandbox；不合作的进程内 Go callback 不能强杀。框架不实现实际 MyGo UI、游戏部署事务、完整文件/网络代理、发行密钥服务或稳定发布认证。本轮不创建远端、发布或自动 archive。
 ## 11. Integrator：独立拆仓与公开发布
 
-- [x] 11.1 迁移框架、唯一 change、固定上游参考及通用 skills；VortexGo 专属 Adapter/fixture/docs 留回宿主，保留许可证和 timeout 回归。
+- [x] 11.1 迁移框架、唯一 change、固定上游参考及通用 skills；外部宿主 专属 Adapter/fixture/docs 留回宿主，保留许可证和 timeout 回归。
 - [x] 11.2 更改 module/import、工具名称与文档导航；独立运行测试、race、native/WASI 生命周期，复核依赖与公开内容。
-- [x] 11.3 使用 gh 发布 public `Cyenoch/cordis`，从干净目录下载固定版本；VortexGo 消费公开版本并通过原始 ABI/签名作者回归，不提交宿主既有工作。
+- [x] 11.3 使用 gh 发布 public `Cyenoch/cordis`，从干净目录下载固定版本；外部宿主 消费公开版本并通过原始 ABI/签名作者回归，不提交宿主既有工作。
 
 ### 迁出后验证（2026-10-27）
 
@@ -206,13 +208,13 @@ integration/race、签名 counter 的 native/WASI 双实例、真实 C→B→A �
 公开文件扫描未发现真实私钥、账号 token 或本机绝对路径；测试签名种子仅为既有固定互操作向量。
 107 个通用技能文件按来源复制，Go 与文档 skills 的上游 MIT 文本随仓库保留。
 
-VortexGo 宿主验收已分离：`bash conformance/run.sh` 完成原始 ABI 的 14 项 checks、真实签名包与跨 provider/service 调用；
+外部宿主 宿主验收已分离：`bash conformance/run.sh` 完成原始 ABI 的 14 项 checks、真实签名包与跨 provider/service 调用；
 Adapter 的 timeout 单次 `ctx.Err()` 回归以 race 运行 100 次通过。宿主全仓 race、vet 与依赖 verify/tidy-diff 亦通过。
 平台 design 与 capability spec 的既有来源摘要 drift 仍显式报错，未重新计算摘要掩盖未逐项复核的差异；
 移出框架 spec 后来源清单仅拥有宿主本地的四份文档，框架原摘要留在宿主说明中。
 本次未重新运行 Windows/Linux 或 macOS amd64，不将历史平台表提升为当前修订认证；MVP 仍为 11/59。
 
-另将待发布 Git index 导出到 `/tmp` 的隔离目录，不初始化参考 submodule、没有相邻 VortexGo，
+另将待发布 Git index 导出到 `/tmp` 的隔离目录，不初始化参考 submodule、没有相邻 外部宿主，
 以 `GOWORK=off go test -tags=integration -race -count=1 -timeout 5m ./...` 实际通过。
 193 个原始源码/规格文件逐一核对迁移后落点，无遗漏；107 个技能文件与原来源逐字节一致。
 
@@ -235,10 +237,10 @@ GitHub API 确认仓库公开、默认分支 main、MIT；首个代码提交为
 另以不带 credential helper 的 HTTPS fresh clone 取得相同提交，未初始化 submodule，
 `GOWORK=off go test -race -count=1 ./...` 实际通过。
 
-VortexGo 已固定上述版本并移除临时 sibling replace；其 module 解析目录位于 Go module cache。
+外部宿主 已固定上述版本并移除临时 sibling replace；其 module 解析目录位于 Go module cache。
 再次执行 `bash conformance/run.sh` 成功，涵盖迁回 Adapter/fixture/API/Host 的 integration/race、
 14 项原始 ABI checks 和真实签名 provider/service 链。插件 integration vet、mod verify/tidy-diff 成功。
-VortexGo 的既有工作未提交、未推送；并行 App 会话/缓存增量不计入此次公开版本验证。
+外部宿主 的既有工作未提交、未推送；并行 App 会话/缓存增量不计入此次公开版本验证。
 
 ## 12. 审计整改与完整 DX（2026-10-27）
 

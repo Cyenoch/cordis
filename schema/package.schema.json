@@ -47,7 +47,6 @@
             "enum": [
               "cancel",
               "parent",
-              "tasks",
               "events",
               "children"
             ]
@@ -182,74 +181,47 @@
       "pattern": "^(?!/)(?!.*(?:\\.\\.|//))[A-Za-z0-9._/-]+(?<!/)$"
     },
     "runtime": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "const": "wasm"
-            },
-            "entry": {
-              "type": "string"
-            },
-            "artifacts": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "maxItems": 0
-            }
-          },
-          "required": [
-            "kind",
-            "entry"
-          ],
-          "additionalProperties": false
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "native"
         },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "const": "native"
-            },
-            "artifacts": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "object",
-                "properties": {
-                  "os": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 200,
-                    "pattern": "^(?!/)(?!.*(?:\\.\\.|//))[A-Za-z0-9._/-]+(?<!/)$"
-                  },
-                  "arch": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 200,
-                    "pattern": "^(?!/)(?!.*(?:\\.\\.|//))[A-Za-z0-9._/-]+(?<!/)$"
-                  },
-                  "path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "os",
-                  "arch",
-                  "path"
-                ],
-                "additionalProperties": false
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "os": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "^(?!/)(?!.*(?:\\.\\.|//))[A-Za-z0-9._/-]+(?<!/)$"
+              },
+              "arch": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "^(?!/)(?!.*(?:\\.\\.|//))[A-Za-z0-9._/-]+(?<!/)$"
+              },
+              "path": {
+                "type": "string"
               }
-            }
-          },
-          "required": [
-            "kind",
-            "artifacts"
-          ],
-          "additionalProperties": false
+            },
+            "required": [
+              "os",
+              "arch",
+              "path"
+            ],
+            "additionalProperties": false
+          }
         }
-      ]
+      },
+      "required": [
+        "kind",
+        "artifacts"
+      ],
+      "additionalProperties": false
     },
     "dependencies": {
       "type": [
@@ -362,68 +334,7 @@
         ]
       },
       "maxItems": 10000
-    },
-    "capabilities": {
-      "type": [
-        "array",
-        "null"
-      ],
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "pattern": "^(?!/)(?!.*(?:\\.\\.|//))[A-Za-z0-9._/-]+(?<!/)$"
-          },
-          "scope": {}
-        },
-        "required": [
-          "id",
-          "scope"
-        ],
-        "additionalProperties": false
-      },
-      "maxItems": 10000
-    },
-    "contributions": {
-      "type": [
-        "array",
-        "null"
-      ],
-      "items": {
-        "type": "object",
-        "properties": {
-          "slot": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "pattern": "^(?!/)(?!.*(?:\\.\\.|//))[A-Za-z0-9._/-]+(?<!/)$"
-          },
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "pattern": "^(?!/)(?!.*//)[A-Za-z0-9._/-]+(?<!/)$"
-          },
-          "data": {}
-        },
-        "required": [
-          "slot",
-          "id",
-          "data"
-        ],
-        "additionalProperties": false
-      },
-      "maxItems": 10000
-    },
-    "dataVersion": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 4294967295
-    },
-    "hostMetadata": {}
+    }
   },
   "required": [
     "schema",
@@ -435,10 +346,7 @@
     "defaultDefinition",
     "runtime",
     "dependencies",
-    "optionalDependencies",
-    "capabilities",
-    "contributions",
-    "dataVersion"
+    "optionalDependencies"
   ],
   "additionalProperties": false
 }

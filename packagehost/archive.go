@@ -339,8 +339,8 @@ func hashDirectory(ctx context.Context, dir string, l Limits) ([]IntegrityEntry,
 	return entries, nil
 }
 
-func inspect(ctx context.Context, dir, source string, development bool, l Limits, decoder MetadataDecoder) (Package, []byte, *Signature, error) {
-	p, input, err := inspectContent(ctx, dir, source, development, l, decoder)
+func inspect(ctx context.Context, dir, source string, development bool, l Limits) (Package, []byte, *Signature, error) {
+	p, input, err := inspectContent(ctx, dir, source, development, l)
 	if err != nil {
 		return p, nil, nil, err
 	}
@@ -348,13 +348,13 @@ func inspect(ctx context.Context, dir, source string, development bool, l Limits
 	return p, input, sig, err
 }
 
-func inspectContent(ctx context.Context, dir, source string, development bool, l Limits, decoder MetadataDecoder) (Package, []byte, error) {
+func inspectContent(ctx context.Context, dir, source string, development bool, l Limits) (Package, []byte, error) {
 	var p Package
 	raw, err := readMetadata(dir, ManifestFile)
 	if err != nil {
 		return p, nil, err
 	}
-	m, err := decodeMetadata(ctx, raw, os.DirFS(dir), decoder)
+	m, err := decodeManifest(raw)
 	if err != nil {
 		return p, nil, err
 	}
@@ -385,16 +385,9 @@ func inspectContent(ctx context.Context, dir, source string, development bool, l
 	for _, entry := range actual {
 		listed[entry.Path] = true
 	}
-	artifacts := []string{m.Runtime.Entry}
-	if m.Runtime.Kind == "native" {
-		artifacts = nil
-		for _, a := range m.Runtime.Artifacts {
-			artifacts = append(artifacts, a.Path)
-		}
-	}
-	for _, a := range artifacts {
-		if !listed[a] {
-			return p, nil, fmt.Errorf("missing runtime artifact %q", a)
+	for _, artifact := range m.Runtime.Artifacts {
+		if !listed[artifact.Path] {
+			return p, nil, fmt.Errorf("missing runtime artifact %q", artifact.Path)
 		}
 	}
 	digest := sha256.Sum256(input)
@@ -429,10 +422,6 @@ func generateIntegrity(ctx context.Context, dir string, l Limits) error {
 
 // Pack snapshots a developer directory and writes a deterministic unsigned ZIP.
 func Pack(ctx context.Context, dir, archive string) (p Package, err error) {
-	return PackWithDecoder(ctx, dir, archive, nil)
-}
-
-func PackWithDecoder(ctx context.Context, dir, archive string, decoder MetadataDecoder) (p Package, err error) {
 	stage, err := os.MkdirTemp("", "cordis-pack-")
 	if err != nil {
 		return p, err
@@ -442,10 +431,8 @@ func PackWithDecoder(ctx context.Context, dir, archive string, decoder MetadataD
 	if err = copyDirectory(ctx, dir, stage, l); err != nil {
 		return p, err
 	}
-	if decoder == nil {
-		if err = stageAuthor(ctx, stage); err != nil {
-			return p, err
-		}
+	if err = stageAuthor(ctx, stage); err != nil {
+		return p, err
 	}
 	if err = os.Remove(filepath.Join(stage, SignatureFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return p, err
@@ -453,7 +440,7 @@ func PackWithDecoder(ctx context.Context, dir, archive string, decoder MetadataD
 	if err = generateIntegrity(ctx, stage, l); err != nil {
 		return p, err
 	}
-	p, _, _, err = inspect(ctx, stage, dir, true, l, decoder)
+	p, _, _, err = inspect(ctx, stage, dir, true, l)
 	if err != nil {
 		return p, err
 	}
@@ -466,10 +453,6 @@ func PackWithDecoder(ctx context.Context, dir, archive string, decoder MetadataD
 
 // Sign rewrites an existing archive atomically with an Ed25519 signature.
 func Sign(ctx context.Context, archive, keyID string, key ed25519.PrivateKey) (p Package, err error) {
-	return SignWithDecoder(ctx, archive, keyID, key, nil)
-}
-
-func SignWithDecoder(ctx context.Context, archive, keyID string, key ed25519.PrivateKey, decoder MetadataDecoder) (p Package, err error) {
 	if keyID == "" || len(key) != ed25519.PrivateKeySize {
 		return p, fmt.Errorf("invalid signing key")
 	}
@@ -482,7 +465,7 @@ func SignWithDecoder(ctx context.Context, archive, keyID string, key ed25519.Pri
 	if err = extractZIP(ctx, archive, stage, l); err != nil {
 		return p, err
 	}
-	p, input, _, err := inspect(ctx, stage, archive, false, l, decoder)
+	p, input, _, err := inspect(ctx, stage, archive, false, l)
 	if err != nil {
 		return p, err
 	}

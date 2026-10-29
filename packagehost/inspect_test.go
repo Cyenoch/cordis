@@ -56,7 +56,7 @@ func TestInspectRejectsIncompleteIntegrity(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "unlisted")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(dir, "plugin.wasm")); err != nil {
+	if err := os.Remove(filepath.Join(dir, "plugin")); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeZIP(ctx, dir, archive, DefaultLimits()); err != nil {
@@ -115,7 +115,7 @@ func TestStoreRejectsSigningKeyBindingAndConfigBeforeExecution(t *testing.T) {
 	if err = store.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	entry := contract.Entry{ID: "entry", Package: "demo", Definition: "main", Realm: "root", Enabled: true, Config: json.RawMessage(`{"count":"bad"}`)}
+	entry := contract.Entry{ID: "entry", Package: "demo", Definition: "main", Enabled: true, Config: json.RawMessage(`{"count":"bad"}`)}
 	if err = store.SaveEntry(ctx, entry); err == nil {
 		t.Fatal("invalid configuration accepted before startup")
 	}

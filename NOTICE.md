@@ -11,13 +11,12 @@
 
 | Module | 固定版本 | 许可证 |
 |---|---|---|
-| github.com/tetratelabs/wazero | v1.12.0 | Apache-2.0 |
 | golang.org/x/sys | v0.44.0 | BSD-3-Clause |
 | golang.org/x/text | v0.37.0 | BSD-3-Clause |
 | github.com/pelletier/go-toml/v2 | v2.2.4 | MIT |
 | go.yaml.in/yaml/v3 | v3.0.4 | MIT / Apache-2.0（按文件，见原始许可） |
 
-依赖许可证原文随发布产物包含，见 `licenses/`。没有引入 Vortex GPL 源码、MyGo 或 VortexGo 根 module。
+依赖许可证原文随发布产物包含，见 `licenses/`。
 
 仓库附带的 Agent skills 并非运行依赖：Go skills 来自 samber/cc-skills-golang，
 documentation-and-adrs 来自 addyosmani/agent-skills，许可证均为 MIT；完整来源声明、

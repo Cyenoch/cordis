@@ -7,14 +7,9 @@ import (
 	"github.com/Cyenoch/cordis/contract"
 )
 
-// ServeDefinitions lets one package artifact implement several independently
-// instantiated definitions. The host chooses one definition during initialization.
-func ServeDefinitions(ctx context.Context, definitions ...contract.Definition) error {
-	transport, err := stdioTransport()
-	if err != nil {
-		return err
-	}
-	return serveDefinitions(ctx, transport, definitions)
+// RunTransport serves a definition over an explicitly owned protocol stream.
+func RunTransport(ctx context.Context, definition contract.Definition, transport io.ReadWriteCloser) error {
+	return serveDefinitions(ctx, transport, []contract.Definition{definition})
 }
 
 func serveDefinitions(ctx context.Context, transport io.ReadWriteCloser, definitions []contract.Definition) error {

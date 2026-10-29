@@ -101,7 +101,7 @@ func TestBuiltinCallRejectsSuccessReturnedAfterCancellation(t *testing.T) {
 		}
 		done := make(chan result, 1)
 		go func() {
-			output, err := host.Call(ctx, "", required, json.RawMessage(`"late"`))
+			output, err := host.Call(ctx, required, json.RawMessage(`"late"`))
 			done <- result{output: output, err: err}
 		}()
 		<-entered
@@ -112,7 +112,7 @@ func TestBuiltinCallRejectsSuccessReturnedAfterCancellation(t *testing.T) {
 		if !errors.Is(got.err, context.Canceled) || len(got.output) != 0 {
 			t.Fatalf("canceled builtin call committed late success: output=%s err=%v", got.output, got.err)
 		}
-		output, err := host.Call(t.Context(), "", required, json.RawMessage(`"healthy"`))
+		output, err := host.Call(t.Context(), required, json.RawMessage(`"healthy"`))
 		if err != nil || string(output) != `{"success":true}` {
 			t.Fatalf("canceled call poisoned live builtin: output=%s err=%v", output, err)
 		}

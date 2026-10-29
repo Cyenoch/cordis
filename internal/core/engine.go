@@ -12,10 +12,6 @@ import (
 	"github.com/Cyenoch/cordis/contract"
 )
 
-type realm struct {
-	parent   string
-	isolated map[string]bool
-}
 type provider struct {
 	service contract.Service
 	handler contract.Handler
@@ -34,11 +30,9 @@ type revisionResult struct {
 	finished bool
 }
 
-// Hooks prepare external activation-owned records. Readers of those records must
-// gate visibility with IsActive; hooks alone cannot make separate registries atomic.
+// Hooks connects activation retirement to owned child registration cleanup.
 type Hooks struct {
-	BeforePublish func(contract.Identity) error
-	OnRetire      func(contract.Identity)
+	OnRetire func(contract.Identity)
 }
 
 // Engine owns the registry, dependency graph, and all instance transitions.
@@ -46,9 +40,8 @@ type Hooks struct {
 type Engine struct {
 	mu            sync.Mutex
 	configMu      sync.Mutex
-	realms        map[string]realm
 	instances     map[string]*instance
-	services      map[string]map[string]*provider
+	services      map[string]*provider
 	events        []*subscription
 	edges         map[*activation]map[*activation]int
 	instanceEdges map[*activation]map[*instance]int
@@ -61,20 +54,19 @@ type Engine struct {
 }
 
 type instance struct {
-	engine      *Engine
-	entry       contract.Entry
-	definition  contract.Definition
-	identity    contract.Identity
-	desired     uint64
-	applied     uint64
-	config      json.RawMessage
-	state       contract.State
-	failure     error
-	enabled     bool
-	removing    bool
-	supervising bool
-	activation  *activation
-	revisions   map[uint64]*revisionResult
+	engine     *Engine
+	entry      contract.Entry
+	definition contract.Definition
+	identity   contract.Identity
+	desired    uint64
+	applied    uint64
+	config     json.RawMessage
+	state      contract.State
+	failure    error
+	enabled    bool
+	removing   bool
+	activation *activation
+	pending    *revisionResult
 }
 
 type activation struct {
@@ -95,7 +87,6 @@ type activation struct {
 	retireWork     sync.WaitGroup
 	retireErr      error
 	startFinished  bool
-	prepareDone    chan struct{}
 	publishDone    chan struct{}
 	retireNotified chan struct{}
 	bindings       map[string]*provider
@@ -114,34 +105,9 @@ type activation struct {
 func New() *Engine { return NewWithHooks(Hooks{}) }
 
 func NewWithHooks(hooks Hooks) *Engine {
-	e := &Engine{realms: map[string]realm{"": {}}, instances: map[string]*instance{}, services: map[string]map[string]*provider{}, edges: map[*activation]map[*activation]int{}, instanceEdges: map[*activation]map[*instance]int{}, changed: make(chan struct{}), wake: make(chan struct{}, 1), done: make(chan struct{}), hooks: hooks}
+	e := &Engine{instances: map[string]*instance{}, services: map[string]*provider{}, edges: map[*activation]map[*activation]int{}, instanceEdges: map[*activation]map[*instance]int{}, changed: make(chan struct{}), wake: make(chan struct{}, 1), done: make(chan struct{}), hooks: hooks}
 	go e.coordinate()
 	return e
-}
-
-// ConfigureRealm creates an explicit service namespace. Isolated keys do not
-// inherit a provider from ancestors; other keys permit local overrides.
-func (e *Engine) ConfigureRealm(name, parent string, isolated []string) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.closed {
-		return contract.Fail(contract.NotReady, "engine is closed")
-	}
-	if name == "" {
-		return contract.Fail(contract.Conflict, "root realm already exists")
-	}
-	if _, ok := e.realms[name]; ok {
-		return contract.Fail(contract.Conflict, "realm already exists")
-	}
-	if _, ok := e.realms[parent]; !ok {
-		return contract.Fail(contract.Invalid, "unknown parent realm")
-	}
-	keys := make(map[string]bool, len(isolated))
-	for _, key := range isolated {
-		keys[key] = true
-	}
-	e.realms[name] = realm{parent: parent, isolated: keys}
-	return nil
 }
 
 func (e *Engine) Add(entry contract.Entry, definition contract.Definition, identity contract.Identity) (contract.Instance, error) {
@@ -194,7 +160,7 @@ func (e *Engine) add(entry contract.Entry, definition contract.Definition, ident
 		identity.Package = entry.Package
 	}
 	identity.Activation = ""
-	i := &instance{engine: e, entry: entry, definition: definition, identity: identity, desired: 1, config: config, state: contract.Waiting, enabled: entry.Enabled, revisions: map[uint64]*revisionResult{1: {done: make(chan struct{})}}}
+	i := &instance{engine: e, entry: entry, definition: definition, identity: identity, desired: 1, config: config, state: contract.Waiting, enabled: entry.Enabled, pending: &revisionResult{done: make(chan struct{})}}
 	if !entry.Enabled {
 		i.state = contract.Stopped
 	}
@@ -222,39 +188,20 @@ func validate(def contract.Definition, config json.RawMessage) error {
 	return nil
 }
 
-func (e *Engine) descendantLocked(child, parent string) bool {
-	for {
-		if child == parent {
-			return true
-		}
-		if child == "" {
-			return false
-		}
-		child = e.realms[child].parent
-	}
-}
-func (e *Engine) resolveLocked(namespace string, requirement contract.Requirement) *provider {
-	p := e.visibleProviderLocked(namespace, requirement.Key())
+func (e *Engine) resolveLocked(requirement contract.Requirement) *provider {
+	p := e.visibleProviderLocked(requirement.Key())
 	if p != nil && requirement.Accepts(p.service) {
 		return p
 	}
 	return nil
 }
 
-func (e *Engine) visibleProviderLocked(namespace, key string) *provider {
-	for {
-		if p := e.services[namespace][key]; p != nil {
-			if !p.owner.retiring {
-				return p
-			}
-			return nil
-		}
-		r := e.realms[namespace]
-		if namespace == "" || r.isolated[key] {
-			return nil
-		}
-		namespace = r.parent
+func (e *Engine) visibleProviderLocked(key string) *provider {
+	p := e.services[key]
+	if p != nil && !p.owner.retiring {
+		return p
 	}
+	return nil
 }
 func (e *Engine) signalLocked() {
 	close(e.changed)
@@ -283,7 +230,7 @@ func (e *Engine) coordinate() {
 			bindings := map[string]*provider{}
 			ready := true
 			for _, req := range i.definition.Requires {
-				p := e.resolveLocked(i.entry.Realm, req)
+				p := e.resolveLocked(req)
 				if p == nil || !p.owner.ready {
 					ready = false
 					break
@@ -334,18 +281,6 @@ func (e *Engine) start(a *activation) {
 	<-a.gate
 	e.mu.Lock()
 	a.startFinished = true
-	retiring := a.retiring
-	if !retiring {
-		a.prepareDone = make(chan struct{})
-	}
-	e.mu.Unlock()
-	if !retiring && err == nil && e.hooks.BeforePublish != nil {
-		err = invokePublish(e.hooks.BeforePublish, a.identity)
-	}
-	if !retiring {
-		close(a.prepareDone)
-	}
-	e.mu.Lock()
 	a.startErr = errors.Join(a.forcedErr, err)
 	i := a.instance
 	if a.retiring {
@@ -364,7 +299,7 @@ func (e *Engine) start(a *activation) {
 	}
 	if err == nil {
 		for key := range a.provided {
-			if p := e.services[i.entry.Realm][key]; p != nil && p.owner != a {
+			if p := e.services[key]; p != nil && p.owner != a {
 				err = contract.Fail(contract.Conflict, "duplicate provider: "+key)
 				break
 			}
@@ -379,11 +314,8 @@ func (e *Engine) start(a *activation) {
 	} else if a.revision != i.desired || !i.enabled || e.closed {
 		e.retireLocked(a, contract.Waiting)
 	} else {
-		if e.services[i.entry.Realm] == nil {
-			e.services[i.entry.Realm] = map[string]*provider{}
-		}
 		for key, p := range a.provided {
-			e.services[i.entry.Realm][key] = p
+			e.services[key] = p
 		}
 		e.events = append(e.events, a.subscriptions...)
 		slices.SortFunc(e.events, func(a, b *subscription) int {
@@ -431,7 +363,7 @@ func (e *Engine) rebindLocked() {
 			continue
 		}
 		for _, req := range consumer.definition.Requires {
-			p := e.visibleProviderLocked(consumer.entry.Realm, req.Key())
+			p := e.visibleProviderLocked(req.Key())
 			if p != nil && !p.owner.ready {
 				continue
 			}
@@ -449,8 +381,7 @@ func (e *Engine) rebindLocked() {
 func (e *Engine) checkPublicationCycleLocked(a *activation) error {
 	// Resolve against the proposed snapshot before publishing it. The graph
 	// includes ownership, so a parent's new binding cannot depend on its child.
-	namespace := a.instance.entry.Realm
-	previous := e.services[namespace]
+	previous := e.services
 	proposed := make(map[string]*provider, len(previous)+len(a.provided))
 	for key, p := range previous {
 		proposed[key] = p
@@ -458,8 +389,8 @@ func (e *Engine) checkPublicationCycleLocked(a *activation) error {
 	for key, p := range a.provided {
 		proposed[key] = p
 	}
-	e.services[namespace] = proposed
-	defer func() { e.services[namespace] = previous }()
+	e.services = proposed
+	defer func() { e.services = previous }()
 	visiting := map[*instance]uint8{}
 	var visit func(*instance) bool
 	visit = func(i *instance) bool {
@@ -474,7 +405,7 @@ func (e *Engine) checkPublicationCycleLocked(a *activation) error {
 			return true
 		}
 		for _, req := range i.definition.Requires {
-			if p := e.resolveLocked(i.entry.Realm, req); p != nil && visit(p.owner.instance) {
+			if p := e.resolveLocked(req); p != nil && visit(p.owner.instance) {
 				return true
 			}
 		}
@@ -532,7 +463,6 @@ func (e *Engine) dispose(a *activation, dependents []*activation) {
 	// synchronously wait for children that need this provider for cleanup.
 	close(a.retireNotified)
 	e.mu.Lock()
-	prepared := a.prepareDone
 	var notifications []<-chan struct{}
 	for _, p := range a.bindings {
 		if p.owner.retiring {
@@ -543,9 +473,6 @@ func (e *Engine) dispose(a *activation, dependents []*activation) {
 		notifications = append(notifications, parent.activation.retireNotified)
 	}
 	e.mu.Unlock()
-	if prepared != nil {
-		<-prepared
-	}
 	for _, notified := range notifications {
 		<-notified
 	}
@@ -584,8 +511,8 @@ func (e *Engine) dispose(a *activation, dependents []*activation) {
 		errs = append(errs, a.startErr)
 	}
 	for key, p := range a.provided {
-		if e.services[a.instance.entry.Realm][key] == p {
-			delete(e.services[a.instance.entry.Realm], key)
+		if e.services[key] == p {
+			delete(e.services, key)
 		}
 	}
 	e.events = slices.DeleteFunc(e.events, func(s *subscription) bool { return s.owner == a })
@@ -621,11 +548,7 @@ func (e *Engine) Close(ctx context.Context) error {
 	e.closed = true
 	for _, i := range e.instances {
 		i.enabled = false
-		for revision, pending := range i.revisions {
-			if !pending.finished {
-				i.finishRevisionLocked(revision, contract.UpdateResult{Revision: revision}, contract.Fail(contract.Canceled, "engine closed"))
-			}
-		}
+		i.finishRevisionLocked(i.desired, contract.UpdateResult{Revision: i.desired}, contract.Fail(contract.Canceled, "engine closed"))
 		if i.activation != nil {
 			e.retireLocked(i.activation, contract.Stopped)
 		} else {
@@ -649,11 +572,6 @@ func (e *Engine) Close(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
-}
-
-func invokePublish(hook func(contract.Identity) error, identity contract.Identity) (err error) {
-	defer recoverCallback("publication hook", &err)
-	return hook(identity)
 }
 
 func (e *Engine) IsActive(identity contract.Identity) bool {
@@ -740,7 +658,7 @@ func (e *Engine) Resume(entryID string) (contract.Instance, error) {
 	i.enabled = true
 	i.state = contract.Waiting
 	i.failure = nil
-	i.revisions[i.desired] = &revisionResult{done: make(chan struct{})}
+	i.pending = &revisionResult{done: make(chan struct{})}
 	e.signalLocked()
 	return i, nil
 }
@@ -766,27 +684,20 @@ func (e *Engine) detectWaitingCyclesLocked() {
 			}
 		}
 		for _, req := range i.definition.Requires {
-			if e.resolveLocked(i.entry.Realm, req) != nil {
+			if e.resolveLocked(req) != nil {
 				continue
 			}
 			var candidates []*instance
-			namespace := i.entry.Realm
-			for {
-				for _, p := range e.instances {
-					if !p.enabled || p.state == contract.Failed || p.entry.Realm != namespace {
-						continue
-					}
-					for _, service := range p.definition.Provides {
-						if req.Accepts(service) {
-							candidates = append(candidates, p)
-							break
-						}
+			for _, p := range e.instances {
+				if !p.enabled || p.state == contract.Failed {
+					continue
+				}
+				for _, service := range p.definition.Provides {
+					if req.Accepts(service) {
+						candidates = append(candidates, p)
+						break
 					}
 				}
-				if len(candidates) > 0 || namespace == "" || e.realms[namespace].isolated[req.Key()] {
-					break
-				}
-				namespace = e.realms[namespace].parent
 			}
 			if len(candidates) == 1 && candidates[0].activation == nil {
 				graph[i] = append(graph[i], candidates[0])

@@ -107,7 +107,7 @@ func TestProviderRetirementCancelsBeforeConsumerCleanup(t *testing.T) {
 			t.Fatal(err)
 		}
 		finished := make(chan error, 1)
-		go func() { _, err := e.Call(t.Context(), "", requirement, json.RawMessage(`"work"`)); finished <- err }()
+		go func() { _, err := e.Call(t.Context(), requirement, json.RawMessage(`"work"`)); finished <- err }()
 		<-entered
 		if err := p.Stop(t.Context()); err != nil {
 			t.Fatal(err)
@@ -120,7 +120,7 @@ func TestProviderRetirementCancelsBeforeConsumerCleanup(t *testing.T) {
 		}
 	})
 }
-func TestFailureAggregatesCleanupAndExplicitRetry(t *testing.T) {
+func TestFailureAggregatesCleanupAndExplicitUpdate(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := core.New()
 		startErr, cleanupErr := errors.New("start failed"), errors.New("cleanup failed")
@@ -150,7 +150,7 @@ func TestFailureAggregatesCleanupAndExplicitRetry(t *testing.T) {
 		if attempts.Load() != 1 {
 			t.Fatal("failed instance automatically retried")
 		}
-		if err := i.Retry(t.Context()); err != nil {
+		if _, err := i.Update(t.Context(), json.RawMessage(`{}`)); err != nil {
 			t.Fatal(err)
 		}
 		closeEngine(t, e)
@@ -211,35 +211,10 @@ func TestConfigurationSupersedesLateStartAndRejectsInvalid(t *testing.T) {
 		}
 	})
 }
-func TestRealmIsolationAndParentOwnership(t *testing.T) {
+func TestParentOwnsWaitingChild(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := core.New()
 		defer closeEngine(t, e)
-		for _, realm := range []string{"tenant-a", "tenant-b"} {
-			if err := e.ConfigureRealm(realm, "", []string{service.Key()}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		root := add(t, e, "root", provider(`0`))
-		if err := root.Wait(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := e.Call(t.Context(), "tenant-a", requirement, nil); err == nil {
-			t.Fatal("isolated realm inherited root")
-		}
-		for n, realm := range []string{"tenant-a", "tenant-b"} {
-			i, err := e.Add(contract.Entry{ID: realm, Realm: realm, Enabled: true}, provider(fmt.Sprint(n+1)), contract.Identity{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := i.Wait(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-		}
-		raw, err := e.Call(t.Context(), "tenant-b", requirement, nil)
-		if err != nil || string(raw) != `2` {
-			t.Fatalf("realm call: %s %v", raw, err)
-		}
 		parent := add(t, e, "parent", contract.Definition{Start: func(context.Context, contract.Scope) error { return nil }})
 		if err := parent.Wait(t.Context()); err != nil {
 			t.Fatal(err)
@@ -352,44 +327,6 @@ func TestBindingReplacementCannotCommitOldInitialization(t *testing.T) {
 		}
 	})
 }
-func TestPublicationHooksShareActiveGate(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var e *core.Engine
-		var mu sync.Mutex
-		var records []contract.Identity
-		e = core.NewWithHooks(core.Hooks{BeforePublish: func(identity contract.Identity) error {
-			if e.IsActive(identity) {
-				return errors.New("premature active")
-			}
-			mu.Lock()
-			records = append(records, identity)
-			mu.Unlock()
-			return nil
-		}, OnRetire: func(identity contract.Identity) {
-			if e.IsActive(identity) {
-				t.Error("retiring identity active")
-			}
-		}})
-		i := add(t, e, "hook", contract.Definition{Start: func(context.Context, contract.Scope) error { return nil }})
-		if err := i.Wait(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		mu.Lock()
-		identity := records[0]
-		mu.Unlock()
-		if !e.IsActive(identity) {
-			t.Fatal("published record hidden")
-		}
-		if err := i.Stop(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		if e.IsActive(identity) {
-			t.Fatal("retired record visible")
-		}
-		closeEngine(t, e)
-	})
-}
-
 func TestTransitiveCleanupAndIndependentInstances(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := core.New()
@@ -527,14 +464,11 @@ func TestBlockedCleanupsDoNotDelayUnrelatedStop(t *testing.T) {
 }
 
 func TestCallbackPanicsRetainErrorIdentity(t *testing.T) {
-	for _, stage := range []string{"start", "cleanup", "service", "before-publish", "on-retire"} {
+	for _, stage := range []string{"start", "cleanup", "service", "on-retire"} {
 		t.Run(stage, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				cause := contract.Fail(contract.Denied, "callback failure")
 				hooks := core.Hooks{}
-				if stage == "before-publish" {
-					hooks.BeforePublish = func(contract.Identity) error { panic(cause) }
-				}
 				if stage == "on-retire" {
 					hooks.OnRetire = func(contract.Identity) { panic(cause) }
 				}
@@ -556,12 +490,12 @@ func TestCallbackPanicsRetainErrorIdentity(t *testing.T) {
 					return s.Provide(service, func(context.Context, json.RawMessage) (json.RawMessage, error) { panic(cause) })
 				}})
 				err := i.Wait(t.Context())
-				if stage != "start" && stage != "before-publish" {
+				if stage != "start" {
 					if err != nil {
 						t.Fatal(err)
 					}
 					if stage == "service" {
-						_, err = e.Call(t.Context(), "", requirement, json.RawMessage(`{}`))
+						_, err = e.Call(t.Context(), requirement, json.RawMessage(`{}`))
 					} else {
 						err = i.Stop(t.Context())
 					}
@@ -573,24 +507,6 @@ func TestCallbackPanicsRetainErrorIdentity(t *testing.T) {
 			})
 		})
 	}
-}
-
-func TestFailedPublicationRollsBackPreparedOwnership(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		failure := errors.New("publish failed")
-		var retired atomic.Int32
-		e := core.NewWithHooks(core.Hooks{BeforePublish: func(contract.Identity) error { return failure }, OnRetire: func(contract.Identity) { retired.Add(1) }})
-		i := add(t, e, "failed-publish", definitionNoop())
-		if err := i.Wait(t.Context()); !errors.Is(err, failure) {
-			t.Fatalf("publication error: %v", err)
-		}
-		if retired.Load() != 1 {
-			t.Fatal("prepared external ownership not revoked")
-		}
-		if err := e.Close(t.Context()); !errors.Is(err, failure) {
-			t.Fatalf("close error: %v", err)
-		}
-	})
 }
 
 func definitionNoop() contract.Definition {

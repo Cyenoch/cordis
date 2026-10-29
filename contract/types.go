@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"time"
 )
 
@@ -71,7 +70,7 @@ func (p Protocol) Negotiate(other Protocol) (uint32, error) {
 	for _, features := range [][]string{p.RequiredFeatures, other.RequiredFeatures} {
 		for _, feature := range features {
 			switch feature {
-			case "cancel", "parent", "tasks", "events", "children":
+			case "cancel", "parent", "events", "children":
 			default:
 				return 0, Fail(Incompatible, "unsupported required session feature: "+feature)
 			}
@@ -129,7 +128,6 @@ type Artifact struct {
 
 type RuntimeSpec struct {
 	Kind      string     `json:"kind"`
-	Entry     string     `json:"entry,omitempty"`
 	Artifacts []Artifact `json:"artifacts,omitempty"`
 }
 
@@ -138,17 +136,6 @@ type DefinitionSpec struct {
 	ConfigSchema json.RawMessage `json:"configSchema"`
 	Requires     []Consumer      `json:"requires"`
 	Provides     []Service       `json:"provides"`
-}
-
-type Capability struct {
-	ID    string          `json:"id"`
-	Scope json.RawMessage `json:"scope"`
-}
-
-type Contribution struct {
-	Slot string          `json:"slot"`
-	ID   string          `json:"id"`
-	Data json.RawMessage `json:"data"`
 }
 
 type Manifest struct {
@@ -162,12 +149,6 @@ type Manifest struct {
 	Runtime              RuntimeSpec      `json:"runtime"`
 	Dependencies         []Dependency     `json:"dependencies"`
 	OptionalDependencies []Dependency     `json:"optionalDependencies"`
-	Capabilities         []Capability     `json:"capabilities"`
-	Contributions        []Contribution   `json:"contributions"`
-	DataVersion          uint32           `json:"dataVersion"`
-	// HostMetadata retains the original signed host manifest; it is decoded only
-	// by that host's metadata/session adapter, never interpreted by the core.
-	HostMetadata json.RawMessage `json:"hostMetadata,omitempty"`
 }
 
 type State string
@@ -254,19 +235,18 @@ type Scope interface {
 }
 
 type Definition struct {
-	ID           string
-	Requires     []Requirement
-	Provides     []Service
-	Capabilities []Capability
-	Validate     func(json.RawMessage) error
-	Start        func(context.Context, Scope) error
+	Children []Definition
+	ID       string
+	Requires []Requirement
+	Provides []Service
+	Validate func(json.RawMessage) error
+	Start    func(context.Context, Scope) error
 }
 
 type Entry struct {
 	ID         string          `json:"id"`
 	Package    string          `json:"package"`
 	Definition string          `json:"definition"`
-	Realm      string          `json:"realm"`
 	Parent     string          `json:"parent,omitempty"`
 	Config     json.RawMessage `json:"config"`
 	Enabled    bool            `json:"enabled"`
@@ -287,12 +267,11 @@ type Initialize struct {
 }
 
 type Registration struct {
-	FrameBytes    int            `json:"frameBytes"`
-	Minor         uint32         `json:"minor"`
-	Features      []string       `json:"features"`
-	Services      []Service      `json:"services"`
-	Subscriptions []string       `json:"subscriptions"`
-	Contributions []Contribution `json:"contributions"`
+	FrameBytes    int       `json:"frameBytes"`
+	Minor         uint32    `json:"minor"`
+	Features      []string  `json:"features"`
+	Services      []Service `json:"services"`
+	Subscriptions []string  `json:"subscriptions"`
 }
 
 type Session interface {
@@ -303,19 +282,11 @@ type Session interface {
 }
 
 type SessionHandler func(context.Context, string, json.RawMessage) (json.RawMessage, error)
-type SessionProtocol string
 
 const (
-	GenericSession SessionProtocol = "generic"
-	CustomSession  SessionProtocol = "custom"
-	MinFrameBytes                  = 4096
-	MaxFrameBytes                  = 1 << 20
+	MinFrameBytes = 4096
+	MaxFrameBytes = 1 << 20
 )
-
-type SessionFactory struct {
-	Protocol SessionProtocol
-	Open     func(io.ReadWriteCloser, Identity, SessionHandler, int) (Session, error)
-}
 
 func ValidateFrameBytes(value int) error {
 	if value < MinFrameBytes || value > MaxFrameBytes {
@@ -324,36 +295,14 @@ func ValidateFrameBytes(value int) error {
 	return nil
 }
 
-func (f *SessionFactory) Validate(frameBytes int) error {
-	if f == nil {
-		return ValidateFrameBytes(frameBytes)
-	}
-	if f.Open == nil {
-		return Fail(Invalid, "session factory requires an opener")
-	}
-	switch f.Protocol {
-	case GenericSession:
-		return ValidateFrameBytes(frameBytes)
-	case CustomSession:
-		return nil
-	default:
-		return Fail(Invalid, "unknown session factory protocol")
-	}
-}
-
-func (f *SessionFactory) IsCustom() bool { return f != nil && f.Protocol == CustomSession }
-
 type Launch struct {
-	Identity       Identity
-	Manifest       Manifest
-	Directory      string
-	Artifact       string
-	Worker         string
-	Handle         SessionHandler
-	SessionFactory *SessionFactory
-	FrameBytes     int
-	Grace          time.Duration
-	Stderr         func([]byte) error
+	Identity   Identity
+	Directory  string
+	Artifact   string
+	Handle     SessionHandler
+	FrameBytes int
+	Grace      time.Duration
+	Stderr     func([]byte) error
 }
 
 type Runtime interface {

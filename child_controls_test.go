@@ -25,13 +25,10 @@ func TestControlChildUpdateWaitGraphSurvivesRestart(t *testing.T) {
 	}()
 	svc := contract.Service{Name: "parent.api", Major: 1}
 	var child contract.ChildInstance
-	if err := h.RegisterDefinition(t.Context(), "builtin", contract.Definition{ID: "child", Requires: []contract.Requirement{{Name: svc.Name, Major: 1}}, Start: func(ctx context.Context, s contract.Scope) error {
+	parent, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "parent"}, contract.Definition{Children: []contract.Definition{{ID: "child", Requires: []contract.Requirement{{Name: svc.Name, Major: 1}}, Start: func(ctx context.Context, s contract.Scope) error {
 		_, err := s.Call(ctx, contract.Requirement{Name: svc.Name, Major: 1}, json.RawMessage(`"initialize"`))
 		return err
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	parent, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "parent"}, contract.Definition{Provides: []contract.Service{svc}, Start: func(ctx context.Context, s contract.Scope) error {
+	}}}, Provides: []contract.Service{svc}, Start: func(ctx context.Context, s contract.Scope) error {
 		var err error
 		child, err = contract.CreateChild(ctx, s, contract.Child{ID: "child", Definition: "child"})
 		if err != nil {
@@ -56,7 +53,7 @@ func TestControlChildUpdateWaitGraphSurvivesRestart(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
-	_, err = h.Call(ctx, "", contract.Requirement{Name: svc.Name, Major: 1}, json.RawMessage(`"update"`))
+	_, err = h.Call(ctx, contract.Requirement{Name: svc.Name, Major: 1}, json.RawMessage(`"update"`))
 	var coded *contract.Error
 	if !errors.As(err, &coded) || coded.Code != contract.Reentrant {
 		t.Fatalf("restart wait cycle was not rejected: %v", err)
@@ -70,10 +67,7 @@ func TestControlInitializeCanStopUnpublishedChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer h.Close(context.Background())
-	if err := h.RegisterDefinition(t.Context(), "builtin", contract.Definition{ID: "child", Start: func(context.Context, contract.Scope) error { return nil }}); err != nil {
-		t.Fatal(err)
-	}
-	parent, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "parent"}, contract.Definition{Start: func(ctx context.Context, s contract.Scope) error {
+	parent, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "parent"}, contract.Definition{Children: []contract.Definition{{ID: "child", Start: func(context.Context, contract.Scope) error { return nil }}}, Start: func(ctx context.Context, s contract.Scope) error {
 		child, err := contract.CreateChild(ctx, s, contract.Child{ID: "child", Definition: "child"})
 		if err != nil {
 			return err

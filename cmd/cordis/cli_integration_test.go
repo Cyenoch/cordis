@@ -175,7 +175,7 @@ func TestCLIProcesses(t *testing.T) {
 	})
 	t.Run("missing provider has finite startup and cancellation", func(t *testing.T) {
 		archive := missingProviderArchive(t)
-		// The default must cover a cold WASM compile; waiting it out here adds nothing.
+		// The default must cover a cold native startup; waiting it out here adds nothing.
 		if code, out, _ := run(t, "", "run", "-h"); code != 0 || !regexp.MustCompile(`-startup-timeout duration\s+.*\(default 30s\)`).MatchString(out) {
 			t.Fatalf("default startup timeout: code=%d out=%q", code, out)
 		}
@@ -237,7 +237,7 @@ func TestCLIProcesses(t *testing.T) {
 	})
 	t.Run("init build test and pack in independent module", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "plugin")
-		if code, _, stderr := run(t, "", "init", "-module", "example.net/plugin", "-sdk-version", "v0.0.0", "-runtime", "wasm", dir); code != 0 {
+		if code, _, stderr := run(t, "", "init", "-module", "example.net/plugin", "-sdk-version", "v0.0.0", dir); code != 0 {
 			t.Fatalf("init: %d %s", code, stderr)
 		}
 		repo, err := filepath.Abs("../..")
@@ -264,7 +264,7 @@ func TestCLIProcesses(t *testing.T) {
 			}
 		}
 		goCommand("mod", "tidy")
-		code, out, stderr := run(t, "", "build", "-go-package", ".", "-goos", "wasip1", "-goarch", "wasm", dir)
+		code, out, stderr := run(t, "", "build", "-go-package", ".", "-goos", runtime.GOOS, "-goarch", runtime.GOARCH, dir)
 		if code != 0 || stderr != "" {
 			t.Fatalf("build: %d %s", code, stderr)
 		}

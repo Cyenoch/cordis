@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-用户委托选择现代、稳定的框架，部署为 GitHub Pages 并自动发布。采用 Astro 与 Starlight，版本和实施决策以 `package.json` 与 `openspec/changes/archive/2026-10-28-build-go-plugin-framework/` 为准。
+用户委托选择现代、稳定的框架，部署为 GitHub Pages 并自动发布。采用 Astro 与 Starlight，版本和实施决策以 `package.json` 与 `openspec/changes/archive/2026-10-29-simplify-native-composition/` 为准。
 
 ## Users
 
@@ -22,7 +22,7 @@ web
 
 - 纯静态站点、中文本地搜索、代码高亮与复制、移动导航、浅色与深色主题。
 - Cordis 的 Go module 为 `github.com/Cyenoch/cordis`，MIT；原生插件不是权限沙箱，资源清理不是业务回滚。
-- 保留已有 v1 schema、签名字节、示例和并行工作；网站不引入运行时后端或领域宿主依赖。
+- 项目未发布，公开契约与示例直接同步修改，不保留兼容层；网站不引入运行时后端或领域宿主依赖。
 
 ## Brand Commitments
 

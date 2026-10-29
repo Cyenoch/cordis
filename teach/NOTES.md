@@ -16,7 +16,7 @@
 
 ## 待办 / 候选后续课程
 
-- 宿主能力边界：`Authorize` + `Broker.Register` 的 scope 校验怎么写才算真校验（当前只讲了签名）。
-- 更新与收敛：`Instance.Update` 的 Superseded、失败后 `Retry`、`Supervise` 的有限预算。
+- 应用服务边界：普通服务如何表达应用自己的策略。
+- 更新与收敛：`Instance.Update` 的 Superseded、失败后显式再次 Update。
 - 信任与签名：`keygen → pack → sign → TrustPolicy.Keys` 与吊销语义。
-- WASM 与 native 的边界差异（权限模型，不是性能）。
+- native 的权限模型与进程回收边界。

@@ -27,8 +27,6 @@
 <tr><td>Definition</td><td><code>contract.Definition</code></td><td>包内一个可独立实例化的启动单元（ID + Requires + Provides + Start）；一个产物可含多个。</td></tr>
 <tr><td>Service</td><td><code>contract.Service</code></td><td>provider 发布的服务声明：名字 + major（+ minor）。绑定键是 <code>name@major</code>。</td></tr>
 <tr><td>Requirement</td><td><code>contract.Requirement</code></td><td>consumer 的依赖声明：名字 + major + minor 闭区间 <code>[MinMinor, MaxMinor]</code>。</td></tr>
-<tr><td>Capability</td><td><code>contract.Capability</code></td><td>宿主能力（宿主实现、插件调用）；manifest 声明，宿主 <code>Authorize</code> 授权，<code>Broker</code> 处理。</td></tr>
-<tr><td>Realm</td><td><code>Host.ConfigureRealm</code></td><td>可见性作用域：服务沿 realm 向后代可见；隔离键不继承父 realm。</td></tr>
 <tr><td>WaitingFor</td><td><code>contract.Status.WaitingFor</code></td><td>实例没到 active 的原因列表，元素是 <code>name@major</code> 或 <code>parent:&lt;id&gt;</code>。</td></tr>
 <tr><td>Diagnostic</td><td><code>contract.Status.Diagnostics</code></td><td>非致命问题（可选包缺失、版本不兼容）；不阻止启动，但要能被看到。</td></tr>
 <tr><td>Preflight</td><td><code>Store.Preflight</code></td><td>启用前的包层检查：必需依赖是否已被选择、版本区间、依赖环；可选依赖只产诊断。</td></tr>

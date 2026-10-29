@@ -22,7 +22,7 @@ func TestSDKUsesHostBudgetForResultsAndErrors(t *testing.T) {
 			count := 0
 			service := contract.Service{Name: "budget", Major: 1}
 			go func() {
-				done <- sdk.ServeTransport(t.Context(), contract.Definition{ID: "budget", Start: func(_ context.Context, scope contract.Scope) error {
+				done <- sdk.RunTransport(t.Context(), contract.Definition{ID: "budget", Start: func(_ context.Context, scope contract.Scope) error {
 					return scope.Provide(service, func(_ context.Context, input json.RawMessage) (json.RawMessage, error) {
 						switch string(input) {
 						case `"large"`:

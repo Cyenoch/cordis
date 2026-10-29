@@ -20,15 +20,11 @@ func initCommand(flags *flag.FlagSet, parse func() (bool, error), out io.Writer)
 	sdkVersion := flags.String("sdk-version", "", "Cordis module version (default: actual CLI dependency version)")
 	id := flags.String("id", "example.plugin", "plugin package ID")
 	publisher := flags.String("publisher", "example", "publisher identity")
-	kind := flags.String("runtime", "native", "artifact runtime: native or wasm; grants no execution permission")
 	if done, err := parse(); done {
 		return err
 	}
 	if flags.NArg() != 1 || *module == "" || strings.ContainsAny(*module, " \t\r\n\\\"") || strings.HasPrefix(*module, "-") {
 		return &usageError{message: commandUsage["init"]}
-	}
-	if *kind != "native" && *kind != "wasm" {
-		return &usageError{message: "init -runtime must be native or wasm"}
 	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -51,9 +47,6 @@ func initCommand(flags *flag.FlagSet, parse func() (bool, error), out io.Writer)
 		artifact += ".exe"
 	}
 	runtimeSource := fmt.Sprintf("[runtime]\nkind = \"native\"\n\n[[runtime.artifacts]]\nos = %q\narch = %q\npath = %q\n", runtime.GOOS, runtime.GOARCH, artifact)
-	if *kind == "wasm" {
-		runtimeSource = "[runtime]\nkind = \"wasm\"\nentry = \"plugin.wasm\"\n"
-	}
 	manifest := "id = " + strconv.Quote(*id) + "\nversion = \"0.1.0\"\npublisher = " + strconv.Quote(*publisher) + "\n\n" + runtimeSource + "\n[[contract.definitions]]\nid = \"main\"\n"
 	files := []struct{ name, content string }{
 		{"plugin.toml", manifest},
@@ -101,6 +94,8 @@ const scaffoldMain = `package main
 
 import (
 	"context"
+"fmt"
+"os"
 
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/sdk"
@@ -111,7 +106,10 @@ func start(ctx context.Context, scope contract.Scope, config MainConfig) error {
 }
 
 func main() {
-	sdk.Main(NewMainDefinition(start))
+	if err := sdk.Run(context.Background(), NewMainDefinition(start)); err != nil {
+ fmt.Fprintln(os.Stderr, err)
+ os.Exit(1)
+ }
 }
 `
 

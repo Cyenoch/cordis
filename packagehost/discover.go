@@ -24,10 +24,10 @@ type Candidate struct {
 // Discover checks every source in input order. Source failures stay on the
 // candidate; cancellation returns the partial results and the context error.
 func Discover(ctx context.Context, sources []Source) ([]Candidate, error) {
-	return discover(ctx, sources, DefaultLimits(), nil)
+	return discover(ctx, sources, DefaultLimits())
 }
 
-// Discover uses the Store's limits and metadata decoder, without changing it or
+// Discover uses the Store's limits, without changing it or
 // authorizing any candidate. Trust must still pass at Install and Snapshot.
 func (s *Store) Discover(ctx context.Context, sources []Source) ([]Candidate, error) {
 	s.mu.Lock()
@@ -35,12 +35,12 @@ func (s *Store) Discover(ctx context.Context, sources []Source) ([]Candidate, er
 		s.mu.Unlock()
 		return nil, err
 	}
-	limits, decoder := s.limits, s.decoder
+	limits := s.limits
 	s.mu.Unlock()
-	return discover(ctx, sources, limits, decoder)
+	return discover(ctx, sources, limits)
 }
 
-func discover(ctx context.Context, sources []Source, limits Limits, decoder MetadataDecoder) ([]Candidate, error) {
+func discover(ctx context.Context, sources []Source, limits Limits) ([]Candidate, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func discover(ctx context.Context, sources []Source, limits Limits, decoder Meta
 		if err := ctx.Err(); err != nil {
 			return results, err
 		}
-		p, err := inspectSource(ctx, source, limits, decoder)
+		p, err := inspectSource(ctx, source, limits)
 		results = append(results, Candidate{Package: p, Source: source, Err: err})
 		if canceled := ctx.Err(); canceled != nil {
 			return results, canceled
@@ -85,7 +85,7 @@ func discover(ctx context.Context, sources []Source, limits Limits, decoder Meta
 	return results, nil
 }
 
-func inspectSource(ctx context.Context, source Source, limits Limits, decoder MetadataDecoder) (p Package, err error) {
+func inspectSource(ctx context.Context, source Source, limits Limits) (p Package, err error) {
 	dir, err := os.MkdirTemp("", "cordis-discover-")
 	if err != nil {
 		return p, err
@@ -99,7 +99,7 @@ func inspectSource(ctx context.Context, source Source, limits Limits, decoder Me
 	if err != nil {
 		return p, err
 	}
-	p, _, _, err = inspect(ctx, dir, source.Path, source.Directory, limits, decoder)
+	p, _, _, err = inspect(ctx, dir, source.Path, source.Directory, limits)
 	p.Directory = ""
 	return p, err
 }

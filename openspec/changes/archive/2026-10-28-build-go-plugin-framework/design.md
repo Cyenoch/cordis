@@ -1,13 +1,15 @@
 # Design
 
+> 历史记录：外部宿主专名与路径已匿名化，原始内容可从 Git 查看。本记录不定义当前能力。
+
 ## Context
 
 动机与兼容边界见 [proposal.md](proposal.md)，行为契约见 `specs/` 的五项 capability。本文件同时记录既有设计与新增待实现决策，不以文档存在表示功能已落地；实际执行记录、平台限制和任务状态见 [tasks.md](tasks.md)。第 15 节为本轮开发体验规划。
 
 现有事实：
 
-- 框架最初暂驻 VortexGo 的嵌套 module。2026-10-27 用户确认迁至独立 Cordis 仓库 `github.com/Cyenoch/cordis` 并公开发布，MIT 不变；不为本主题另建镜像设计文档。
-- VortexGo 的插件契约由相邻 `define-vortexgo-plugin-platform` change 拥有，要求 WASM 独立 worker、NDJSON、activation 撤销、宿主能力代理与声明式 UI。通用框架不能反向改写这些契约。
+- 框架最初暂驻 外部宿主 的嵌套 module。2026-10-27 用户确认迁至独立 Cordis 仓库 `github.com/Cyenoch/cordis` 并公开发布，MIT 不变；不为本主题另建镜像设计文档。
+- 外部宿主 的插件契约由相邻 `[外部宿主插件规格]` change 拥有，要求 WASM 独立 worker、NDJSON、activation 撤销、宿主能力代理与声明式 UI。通用框架不能反向改写这些契约。
 - 参考源码固定于 `third_party/cordis` 提交 `35fdc969e4b6c48c48ed44717c7a018324e4dd88`，不是运行时依赖。以下源码事实均指该提交：
 
 | 源码事实 | 证据：仓库相对路径 |
@@ -40,15 +42,15 @@
 
 ### 1. 独立仓库与单一规划源
 
-2026-10-27 用户确认将框架整体迁至独立仓库 `github.com/Cyenoch/cordis`，本地开发目录为 VortexGo 相邻的 `../cordis`，采用 MIT 并公开发布。此决定取代最初暂驻嵌套 module、暂不发布的决定。
+2026-10-27 用户确认将框架整体迁至独立仓库 `github.com/Cyenoch/cordis`，本地开发目录为 外部宿主 相邻的 `../cordis`，采用 MIT 并公开发布。此决定取代最初暂驻嵌套 module、暂不发布的决定。
 
-本 change 与参考源码随代码整体迁移，是唯一规划源。通用代码、SDK、工具、作者文档和测试无需检出 VortexGo；宿主专属 Adapter、原始 ABI fixture 和 smoke 由 VortexGo 的 `pluginapi/adapter/`、`internal/plugintest/` 和 `conformance/` 拥有。框架不导入 VortexGo module，也不存放其领域 codec 或快照。
+本 change 与参考源码随代码整体迁移，是唯一规划源。通用代码、SDK、工具、作者文档和测试无需检出 外部宿主；宿主专属 Adapter、原始 ABI fixture 和 smoke 由 外部宿主 的 `pluginapi/adapter/`、`internal/plugintest/` 和 `conformance/` 拥有。框架不导入 外部宿主 module，也不存放其领域 codec 或快照。
 
-Integrator 独占 `go.mod`、公开契约、schema 与 OpenSpec。共享 Go/OpenSpec skills 复制并保留来源与许可证，数据库、MyGo 和游戏材料留在宿主。VortexGo 消费固定公开版本；本地联调可显式使用临时 workspace，不将相邻目录写成发布依赖。独立作者示例保留指向当前 checkout 的局部 replace，以验证正在修改的 SDK；这不是库发布依赖，根 module 没有 replace。
+Integrator 独占 `go.mod`、公开契约、schema 与 OpenSpec。共享 Go/OpenSpec skills 复制并保留来源与许可证，数据库、MyGo 和游戏材料留在宿主。外部宿主 消费固定公开版本；本地联调可显式使用临时 workspace，不将相邻目录写成发布依赖。独立作者示例保留指向当前 checkout 的局部 replace，以验证正在修改的 SDK；这不是库发布依赖，根 module 没有 replace。
 
 项目和工具名称更改不改变既有 `cordis-go.*` schema 标识及 `cordis-go-package/v1` 签名域。本轮按用户最新决定直接修订未稳定发布的契约，不为旧 v1 字段语义保留兼容路径，具体范围见第 15 节；签名算法及输入布局无需改变。
 
-否决：嵌入 `vortexgo/internal/` 后再抽取，或用多个 module 共享 VortexGo 内部类型。两者会把领域依赖和发布节奏带入框架。
+否决：嵌入 `[外部宿主内部目录]/` 后再抽取，或用多个 module 共享 外部宿主 内部类型。两者会把领域依赖和发布节奏带入框架。
 
 ### 2. Module ownership 与依赖方向
 
@@ -107,7 +109,7 @@ Scope.Defer 将清理归属当前激活；公开 `contract.Group` / `NewGroup` �
 - `runtime.kind` 为 `wasm` 或 `native`；WASM entry 唯一，原生产物按 GOOS/GOARCH 显式列出且仅选择精确目标。
 - 请求能力、贡献文件引用、definition 级配置 schema、数据版本和保留偏好；宿主定义的值放在受 schema 验证的扩展文档，不混入通用字段。
 
-服务/requirement 是逻辑标识，上限 512；贡献 ID 上限 200，允许宿主合法的连续点。二者不参与文件路径拼接。包/publisher/definition/slot 名保留原 200 上限和连续点拒绝，归档文件继续使用独立路径规范化；避免把 VortexGo 精确服务键（最长约 303 字符）错误套入包路径限制。
+服务/requirement 是逻辑标识，上限 512；贡献 ID 上限 200，允许宿主合法的连续点。二者不参与文件路径拼接。包/publisher/definition/slot 名保留原 200 上限和连续点拒绝，归档文件继续使用独立路径规范化；避免把 外部宿主 精确服务键（最长约 303 字符）错误套入包路径限制。
 
 JSON 严格解码、重复 key 与未知通用字段拒绝。当前契约在稳定发布前直接同步修订，不增加旧字段别名、探测式降级或并行解码器；稳定发布后的版本演进不属于本轮。未知宿主扩展不会自动信任。
 
@@ -169,13 +171,13 @@ WASI SDK 使用标准 Go goroutine，独立读取 response/cancel/控制消息�
 
 存储由宿主代理提供 namespace、quota 和 data version；SDK 不给 guest 任意路径。停用不删除持久数据。诊断使用标准结构化日志及稳定错误 code，默认只记录身份、阶段和经过脱敏的摘要；不默认回显配置、消息或插件日志里的敏感字符串。
 
-### 10. VortexGo seam 与验收
+### 10. 外部宿主 seam 与验收
 
-不把通用 schema 更名成 `vortexgo.dev/*`，也不要求 VortexGo 改成通用协议。宿主仓库 `pluginapi/adapter/` 拥有契约快照、Manifest/会话 Adapter，`internal/plugintest/` 拥有领域无副作用的 fixture host；它们从宿主 `define-vortexgo-plugin-platform` 的三个 delta spec 与 design 记录来源路径和摘要，变化须显式审查。Cordis 独立验收不读取宿主文件。
+不把通用 schema 更名成 `[外部宿主 schema]`，也不要求 外部宿主 改成通用协议。宿主仓库 `pluginapi/adapter/` 拥有契约快照、Manifest/会话 Adapter，`internal/plugintest/` 拥有领域无副作用的 fixture host；它们从宿主 `[外部宿主插件规格]` 的三个 delta spec 与 design 记录来源路径和摘要，变化须显式审查。Cordis 独立验收不读取宿主文件。
 
-Adapter 保持原始 12 个方法，映射 initialize/health/shutdown、command/query/event、provider/service、capability/job 及维护会话 data.migrate。VortexGo 事件与 job 保持请求/响应；uint64 snapshot/计数保持规范十进制字符串，provider/service 保留分页与完整 envelope。Manifest.services/provider.requires 使用 package/provider/contract 精确依赖；同包命令与多个同 contract provider 可共存，不通过 builtin gateway 补依赖。grants 是宿主解析的范围投影，Broker 每次重新检查实际策略。维护会话不发布普通贡献、不授普通能力，只返回纯数据计划；真正 namespace 事务与恢复归 App。WASM 仍由独立 worker 执行，不执行双重 envelope。
+Adapter 保持原始 12 个方法，映射 initialize/health/shutdown、command/query/event、provider/service、capability/job 及维护会话 data.migrate。外部宿主 事件与 job 保持请求/响应；uint64 snapshot/计数保持规范十进制字符串，provider/service 保留分页与完整 envelope。Manifest.services/provider.requires 使用 package/provider/contract 精确依赖；同包命令与多个同 contract provider 可共存，不通过 builtin gateway 补依赖。grants 是宿主解析的范围投影，Broker 每次重新检查实际策略。维护会话不发布普通贡献、不授普通能力，只返回纯数据计划；真正 namespace 事务与恢复归 App。WASM 仍由独立 worker 执行，不执行双重 envelope。
 
-验收使用真实 Go WASM 插件和 worker，覆盖授权裁剪查询、秘密不可见、声明式贡献批量拒绝/撤销、迟到 activation、超时、进程崩溃，以及已接管任务不因插件退出被杀。框架原生 Runtime 的通用验收不代表 VortexGo 已允许 native Manifest。
+验收使用真实 Go WASM 插件和 worker，覆盖授权裁剪查询、秘密不可见、声明式贡献批量拒绝/撤销、迟到 activation、超时、进程崩溃，以及已接管任务不因插件退出被杀。框架原生 Runtime 的通用验收不代表 外部宿主 已允许 native Manifest。
 
 框架任务不实现 MyGo 页面或真实游戏部署，不复制宿主三份规格为新产品规范。fixture host 通过仅证明协议 seam 和通用机制；UI 可访问性和真实部署恢复仍由对应宿主 change 验证。
 
@@ -198,14 +200,14 @@ race、可控调度和 goroutine/进程泄漏检查覆盖 core/host；解码器�
 - [Windows 文件锁、路径别名与进程树语义] -> 原生实机运行、Job Object、受管快照和 pending removal，不用 POSIX 成功冒充跨平台验证。
 - [迁移后代码降级损坏数据] -> 数据版本由宿主确认，迁移提交后禁止自动降级，保留两份代码和恢复原因。
 - [包签名正确但信任错误] -> key 与 publisher 绑定由宿主决定，吊销逐次检查；签名不等于安全审计。
-- [VortexGo 工件持续变化] -> Adapter 固定快照并报告 drift，不修改宿主事实源让测试通过。
-- [公开 Interface 过早固化] -> 在非领域宿主、两个 Runtime、双实例与 VortexGo seam 全部运行后才发布首个稳定版本。
+- [外部宿主 工件持续变化] -> Adapter 固定快照并报告 drift，不修改宿主事实源让测试通过。
+- [公开 Interface 过早固化] -> 在非领域宿主、两个 Runtime、双实例与 外部宿主 seam 全部运行后才发布首个稳定版本。
 
 ## Migration Plan
 
 1. 迁移前完成拆分边界的非作者审查，先修订本 change 的交付边界，再移动代码、文档、技能和固定上游参考。
-2. 显式更改 module/import、工具路径及文档导航，宿主专属 Adapter/fixture 留在 VortexGo；保留协议标识、签名字节和 timeout 回归。
-3. 独立运行通用测试、race、真实 native/WASI 生命周期与依赖验证；单独运行 VortexGo 的原始 ABI、签名包和作者验收，不以框架通过勾选 MVP。
+2. 显式更改 module/import、工具路径及文档导航，宿主专属 Adapter/fixture 留在 外部宿主；保留协议标识、签名字节和 timeout 回归。
+3. 独立运行通用测试、race、真实 native/WASI 生命周期与依赖验证；单独运行 外部宿主 的原始 ABI、签名包和作者验收，不以框架通过勾选 MVP。
 4. 只提交 Cordis，使用 gh 创建 public 仓库并推送；宿主切换到已公开的固定版本，不保留强制 sibling replace。迁出后的新运行证据独立记录，不继承历史平台通过结论。
 
 ## Open Questions

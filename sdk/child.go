@@ -70,9 +70,8 @@ func (i *childInstance) control(ctx context.Context, action string) error {
 	return nil
 }
 
-func (i *childInstance) Wait(ctx context.Context) error  { return i.control(ctx, "wait") }
-func (i *childInstance) Stop(ctx context.Context) error  { return i.control(ctx, "stop") }
-func (i *childInstance) Retry(ctx context.Context) error { return i.control(ctx, "retry") }
+func (i *childInstance) Wait(ctx context.Context) error { return i.control(ctx, "wait") }
+func (i *childInstance) Stop(ctx context.Context) error { return i.control(ctx, "stop") }
 func (i *childInstance) Update(ctx context.Context, config json.RawMessage) (contract.UpdateResult, error) {
 	var result contract.UpdateResult
 	err := i.invoke(ctx, contract.ChildRequest{Action: "update", Child: contract.Child{Config: config}}, &result)

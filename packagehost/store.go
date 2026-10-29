@@ -3,8 +3,6 @@ package packagehost
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,17 +26,15 @@ type catalog struct {
 	Installed       map[string]Package             `json:"installed"`
 	Selected        map[string]contract.PackageRef `json:"selected"`
 	Entries         map[string]contract.Entry      `json:"entries"`
-	DataVersions    map[string]uint32              `json:"dataVersions"`
 	Publishers      map[string]string              `json:"publishers"`
 	Pending         []pendingRemoval               `json:"pendingRemoval"`
 	Signatures      map[string]*Signature          `json:"signatures"`
 	ExternalParents []string                       `json:"externalParents,omitempty"`
 }
 type pendingRemoval struct {
-	Ref        contract.PackageRef `json:"ref"`
-	Directory  string              `json:"directory"`
-	DeleteData bool                `json:"deleteData"`
-	Error      string              `json:"error,omitempty"`
+	Ref       contract.PackageRef `json:"ref"`
+	Directory string              `json:"directory"`
+	Error     string              `json:"error,omitempty"`
 }
 type commitStage string
 
@@ -55,7 +51,6 @@ type Store struct {
 	root    string
 	trust   TrustPolicy
 	limits  Limits
-	decoder MetadataDecoder
 	catalog catalog
 	lock    *os.File
 	closed  bool
@@ -65,25 +60,17 @@ type Store struct {
 	commitObserver func(commitStage)
 }
 
-// ChangeOptions conveys host-owned lifecycle/data facts; Store never stops code.
-// Enabled contains enabled package IDs after any explicitly authorized cascade.
-// InUse must contain every live package reference. A switch/removal cannot proceed
-// while that reference is in use. MigrationCommitted records an already-committed
-// host data migration before Select checks or cancellation, independently of the
-// selection. Prefer ConfirmDataVersion immediately after the host migration.
+// ChangeOptions describes current instances; Store never stops plugin code.
+// InUse lists live package references; Enabled lists persistently enabled packages.
 type ChangeOptions struct {
-	InUse              []contract.PackageRef
-	Enabled            []string
-	DataVersion        uint32
-	MigrationCommitted bool
-	DeleteData         bool
+	InUse   []contract.PackageRef
+	Enabled []string
 }
 
 type Removal struct {
-	Removed      bool
-	Pending      bool
-	DataRetained bool
-	Reason       string
+	Removed bool
+	Pending bool
+	Reason  string
 }
 
 // CommitError means the atomic catalog or runs root was replaced. Callers must not retry
@@ -97,12 +84,11 @@ func (e *CommitError) Unwrap() error { return e.Err }
 
 func newCatalog() catalog {
 	return catalog{
-		Installed:    map[string]Package{},
-		Selected:     map[string]contract.PackageRef{},
-		Entries:      map[string]contract.Entry{},
-		DataVersions: map[string]uint32{},
-		Publishers:   map[string]string{},
-		Signatures:   map[string]*Signature{},
+		Installed:  map[string]Package{},
+		Selected:   map[string]contract.PackageRef{},
+		Entries:    map[string]contract.Entry{},
+		Publishers: map[string]string{},
+		Signatures: map[string]*Signature{},
 	}
 }
 
@@ -139,14 +125,14 @@ func OpenWithOptions(root string, options Options) (s *Store, err error) {
 	if err != nil {
 		return nil, err
 	}
-	s = &Store{root: root, trust: copyTrust(trust), limits: limits, decoder: options.Decode, catalog: newCatalog(), lock: lock}
+	s = &Store{root: root, trust: copyTrust(trust), limits: limits, catalog: newCatalog(), lock: lock}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, releaseLock(lock))
 			s = nil
 		}
 	}()
-	for _, name := range []string{"content", "staging", "snapshots", "trash", "data"} {
+	for _, name := range []string{"content", "staging", "snapshots", "trash"} {
 		full := filepath.Join(root, name)
 		if err = os.MkdirAll(full, 0700); err != nil {
 			return nil, err
@@ -239,7 +225,7 @@ func decodeCatalog(raw []byte) (catalog, error) {
 }
 
 func validateCatalog(c catalog) error {
-	if c.Installed == nil || c.Selected == nil || c.Entries == nil || c.DataVersions == nil || c.Publishers == nil || c.Signatures == nil {
+	if c.Installed == nil || c.Selected == nil || c.Entries == nil || c.Publishers == nil || c.Signatures == nil {
 		return fmt.Errorf("catalog is missing required maps")
 	}
 	for digest, p := range c.Installed {
@@ -314,11 +300,6 @@ func validateCatalog(c catalog) error {
 			return fmt.Errorf("invalid retained publisher identity")
 		}
 	}
-	for id := range c.DataVersions {
-		if !validName(id) {
-			return fmt.Errorf("invalid committed data version package id")
-		}
-	}
 	return nil
 }
 
@@ -381,7 +362,6 @@ func (s *Store) cloneCatalog() catalog {
 	c.Installed = maps.Clone(c.Installed)
 	c.Selected = maps.Clone(c.Selected)
 	c.Entries = maps.Clone(c.Entries)
-	c.DataVersions = maps.Clone(c.DataVersions)
 	c.Publishers = maps.Clone(c.Publishers)
 	c.Pending = slices.Clone(c.Pending)
 	c.ExternalParents = slices.Clone(c.ExternalParents)
@@ -480,7 +460,7 @@ func (s *Store) install(ctx context.Context, source string, dev bool) (p Package
 	if err != nil {
 		return p, err
 	}
-	p, input, sig, err := inspect(ctx, stage, source, dev, s.limits, s.decoder)
+	p, input, sig, err := inspect(ctx, stage, source, dev, s.limits)
 	if err != nil {
 		return p, err
 	}
@@ -557,7 +537,6 @@ func (s *Store) install(ctx context.Context, source string, dev bool) (p Package
 func clonePackage(p Package) Package {
 	m := p.Manifest
 	m.Protocol.RequiredFeatures = slices.Clone(m.Protocol.RequiredFeatures)
-	m.HostMetadata = slices.Clone(m.HostMetadata)
 	m.Definitions = slices.Clone(m.Definitions)
 	for i := range m.Definitions {
 		m.Definitions[i].Requires = slices.Clone(m.Definitions[i].Requires)
@@ -567,14 +546,6 @@ func clonePackage(p Package) Package {
 	m.Runtime.Artifacts = slices.Clone(m.Runtime.Artifacts)
 	m.Dependencies = slices.Clone(m.Dependencies)
 	m.OptionalDependencies = slices.Clone(m.OptionalDependencies)
-	m.Capabilities = slices.Clone(m.Capabilities)
-	for i := range m.Capabilities {
-		m.Capabilities[i].Scope = slices.Clone(m.Capabilities[i].Scope)
-	}
-	m.Contributions = slices.Clone(m.Contributions)
-	for i := range m.Contributions {
-		m.Contributions[i].Data = slices.Clone(m.Contributions[i].Data)
-	}
 	p.Manifest = m
 	return p
 }
@@ -693,35 +664,6 @@ func (s *Store) Preflight(ref contract.PackageRef) ([]string, error) {
 	return preflight(s.catalog, ref)
 }
 
-// ConfirmDataVersion durably records an already-committed host data migration,
-// independently of package selection, trust, dependencies or installed code.
-// It cannot lower the data-version floor; repeating the same version is a no-op.
-// Cancellation is intentionally ignored: it cannot undo the host's data change.
-// A CommitError means the confirmation passed the catalog commit point.
-func (s *Store) ConfirmDataVersion(ctx context.Context, id string, version uint32) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.check(); err != nil {
-		return err
-	}
-	return s.confirmDataVersion(ctx, id, version)
-}
-
-func (s *Store) confirmDataVersion(ctx context.Context, id string, version uint32) error {
-	if !validName(id) {
-		return fmt.Errorf("invalid data version package id")
-	}
-	if version < s.catalog.DataVersions[id] {
-		return fmt.Errorf("cannot lower committed data version for %s", id)
-	}
-	if current, ok := s.catalog.DataVersions[id]; ok && current == version {
-		return nil
-	}
-	c := s.cloneCatalog()
-	c.DataVersions[id] = version
-	return s.mutate(context.WithoutCancel(ctx), c)
-}
-
 // CheckSelect performs the same compatibility/configuration checks as Select,
 // without mutation and without requiring the old activation to have stopped.
 func (s *Store) CheckSelect(ctx context.Context, ref contract.PackageRef, opt ChangeOptions) error {
@@ -743,7 +685,7 @@ func (s *Store) prepareSelection(ctx context.Context, ref contract.PackageRef, o
 	}
 	// Reject corrupt/revoked replacement code before the facade quiesces the old
 	// activation. The eventual execution Snapshot independently verifies again.
-	checked, input, err := inspectContent(ctx, p.Directory, p.Source, p.Development, s.limits, s.decoder)
+	checked, input, err := inspectContent(ctx, p.Directory, p.Source, p.Development, s.limits)
 	if err != nil {
 		return catalog{}, err
 	}
@@ -756,10 +698,6 @@ func (s *Store) prepareSelection(ctx context.Context, ref contract.PackageRef, o
 	}
 	if err = s.trust.verify(checked.Manifest, ref.Digest, input, sig, p.Development); err != nil {
 		return catalog{}, err
-	}
-	dataVersion := max(s.catalog.DataVersions[ref.ID], opt.DataVersion)
-	if p.Manifest.DataVersion < dataVersion {
-		return catalog{}, fmt.Errorf("data recovery required: package data version %d is below committed data version %d", p.Manifest.DataVersion, dataVersion)
 	}
 	c := s.cloneCatalog()
 	c.Selected[ref.ID] = ref
@@ -784,25 +722,15 @@ func (s *Store) prepareSelection(ctx context.Context, ref contract.PackageRef, o
 			}
 		}
 	}
-	if opt.MigrationCommitted && opt.DataVersion != p.Manifest.DataVersion {
-		return c, fmt.Errorf("committed migration version must match selected package data version")
-	}
 	return c, nil
 }
 
-// Select changes the selected code only after all checks pass. A reported
-// MigrationCommitted fact is persisted first, even if selection is canceled or
-// rejected; that confirmation can block the still-selected old code.
+// Select changes the selected code only after all checks pass.
 func (s *Store) Select(ctx context.Context, ref contract.PackageRef, opt ChangeOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.check(); err != nil {
 		return err
-	}
-	if opt.MigrationCommitted {
-		if err := s.confirmDataVersion(ctx, ref.ID, opt.DataVersion); err != nil {
-			return fmt.Errorf("confirm committed migration: %w", err)
-		}
 	}
 	c, err := s.prepareSelection(ctx, ref, opt)
 	if err != nil {
@@ -816,8 +744,8 @@ func (s *Store) Select(ctx context.Context, ref contract.PackageRef, opt ChangeO
 }
 
 func validateEntry(m contract.Manifest, e contract.Entry) error {
-	if !validName(e.ID) || e.Realm != "" && !validName(e.Realm) || e.Parent != "" && !validName(e.Parent) || e.Package != m.ID {
-		return fmt.Errorf("invalid entry identity or realm")
+	if !validName(e.ID) || e.Parent != "" && !validName(e.Parent) || e.Package != m.ID {
+		return fmt.Errorf("invalid entry identity")
 	}
 	found := false
 	for _, d := range m.Definitions {
@@ -915,9 +843,6 @@ func (s *Store) Snapshot(ctx context.Context, ref contract.PackageRef) (snapshot
 	if s.catalog.Selected[ref.ID] != ref {
 		return nil, fmt.Errorf("package must be explicitly selected before execution")
 	}
-	if p.Manifest.DataVersion < s.catalog.DataVersions[ref.ID] {
-		return nil, fmt.Errorf("data recovery required before executing older code")
-	}
 	dir, err := os.MkdirTemp(filepath.Join(s.root, "snapshots"), "activation-")
 	if err != nil {
 		return nil, err
@@ -947,7 +872,7 @@ func (s *Store) Snapshot(ctx context.Context, ref contract.PackageRef) (snapshot
 	if err != nil {
 		return nil, err
 	}
-	checked, input, sig, err := inspect(ctx, dir, p.Source, p.Development, s.limits, s.decoder)
+	checked, input, sig, err := inspect(ctx, dir, p.Source, p.Development, s.limits)
 	if err != nil {
 		return nil, err
 	}
@@ -1002,20 +927,12 @@ func (s *Store) checkUninstall(ref contract.PackageRef, opt ChangeOptions) error
 			return fmt.Errorf("enabled reverse dependencies block uninstall: %s", strings.Join(blocked, "; "))
 		}
 	}
-	if opt.DeleteData {
-		for _, p := range s.catalog.Installed {
-			if p.Ref.ID == ref.ID && p.Ref != ref {
-				return fmt.Errorf("cannot delete shared data while another version is installed")
-			}
-		}
-	}
 	return nil
 }
 
 func (s *Store) Uninstall(ctx context.Context, ref contract.PackageRef, opt ChangeOptions) (result Removal, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result.DataRetained = !opt.DeleteData
 	if err = s.check(); err != nil {
 		return result, err
 	}
@@ -1035,7 +952,7 @@ func (s *Store) Uninstall(ctx context.Context, ref contract.PackageRef, opt Chan
 			}
 		}
 	}
-	c.Pending = append(c.Pending, pendingRemoval{Ref: ref, Directory: "content/" + ref.Digest, DeleteData: opt.DeleteData})
+	c.Pending = append(c.Pending, pendingRemoval{Ref: ref, Directory: "content/" + ref.Digest})
 	if err = s.mutate(ctx, c); err != nil {
 		var committed *CommitError
 		if errors.As(err, &committed) {
@@ -1080,18 +997,10 @@ func (s *Store) retryPending() error {
 			remaining = append(remaining, p)
 			continue
 		}
-		if p.DeleteData {
-			if err = os.RemoveAll(filepath.Join(s.root, "data", dataNamespace(p.Ref.ID))); err != nil {
-				p.Error = err.Error()
-				remaining = append(remaining, p)
-				continue
-			}
-			delete(c.DataVersions, p.Ref.ID)
-			delete(c.Publishers, p.Ref.ID)
-		}
+
 	}
 	c.Pending = remaining
-	for _, name := range []string{"content", "trash", "data"} {
+	for _, name := range []string{"content", "trash"} {
 		if err = syncDir(filepath.Join(s.root, name)); err != nil {
 			return err
 		}
@@ -1127,21 +1036,6 @@ func (s *Store) RetryRemovals() error {
 	}
 	return nil
 }
-func (s *Store) DataDirectory(id string) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.check(); err != nil {
-		return "", err
-	}
-	if !validName(id) {
-		return "", fmt.Errorf("invalid plugin id")
-	}
-	dir := filepath.Join(s.root, "data", dataNamespace(id))
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", err
-	}
-	return dir, nil
-}
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1152,10 +1046,6 @@ func (s *Store) Close() error {
 	return releaseLock(s.lock)
 }
 
-func dataNamespace(id string) string {
-	sum := sha256.Sum256([]byte(id))
-	return hex.EncodeToString(sum[:])
-}
 func syncTree(root string) error {
 	var dirs []string
 	err := filepath.WalkDir(root, func(name string, d os.DirEntry, e error) error {

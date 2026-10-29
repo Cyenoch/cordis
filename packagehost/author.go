@@ -29,18 +29,15 @@ type Author struct {
 }
 
 type authorSource struct {
-	ID                   string                  `json:"id"`
-	Version              string                  `json:"version"`
-	Publisher            string                  `json:"publisher"`
-	Runtime              contract.RuntimeSpec    `json:"runtime"`
-	DefaultDefinition    string                  `json:"defaultDefinition,omitempty"`
-	Dependencies         []contract.Dependency   `json:"dependencies,omitempty"`
-	OptionalDependencies []contract.Dependency   `json:"optionalDependencies,omitempty"`
-	Capabilities         []contract.Capability   `json:"capabilities,omitempty"`
-	Contributions        []contract.Contribution `json:"contributions,omitempty"`
-	DataVersion          uint32                  `json:"dataVersion,omitempty"`
-	Contract             json.RawMessage         `json:"contract,omitempty"`
-	Contracts            []string                `json:"contracts,omitempty"`
+	ID                   string                `json:"id"`
+	Version              string                `json:"version"`
+	Publisher            string                `json:"publisher"`
+	Runtime              contract.RuntimeSpec  `json:"runtime"`
+	DefaultDefinition    string                `json:"defaultDefinition,omitempty"`
+	Dependencies         []contract.Dependency `json:"dependencies,omitempty"`
+	OptionalDependencies []contract.Dependency `json:"optionalDependencies,omitempty"`
+	Contract             json.RawMessage       `json:"contract,omitempty"`
+	Contracts            []string              `json:"contracts,omitempty"`
 }
 
 // LoadAuthor loads exactly one candidate, even when source names a file.
@@ -109,11 +106,9 @@ func LoadAuthor(sourceDir string) (*Author, error) {
 	m := contract.Manifest{
 		Schema: contract.PackageSchema, ID: input.ID, Version: input.Version, Publisher: input.Publisher,
 		Protocol: contract.Protocol{Major: 1}, Runtime: input.Runtime,
-		DefaultDefinition: input.DefaultDefinition, DataVersion: input.DataVersion,
-		Definitions: []contract.DefinitionSpec{}, Dependencies: append([]contract.Dependency{}, input.Dependencies...),
+		DefaultDefinition: input.DefaultDefinition,
+		Definitions:       []contract.DefinitionSpec{}, Dependencies: append([]contract.Dependency{}, input.Dependencies...),
 		OptionalDependencies: append([]contract.Dependency{}, input.OptionalDependencies...),
-		Capabilities:         append([]contract.Capability{}, input.Capabilities...),
-		Contributions:        append([]contract.Contribution{}, input.Contributions...),
 	}
 	for _, d := range a.Contracts {
 		specs, err := d.Specs()

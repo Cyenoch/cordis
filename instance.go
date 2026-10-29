@@ -136,7 +136,7 @@ func orderedEntries(entries []contract.Entry) []contract.Entry {
 }
 
 // Restore enables the catalog's selected entries only when the host explicitly
-// requests it, after configuring realms, capability handlers and validators.
+// requests it, after opening the package store.
 func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
 	var report contract.RestoreReport
 	if err := h.lockOperation(ctx); err != nil {
@@ -163,7 +163,7 @@ func (h *Host) Restore(ctx context.Context) (contract.RestoreReport, error) {
 		h.mu.Unlock()
 		if exists {
 			selected, selectErr := h.store.Selected(entry.Package)
-			if selectErr != nil || ref != selected.Ref || current.Package != entry.Package || current.Realm != entry.Realm || current.Parent != entry.Parent || current.Definition != entry.Definition {
+			if selectErr != nil || ref != selected.Ref || current.Package != entry.Package || current.Parent != entry.Parent || current.Definition != entry.Definition {
 				record.Action = "conflict"
 				record.Error = errors.Join(contract.Fail(contract.Conflict, "restore target differs from current registration"), selectErr)
 				blocked[entry.ID] = true

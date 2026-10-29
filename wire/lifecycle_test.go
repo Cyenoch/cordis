@@ -138,7 +138,7 @@ func TestInitializeReplyAdmitsImmediateGuestRequest(t *testing.T) {
 			}
 			if err := writeLifecycleFrame(&frames, Frame{
 				Schema: contract.SessionSchema, Kind: "request", Activation: "initialize",
-				ID: "g:1", Method: "host.invoke", Payload: json.RawMessage(`{}`), DeadlineMS: 1000,
+				ID: "g:1", Method: "call", Payload: json.RawMessage(`{}`), DeadlineMS: 1000,
 			}); err != nil {
 				peerDone <- err
 				return
@@ -149,7 +149,7 @@ func TestInitializeReplyAdmitsImmediateGuestRequest(t *testing.T) {
 		synctest.Wait()
 		select {
 		case method := <-handled:
-			if method != "host.invoke" {
+			if method != "call" {
 				t.Errorf("handled method = %q", method)
 			}
 		default:

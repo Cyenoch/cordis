@@ -46,7 +46,7 @@
 <td>调用/管理 API</td>
 <td><code>scope.Call</code>、<code>sdk.Call[In,Out]</code>、typed client</td>
 <td><code>Host.Install/Select</code>、<code>Store.Preflight</code></td>
-<td><code>Instance.Stop/Retry</code>、<code>Host.Disable</code>、<code>ChildInstance.Wait/Update</code></td>
+<td><code>Instance.Stop/Update</code>、<code>Host.Disable</code>、<code>ChildInstance.Wait/Update</code></td>
 </tr>
 <tr>
 <td>典型错误</td>
@@ -96,8 +96,8 @@ provider major 2  + requirement major 1                        → false（永�
 </tbody>
 </table>
 
-<h2>可见性：realm</h2>
-<p>服务沿 realm 树向后代可见；<code>ConfigureRealm(name, parent, isolatedKeys)</code> 里的隔离键<strong>不</strong>继承父 realm。因此“包已安装、实例也 active，但调用总等不到 provider”的第一嫌疑是 realm，而不是版本。</p>
+<h2>服务表：每个 Host 一份</h2>
+<p>同一个 Host 中的实例共享服务表，父子关系不改变服务可见性。同 key 的 provider 会冲突；需要独立同名服务时使用不同 Host。</p>
 
 <h2>依赖链示意（<code>examples/plugins/chain</code>）</h2>
 <pre class="diagram">consumer C ──requires chain.b@1 [1,3]──▶ middle B ──requires chain.a@1 [1,3]──▶ provider A
@@ -112,10 +112,9 @@ optional-parent ──CreateChild("optional", Definition:"middle")──▶ 更�
 <thead><tr><th>症状</th><th>先查</th><th>再看</th></tr></thead>
 <tbody>
 <tr><td><code>Enable</code> 直接报错</td><td>包依赖 Preflight（是否已选择、区间、环）</td><td>manifest 是否把服务需求误写进 <code>dependencies</code></td></tr>
-<tr><td><code>state: waiting</code></td><td><code>WaitingFor</code>：<code>name@major</code> 还是 <code>parent:id</code></td><td>provider 是否在同 realm/祖先 realm；minor 区间</td></tr>
-<tr><td><code>denied</code></td><td>manifest <code>capabilities</code> 是否声明</td><td>宿主 <code>Authorize</code> 是否真的返回了 grant；<code>Broker</code> 是否注册</td></tr>
+<tr><td><code>state: waiting</code></td><td><code>WaitingFor</code>：<code>name@major</code> 还是 <code>parent:id</code></td><td>provider 是否在同一 Host；minor 区间</td></tr>
 <tr><td>能调用但字段缺失/为 0</td><td>两边 struct 是否同一份生成契约</td><td>是否把可选字段写成了非指针裸类型（见类型速查）</td></tr>
-<tr><td>更新后卡住</td><td><code>UpdateResult.Superseded</code>、<code>Status.Error</code></td><td>旧 activation 是否还在 quiescing；是否该显式 <code>Retry</code></td></tr>
+<tr><td>更新后卡住</td><td><code>UpdateResult.Superseded</code>、<code>Status.Error</code></td><td>旧 activation 是否还在 quiescing；是否该再次 <code>Update</code></td></tr>
 </tbody>
 </table>
 

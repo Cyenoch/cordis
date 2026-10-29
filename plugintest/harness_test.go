@@ -21,12 +21,6 @@ func (f businessFunc) Call(ctx context.Context, required contract.Requirement, i
 	return f(ctx, required, input)
 }
 
-type hostFunc func(context.Context, string, json.RawMessage) (json.RawMessage, error)
-
-func (f hostFunc) InvokeHost(ctx context.Context, capability string, input json.RawMessage) (json.RawMessage, error) {
-	return f(ctx, capability, input)
-}
-
 type echoFunc func(context.Context, EchoEchoRequest) (EchoEchoResponse, error)
 
 func (f echoFunc) Echo(ctx context.Context, input EchoEchoRequest) (EchoEchoResponse, error) {
@@ -64,8 +58,7 @@ func TestHarnessUsesRealStartConfigurationGeneratedCodecAndPorts(t *testing.T) {
 				if err != nil {
 					return "", err
 				}
-				host, err := contract.InvokeHost[string, string](ctx, scope, "uppercase", prefix)
-				return EchoEchoResponse(host + config.Suffix), err
+				return EchoEchoResponse(strings.ToUpper(prefix) + config.Suffix), nil
 			}))
 		}}
 		options := plugintest.Options{
@@ -79,16 +72,6 @@ func TestHarnessUsesRealStartConfigurationGeneratedCodecAndPorts(t *testing.T) {
 					return nil, err
 				}
 				return contract.Encode("prefix " + text)
-			}),
-			Host: hostFunc(func(_ context.Context, capability string, input json.RawMessage) (json.RawMessage, error) {
-				if capability != "uppercase" {
-					return nil, errors.New("unexpected capability")
-				}
-				var text string
-				if err := contract.DecodeData(input, &text); err != nil {
-					return nil, err
-				}
-				return contract.Encode(strings.ToUpper(text))
 			}),
 		}
 		h, err := plugintest.New(t.Context(), definition, options)
@@ -173,7 +156,7 @@ func TestHarnessRejectsConfigurationBeforeStartAndCleansFailedStart(t *testing.T
 
 func TestHarnessMissingPortFailsAndManagedCauseIsVisible(t *testing.T) {
 	definition := contract.Definition{ID: "needs-host", Start: func(ctx context.Context, scope contract.Scope) error {
-		_, err := contract.InvokeHost[struct{}, string](ctx, scope, "required", struct{}{})
+		_, err := sdk.Call[struct{}, string](ctx, scope, contract.Requirement{Name: "required", Major: 1}, struct{}{})
 		return err
 	}}
 	if _, err := plugintest.New(t.Context(), definition, plugintest.Options{}); err == nil {

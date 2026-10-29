@@ -63,7 +63,7 @@ func TestGuestUsesRawBootstrapLengthAndBoundNextFrame(t *testing.T) {
 		t.Run(map[bool]string{false: "raw whitespace", true: "buffered next frame"}[trailingFrame], func(t *testing.T) {
 			left, right := net.Pipe()
 			guest, err := New(Options{Transport: left, Guest: true, Handler: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
-				return json.RawMessage(`{"frameBytes":4096,"minor":0,"features":[],"services":[],"subscriptions":[],"contributions":[]}`), nil
+				return json.RawMessage(`{"frameBytes":4096,"minor":0,"features":[],"services":[],"subscriptions":[]}`), nil
 			}})
 			if err != nil {
 				t.Fatal(err)
@@ -240,7 +240,7 @@ func TestLateRegistrationDoesNotAdmitRequestsAfterCanceledInitialize(t *testing.
 	if err := encoder.Encode(Frame{Schema: contract.SessionSchema, Kind: "response", Activation: "a", ID: request.ID, Method: "initialize", Payload: testRegistration()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := encoder.Encode(Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "a", ID: "g:1", Method: "host.invoke", DeadlineMS: 1000, Payload: json.RawMessage(`{}`)}); err != nil {
+	if err := encoder.Encode(Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "a", ID: "g:1", Method: "call", DeadlineMS: 1000, Payload: json.RawMessage(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 	awaitEndpoint(t, host)

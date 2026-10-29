@@ -47,7 +47,7 @@ func exitCode(err error, errOut io.Writer) int {
 
 var commandUsage = map[string]string{
 	"help":     "help [COMMAND]",
-	"init":     "init -module MODULE [-sdk-version VERSION] [-id ID] [-publisher NAME] [-runtime native|wasm] DIRECTORY",
+	"init":     "init -module MODULE [-sdk-version VERSION] [-id ID] [-publisher NAME] DIRECTORY",
 	"build":    "build -go-package PACKAGE -goos OS -goarch ARCH [FLAGS] DIRECTORY",
 	"pack":     "pack DIRECTORY ARCHIVE.zip",
 	"sign":     "sign ARCHIVE.zip KEY_ID PRIVATE_KEY_FILE",

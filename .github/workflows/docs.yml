@@ -19,8 +19,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
@@ -32,7 +30,7 @@ jobs:
           go-version-file: go.mod
       - run: bun install --frozen-lockfile
       - run: bun run docs:test
-      - run: bun run docs:sync
+      - run: bun run docs:examples
       - run: bun run docs:build
       - uses: actions/upload-pages-artifact@v5
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

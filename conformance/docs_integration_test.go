@@ -32,7 +32,7 @@ func TestDocumentationTutorials(t *testing.T) {
 		cli += ".exe"
 	}
 	runCommand(t, root, "go", "build", "-o", cli, "./cmd/cordis")
-	for _, name := range []string{"composition-tutorial", "access-tutorial", "generated-service"} {
+	for _, name := range []string{"composition-tutorial", "generated-service"} {
 		t.Run(name, func(t *testing.T) {
 			source, err := os.ReadFile(filepath.Join(root, "docs", name+".md"))
 			if err != nil {

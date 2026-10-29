@@ -230,7 +230,6 @@
                 "enum": [
                   "cancel",
                   "parent",
-                  "tasks",
                   "events",
                   "children"
                 ]
@@ -329,31 +328,6 @@
           },
           "maxItems": 10000
         },
-        "contributions": {
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "object",
-            "properties": {
-              "slot": {
-                "type": "string"
-              },
-              "id": {
-                "type": "string"
-              },
-              "data": {}
-            },
-            "required": [
-              "slot",
-              "id",
-              "data"
-            ],
-            "additionalProperties": false
-          },
-          "maxItems": 10000
-        },
         "frameBytes": {
           "type": "integer",
           "minimum": 4096,
@@ -365,8 +339,7 @@
         "minor",
         "features",
         "services",
-        "subscriptions",
-        "contributions"
+        "subscriptions"
       ],
       "additionalProperties": false
     },
@@ -475,58 +448,6 @@
         "name",
         "input",
         "mode"
-      ],
-      "additionalProperties": false
-    },
-    "hostInvoke": {
-      "type": "object",
-      "properties": {
-        "capability": {
-          "type": "string"
-        },
-        "input": {}
-      },
-      "required": [
-        "capability",
-        "input"
-      ],
-      "additionalProperties": false
-    },
-    "task": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "state": {
-          "enum": [
-            "queued",
-            "running",
-            "completed",
-            "failed",
-            "canceled",
-            "interrupted"
-          ]
-        },
-        "result": {},
-        "failure": {
-          "enum": [
-            "invalid_message",
-            "incompatible",
-            "not_ready",
-            "denied",
-            "timeout",
-            "canceled",
-            "reentrant_call",
-            "plugin_failed",
-            "internal",
-            "conflict",
-            "superseded"
-          ]
-        }
-      },
-      "required": [
-        "id"
       ],
       "additionalProperties": false
     },

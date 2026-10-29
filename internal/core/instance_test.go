@@ -23,7 +23,6 @@ func TestMissingEntryControlsReturnNotReady(t *testing.T) {
 		{name: "resume", run: func() error { _, err := e.Resume("missing"); return err }},
 		{name: "remove", run: func() error { return e.Remove(t.Context(), "missing") }},
 		{name: "configure", run: func() error { _, err := e.Configure("missing", nil, nil); return err }},
-		{name: "supervise", run: func() error { return e.Supervise(t.Context(), "missing", 0, 0) }},
 	} {
 		t.Run(operation.name, func(t *testing.T) {
 			var coded *contract.Error
@@ -129,31 +128,22 @@ func TestStopWaiterRetainsOriginalCleanupResultAfterResume(t *testing.T) {
 	})
 }
 
-func TestWaitingDiagnosticsRespectRealmVisibility(t *testing.T) {
+func TestWaitingDiagnosticsReportVersionAndParent(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := core.New()
 		defer closeEngine(t, e)
-		for _, name := range []string{"visible", "isolated", "other-major"} {
-			var isolated []string
-			if name == "isolated" {
-				isolated = []string{service.Key()}
-			}
-			if err := e.ConfigureRealm(name, "", isolated); err != nil {
-				t.Fatal(err)
-			}
-		}
 		p := add(t, e, "provider", provider(`1`))
 		if err := p.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		req := requirement
 		req.MinMinor, req.MaxMinor = 3, 5
-		for _, name := range []string{"visible", "isolated", "other-major"} {
+		for _, name := range []string{"visible", "other-major"} {
 			requested := req
 			if name == "other-major" {
 				requested.Major = 2
 			}
-			i, err := e.Add(contract.Entry{ID: name, Realm: name, Enabled: true}, contract.Definition{
+			i, err := e.Add(contract.Entry{ID: name, Enabled: true}, contract.Definition{
 				Requires: []contract.Requirement{requested}, Start: definitionNoop().Start,
 			}, contract.Identity{})
 			if err != nil {
@@ -165,11 +155,7 @@ func TestWaitingDiagnosticsRespectRealmVisibility(t *testing.T) {
 				t.Fatalf("requirement diagnostic: %+v", s)
 			}
 			w := s.Waiting[0]
-			if name == "isolated" {
-				if w.Reason != "missing" || len(w.Visible) != 0 {
-					t.Fatalf("isolated ancestor leaked: %+v", w)
-				}
-			} else if w.Reason != "incompatible" || len(w.Visible) != 1 || w.Visible[0] != service {
+			if w.Reason != "incompatible" || len(w.Visible) != 1 || w.Visible[0] != service {
 				t.Fatalf("visible incompatible provider omitted: %+v", w)
 			}
 		}
@@ -204,7 +190,7 @@ func TestStopSubmissionRejectsSelfControlBeforeRetirement(t *testing.T) {
 		if err := i.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		_, err := e.Call(t.Context(), "", requirement, nil)
+		_, err := e.Call(t.Context(), requirement, nil)
 		var coded *contract.Error
 		if !errors.As(err, &coded) || coded.Code != contract.Reentrant || i.Status().State != contract.Active {
 			t.Fatalf("self stop mutated before rejection: %v %+v", err, i.Status())
@@ -240,7 +226,7 @@ func TestStopWaiterParticipatesInServiceWaitGraph(t *testing.T) {
 		if err := b.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		go func() { _, err := e.Call(t.Context(), "", requirement, nil); failure <- err }()
+		go func() { _, err := e.Call(t.Context(), requirement, nil); failure <- err }()
 		<-cleanupEntered
 		synctest.Wait()
 		close(allowCleanup)

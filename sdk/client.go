@@ -1,4 +1,4 @@
-// Package sdk is the Go author interface for external native and WASI plugins.
+// Package sdk is the Go author interface for native plugins.
 package sdk
 
 import (
@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/internal/resource"
 	"github.com/Cyenoch/cordis/wire"
 )
 
@@ -27,7 +28,7 @@ type Client struct {
 	services      map[string]contract.Handler
 	serviceInfo   []contract.Service
 	events        map[string][]contract.EventHandler
-	cleanups      contract.Group
+	cleanups      resource.Group
 	work          []func(context.Context) error
 	workers       sync.WaitGroup
 	workErr       error
@@ -40,27 +41,12 @@ type Client struct {
 	closeErr      error
 	closeDone     chan struct{}
 	endpointReady chan struct{}
-	contributions []contract.Contribution
-	tasks         map[string]*Task
-}
-
-// Serve runs a command-style guest using standard input/output for protocol only.
-func Serve(ctx context.Context, definition contract.Definition) error {
-	transport, err := stdioTransport()
-	if err != nil {
-		return err
-	}
-	return ServeTransport(ctx, definition, transport)
-}
-
-func ServeTransport(ctx context.Context, definition contract.Definition, transport io.ReadWriteCloser) error {
-	return serveDefinitions(ctx, transport, []contract.Definition{definition})
 }
 
 func serve(ctx context.Context, definitions map[string]contract.Definition, transport io.ReadWriteCloser) error {
 	client := &Client{serial: make(chan struct{}, 1), definitions: definitions, services: map[string]contract.Handler{},
 		events: map[string][]contract.EventHandler{}, serviceInfo: []contract.Service{},
-		contributions: []contract.Contribution{}, closeDone: make(chan struct{}), endpointReady: make(chan struct{})}
+		closeDone: make(chan struct{}), endpointReady: make(chan struct{})}
 	client.ctx, client.cancel = context.WithCancel(ctx)
 	endpoint, err := wire.New(wire.Options{Transport: transport, Guest: true, Handler: client.handle})
 	if err != nil {
@@ -126,14 +112,6 @@ func (c *Client) Call(ctx context.Context, required contract.Requirement, input 
 	return c.endpoint.Call(ctx, "call", data)
 }
 
-func (c *Client) InvokeHost(ctx context.Context, capability string, input json.RawMessage) (json.RawMessage, error) {
-	data, err := json.Marshal(contract.HostCall{Capability: capability, Input: input})
-	if err != nil {
-		return nil, fmt.Errorf("encode host invocation: %w", err)
-	}
-	return c.endpoint.Call(ctx, "host.invoke", data)
-}
-
 func (c *Client) On(name string, handler contract.EventHandler) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -163,16 +141,6 @@ func (c *Client) Emit(ctx context.Context, name string, input json.RawMessage, m
 	return result, nil
 }
 
-func (c *Client) Contribute(value contract.Contribution) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.retiring || c.closed || c.initialized {
-		return contract.Fail(contract.NotReady, "contributions register during initialization only")
-	}
-	c.contributions = append(c.contributions, value)
-	return nil
-}
-
 func (c *Client) handle(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	select {
 	case <-c.endpointReady:
@@ -189,8 +157,6 @@ func (c *Client) handle(ctx context.Context, method string, input json.RawMessag
 		}
 		c.retire()
 		return json.RawMessage(`{}`), nil
-	case "task.cancel":
-		return c.cancelTask(input)
 	case "health":
 		c.mu.Lock()
 		ready := c.published && !c.retiring && !c.closed
@@ -319,7 +285,7 @@ func (c *Client) initialize(ctx context.Context, input json.RawMessage) (json.Ra
 		subscriptions = append(subscriptions, name)
 	}
 	return json.Marshal(contract.Registration{FrameBytes: init.FrameBytes, Minor: minor, Features: capabilities.Features,
-		Services: c.serviceInfo, Subscriptions: subscriptions, Contributions: c.contributions})
+		Services: c.serviceInfo, Subscriptions: subscriptions})
 }
 
 func (c *Client) close(ctx context.Context) error {

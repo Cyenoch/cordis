@@ -24,15 +24,12 @@ func TestAuthorChildWaitsForDependencyAndIsRemovedWithParent(t *testing.T) {
 	}()
 	service := contract.Service{Name: "late", Major: 1}
 	var starts, stops atomic.Int32
-	if err = h.RegisterDefinition(t.Context(), "builtin", contract.Definition{ID: "optional", Requires: []contract.Requirement{{Name: "late", Major: 1}}, Start: func(_ context.Context, s contract.Scope) error {
-		starts.Add(1)
-		return s.Defer(func(context.Context) error { stops.Add(1); return nil })
-	}}); err != nil {
-		t.Fatal(err)
-	}
 	created := make(chan contract.Instance, 2)
 	var old contract.Scope
-	parent, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "parent"}, contract.Definition{Start: func(ctx context.Context, s contract.Scope) error {
+	parent, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "parent"}, contract.Definition{Children: []contract.Definition{{ID: "optional", Requires: []contract.Requirement{{Name: "late", Major: 1}}, Start: func(_ context.Context, s contract.Scope) error {
+		starts.Add(1)
+		return s.Defer(func(context.Context) error { stops.Add(1); return nil })
+	}}}, Start: func(ctx context.Context, s contract.Scope) error {
 		old = s
 		i, err := contract.CreateChild(ctx, s, contract.Child{ID: "optional", Definition: "optional"})
 		if err == nil {
@@ -83,10 +80,7 @@ func TestAuthorChildWaitDuringInitializeFailsInsteadOfDeadlocking(t *testing.T) 
 			t.Error(err)
 		}
 	}()
-	if err = h.RegisterDefinition(t.Context(), "builtin", contract.Definition{ID: "child", Start: func(context.Context, contract.Scope) error { return nil }}); err != nil {
-		t.Fatal(err)
-	}
-	instance, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "parent"}, contract.Definition{Start: func(ctx context.Context, s contract.Scope) error {
+	instance, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "parent"}, contract.Definition{Children: []contract.Definition{{ID: "child", Start: func(context.Context, contract.Scope) error { return nil }}}, Start: func(ctx context.Context, s contract.Scope) error {
 		child, err := contract.CreateChild(ctx, s, contract.Child{ID: "optional", Definition: "child"})
 		if err != nil {
 			return err
@@ -105,5 +99,44 @@ func TestAuthorChildWaitDuringInitializeFailsInsteadOfDeadlocking(t *testing.T) 
 	}
 	if err = instance.Wait(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDuplicateChildDefinitionDoesNotStartEitherImplementation(t *testing.T) {
+	h, err := cordis.Open(cordis.Options{Directory: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := h.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+	var starts atomic.Int32
+	start := func(context.Context, contract.Scope) error {
+		starts.Add(1)
+		return nil
+	}
+	parent, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "parent"}, contract.Definition{
+		Children: []contract.Definition{
+			{ID: "feature", Start: start},
+			{ID: "feature", Start: start},
+		},
+		Start: func(ctx context.Context, scope contract.Scope) error {
+			_, err := contract.CreateChild(ctx, scope, contract.Child{ID: "child", Definition: "feature"})
+			if !errors.Is(err, &contract.Error{Code: contract.Conflict}) {
+				return fmt.Errorf("expected duplicate definition conflict, got %v", err)
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := parent.Wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if starts.Load() != 0 {
+		t.Fatal("ambiguous child definition started")
 	}
 }

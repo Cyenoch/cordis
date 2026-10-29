@@ -88,7 +88,7 @@ func validName(name string) bool {
 	return validSymbol(name, 200) && !strings.Contains(name, "..")
 }
 
-// Services and contribution IDs are logical symbols, never filesystem paths.
+// Service names are logical symbols, never filesystem paths.
 func validSymbol(name string, maximum int) bool {
 	if name == "" || len(name) > maximum {
 		return false
@@ -153,15 +153,8 @@ func ValidateManifest(m contract.Manifest) error {
 		return fmt.Errorf("default definition %q does not exist", m.DefaultDefinition)
 	}
 	switch m.Runtime.Kind {
-	case "wasm":
-		if len(m.Runtime.Artifacts) != 0 {
-			return fmt.Errorf("wasm package must not contain native artifact choices")
-		}
-		if err := validatePath(m.Runtime.Entry); err != nil {
-			return err
-		}
 	case "native":
-		if m.Runtime.Entry != "" || len(m.Runtime.Artifacts) == 0 {
+		if len(m.Runtime.Artifacts) == 0 {
 			return fmt.Errorf("native package requires explicit artifacts only")
 		}
 		platforms := map[string]bool{}
@@ -196,35 +189,11 @@ func ValidateManifest(m contract.Manifest) error {
 			}
 		}
 	}
-	capabilities := map[string]bool{}
-	for _, c := range m.Capabilities {
-		if !validName(c.ID) || capabilities[c.ID] {
-			return fmt.Errorf("invalid or duplicate capability %q", c.ID)
-		}
-		capabilities[c.ID] = true
-		if err := contract.CheckJSON(c.Scope, 32, 10000); err != nil {
-			return fmt.Errorf("capability scope: %w", err)
-		}
-	}
-	contributions := map[string]bool{}
-	for _, c := range m.Contributions {
-		key := c.Slot + "\x00" + c.ID
-		if !validName(c.Slot) || !validSymbol(c.ID, 200) || contributions[key] {
-			return fmt.Errorf("invalid or duplicate contribution %q", c.ID)
-		}
-		contributions[key] = true
-		if err := contract.CheckJSON(c.Data, 32, 10000); err != nil {
-			return fmt.Errorf("contribution data: %w", err)
-		}
-	}
 	return nil
 }
 
 // Artifact selects exactly the requested target; no runtime fallback is allowed.
 func Artifact(m contract.Manifest, goos, goarch string) (string, error) {
-	if m.Runtime.Kind == "wasm" {
-		return m.Runtime.Entry, nil
-	}
 	for _, a := range m.Runtime.Artifacts {
 		if a.OS == goos && a.Arch == goarch {
 			return a.Path, nil

@@ -3,21 +3,16 @@ import { loadCodeVersions } from './build-data.mjs'
 
 export function documentationMarkdown({ buildData } = {}) {
   const root = fileURLToPath(new URL('../', import.meta.url))
-  const baselines = new Map()
-  return async (tree, file) => {
+  let versionData
+  return async (tree) => {
     const variable = /\{\{docs\.([^}]+)\}\}/g
     const hasVariables = (node) => (
       ['text', 'inlineCode', 'code'].includes(node.type) && node.value.includes('{{docs.')
     ) || node.children?.some(hasVariables)
     let values
     if (hasVariables(tree)) {
-      const commit = file.data.astro?.frontmatter?.codeCommit
-      if (buildData) {
-        values = buildData[commit] ?? {}
-      } else {
-        if (!baselines.has(commit)) baselines.set(commit, loadCodeVersions(root, commit))
-        values = await baselines.get(commit)
-      }
+      versionData ??= buildData ?? loadCodeVersions(root)
+      values = await versionData
     }
     function visit(node) {
       if ((node.type === 'heading' && hasVariables(node)) || node.url?.includes('{{docs.')) {

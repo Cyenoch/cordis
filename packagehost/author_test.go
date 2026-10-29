@@ -21,15 +21,15 @@ func writeAuthorFile(t *testing.T, dir, name, data string) {
 	}
 }
 
-const minimalAuthorJSON = `{"id":"demo","version":"1.2.3","publisher":"example","runtime":{"kind":"wasm","entry":"plugin.wasm"},"contract":{"definitions":[{"id":"main"}]}}`
+const minimalAuthorJSON = `{"id":"demo","version":"1.2.3","publisher":"example","runtime":{"kind":"native","artifacts":[{"os":"darwin","arch":"arm64","path":"plugin"}]},"contract":{"definitions":[{"id":"main"}]}}`
 
 func TestLoadAuthorFormatsAndDefaults(t *testing.T) {
 	t.Parallel()
 	formats := []struct{ name, data string }{
 		{"plugin.json", minimalAuthorJSON},
-		{"plugin.yaml", "id: demo\nversion: 1.2.3\npublisher: example\nruntime: {kind: wasm, entry: plugin.wasm}\ncontract:\n  definitions:\n    - id: main\n"},
-		{"plugin.yml", "id: demo\nversion: 1.2.3\npublisher: example\nruntime: {kind: wasm, entry: plugin.wasm}\ncontract: {definitions: [{id: main}]}\n"},
-		{"plugin.toml", "id='demo'\nversion='1.2.3'\npublisher='example'\n[runtime]\nkind='wasm'\nentry='plugin.wasm'\n[[contract.definitions]]\nid='main'\n"},
+		{"plugin.yaml", "id: demo\nversion: 1.2.3\npublisher: example\nruntime: {kind: native, artifacts: [{os: darwin, arch: arm64, path: plugin}]}\ncontract:\n  definitions:\n    - id: main\n"},
+		{"plugin.yml", "id: demo\nversion: 1.2.3\npublisher: example\nruntime: {kind: native, artifacts: [{os: darwin, arch: arm64, path: plugin}]}\ncontract: {definitions: [{id: main}]}\n"},
+		{"plugin.toml", "id='demo'\nversion='1.2.3'\npublisher='example'\n[runtime]\nkind='native'\n[[runtime.artifacts]]\nos='darwin'\narch='arm64'\npath='plugin'\n[[contract.definitions]]\nid='main'\n"},
 	}
 	fingerprint := ""
 	for _, tt := range formats {
@@ -41,10 +41,10 @@ func TestLoadAuthorFormatsAndDefaults(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := a.Manifest
-			if m.DefaultDefinition != "main" || m.DataVersion != 0 || m.Protocol.Major != 1 {
+			if m.DefaultDefinition != "main" || m.Protocol.Major != 1 {
 				t.Fatalf("defaults not applied: %+v", m)
 			}
-			if m.Dependencies == nil || m.OptionalDependencies == nil || m.Capabilities == nil || m.Contributions == nil {
+			if m.Dependencies == nil || m.OptionalDependencies == nil {
 				t.Fatal("omitted lists are not explicit empty lists")
 			}
 			if len(m.Definitions[0].ConfigSchema) == 0 || m.Definitions[0].Requires == nil || m.Definitions[0].Provides == nil {
@@ -80,7 +80,7 @@ func TestLoadAuthorRejectsAmbiguityAndOldMachineFields(t *testing.T) {
 		}
 	})
 	for _, tt := range []struct{ name, data string }{
-		{"machine missing definition schema", `{"schema":"cordis-go.package/v1","id":"demo","version":"1.0.0","publisher":"example","protocol":{"major":1},"definitions":[{"id":"main"}],"defaultDefinition":"main","runtime":{"kind":"wasm","entry":"plugin.wasm"}}`},
+		{"machine missing definition schema", `{"schema":"cordis-go.package/v1","id":"demo","version":"1.0.0","publisher":"example","protocol":{"major":1},"definitions":[{"id":"main"}],"defaultDefinition":"main","runtime":{"kind":"native","artifacts":[{"os":"darwin","arch":"arm64","path":"plugin"}]}}`},
 		{"old package configSchema", strings.Replace(minimalAuthorJSON, `"contract":`, `"configSchema":{"type":"object"},"contract":`, 1)},
 		{"unknown machine schema", strings.Replace(minimalAuthorJSON, `"id":"demo"`, `"schema":"old","id":"demo"`, 1)},
 		{"multiple definitions need default", strings.Replace(minimalAuthorJSON, `{"id":"main"}`, `{"id":"main"},{"id":"other"}`, 1)},
@@ -149,22 +149,22 @@ func TestLoadAuthorContractReferences(t *testing.T) {
 	}
 }
 
-func TestLoadAuthorServiceVersionAndDataVersion(t *testing.T) {
+func TestLoadAuthorServiceAndPackageVersion(t *testing.T) {
 	t.Parallel()
 	for _, version := range []string{`1`, `"1.2"`, `1.2`, `"1.2.3"`} {
 		t.Run(version, func(t *testing.T) {
 			dir := t.TempDir()
 			declaration := `{"definitions":[{"id":"main","provides":["echo"]}],"services":[{"name":"echo","version":` + version + `,"methods":[{"name":"send","request":{"type":"object"},"response":{"type":"object"}}]}]}`
 			data := strings.Replace(minimalAuthorJSON, `{"definitions":[{"id":"main"}]}`, declaration, 1)
-			data = strings.Replace(data, `"version":"1.2.3"`, `"version":"2.0.0","dataVersion":7`, 1)
+			data = strings.Replace(data, `"version":"1.2.3"`, `"version":"2.0.0"`, 1)
 			writeAuthorFile(t, dir, "plugin.json", data)
 			a, err := LoadAuthor(dir)
 			valid := version == `1` || version == `"1.2"`
 			if (err == nil) != valid {
 				t.Fatalf("version %s: %v", version, err)
 			}
-			if valid && (a.Manifest.DataVersion != 7 || a.Manifest.Version != "2.0.0") {
-				t.Fatal("release version reset data version")
+			if valid && (a.Manifest.Version != "2.0.0") {
+				t.Fatal("release version changed")
 			}
 		})
 	}

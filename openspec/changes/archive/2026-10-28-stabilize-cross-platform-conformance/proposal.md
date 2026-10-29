@@ -1,5 +1,7 @@
 # Proposal
 
+> 历史记录：外部宿主专名与路径已匿名化，原始内容可从 Git 查看。本记录不定义当前能力。
+
 ## Why
 
 Conformance 自首个提交起在 ubuntu-24.04、macos-15、macos-15-intel 与 windows-2025 持续失败，只有 ubuntu-24.04-arm 通过。失败不是单纯的 CI 波动：其中一项是运行时缺陷，一项是与 runtime 预算不一致的 CLI 默认值，两项是测试自身错误。
@@ -33,4 +35,4 @@ Conformance 自首个提交起在 ubuntu-24.04、macos-15、macos-15-intel 与 w
 
 ## Impact
 
-写集为 `runtime/internal/process/process.go`、`cmd/cordis/run.go`，`runtime`、`cmd/cordis`、`packagehost` 与根包的相关集成测试及 fault fixture，`docs/cli.md`、`docs/getting-started.md` 和本 change。公开 Go API 与签名不变；CLI 默认等待变长，缺 provider 时默认在 30s 而非 5s 后失败，可用 `-startup-timeout` 缩短。下游 VortexGo 固定的版本不受影响，升级后才观察到上述行为。
+写集为 `runtime/internal/process/process.go`、`cmd/cordis/run.go`，`runtime`、`cmd/cordis`、`packagehost` 与根包的相关集成测试及 fault fixture，`docs/cli.md`、`docs/getting-started.md` 和本 change。公开 Go API 与签名不变；CLI 默认等待变长，缺 provider 时默认在 30s 而非 5s 后失败，可用 `-startup-timeout` 缩短。下游 外部宿主 固定的版本不受影响，升级后才观察到上述行为。

@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -26,24 +28,24 @@ func externalAuthorBuild(t *testing.T, dir, source string) BuildDescriptor {
 		t.Fatal(err)
 	}
 	writeAuthorFile(t, dir, "cordis_gen.go", generated.String())
-	artifact := "\x00asm\x01\x00\x00\x00"
-	writeAuthorFile(t, dir, "plugin.wasm", artifact)
-	d := BuildDescriptor{
-		Schema: BuildSchema, DeclarationFingerprint: a.Fingerprint,
-		GeneratedFingerprint: hashBytes(generated.Bytes()), GeneratedPackage: "main", GeneratedOutput: "cordis_gen.go",
-		SDK: SDKBuild{
-			Module: sdkModule, Version: "v0.1.0", Protocol: contract.Protocol{Major: 1},
-			Features: []string{"cancel"}, Capabilities: hashBytes([]byte("explicit external SDK evidence")),
-		},
-		Targets: []BuildTarget{{OS: "wasip1", Arch: "wasm", Path: "plugin.wasm", SHA256: hashBytes([]byte(artifact))}},
+	repo, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := WriteBuildDescriptor(dir, d); err != nil {
+	writeAuthorFile(t, dir, "go.mod", "module example.net/fixture\n\ngo 1.27.3\n\nrequire github.com/Cyenoch/cordis v0.0.0\nreplace github.com/Cyenoch/cordis => "+strconv.Quote(repo)+"\n")
+	writeAuthorFile(t, dir, "main.go", `package main
+import("context"; "github.com/Cyenoch/cordis/contract"; "github.com/Cyenoch/cordis/sdk")
+func main(){ _ = sdk.Run(context.Background(), NewMainDefinition(func(context.Context,contract.Scope,MainConfig)error{return nil})) }
+`)
+	d, err := Build(t.Context(), dir, BuildOptions{GoPackage: ".", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
+	if err != nil {
 		t.Fatal(err)
 	}
 	return d
+
 }
 
-const minimalAuthorTOML = "id='demo'\nversion='1.2.3'\npublisher='example'\n[runtime]\nkind='wasm'\nentry='plugin.wasm'\n[[contract.definitions]]\nid='main'\n"
+var minimalAuthorTOML = "id='demo'\nversion='1.2.3'\npublisher='example'\n[runtime]\nkind='native'\n[[runtime.artifacts]]\nos='" + runtime.GOOS + "'\narch='" + runtime.GOARCH + "'\npath='plugin'\n[[contract.definitions]]\nid='main'\n"
 
 func TestPackAuthorStagesMachineManifestAndCoversAllFiles(t *testing.T) {
 	t.Parallel()
@@ -137,10 +139,10 @@ func TestPackRejectsBuildDriftWithoutReplacingArchive(t *testing.T) {
 			}
 		}, "invalid Go package name"},
 		{"artifact hash changed", func(t *testing.T, dir string, _ BuildDescriptor) {
-			writeAuthorFile(t, dir, "plugin.wasm", "different artifact")
+			writeAuthorFile(t, dir, "plugin", "different artifact")
 		}, "hash changed"},
 		{"target changed", func(t *testing.T, dir string, d BuildDescriptor) {
-			d.Targets[0].OS = "linux"
+			d.Targets[0].OS = "unsupported"
 			if err := WriteBuildDescriptor(dir, d); err != nil {
 				t.Fatal(err)
 			}
@@ -175,7 +177,7 @@ func TestPackCurrentMachineManifestWithoutAuthorBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeAuthorFile(t, dir, ManifestFile, string(raw))
-	writeAuthorFile(t, dir, "plugin.wasm", "machine artifact")
+	writeAuthorFile(t, dir, "plugin", "machine artifact")
 	if _, err := Pack(context.Background(), dir, filepath.Join(t.TempDir(), "machine.zip")); err != nil {
 		t.Fatal(err)
 	}
@@ -188,10 +190,10 @@ func TestPrepareBuildRejectsImplicitTargetBeforeReplacingGeneratedCode(t *testin
 	writeAuthorFile(t, dir, "cordis_gen.go", "original generated code")
 	for _, o := range []BuildOptions{
 		{GoPackage: "."},
-		{GOOS: "wasip1", GOARCH: "wasm"},
-		{GoPackage: ".", GOOS: "linux", GOARCH: "amd64"},
-		{GoPackage: ".", GOOS: "wasip1", GOARCH: "wasm", GeneratedPackage: "invalid-package"},
-		{GoPackage: ".", GOOS: "wasip1", GOARCH: "wasm", Output: "../escape"},
+		{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
+		{GoPackage: ".", GOOS: "unsupported", GOARCH: runtime.GOARCH},
+		{GoPackage: ".", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, GeneratedPackage: "invalid-package"},
+		{GoPackage: ".", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Output: "../escape"},
 	} {
 		if _, _, err := PrepareBuild(context.Background(), dir, o); err == nil {
 			t.Fatal("accepted incomplete or invalid build options")
@@ -210,7 +212,7 @@ func TestAutomaticBuildRejectsGoOverlayBeforeChangingFiles(t *testing.T) {
 	overlay := filepath.Join(t.TempDir(), "overlay.json")
 	writeAuthorFile(t, filepath.Dir(overlay), filepath.Base(overlay), `{"Replace":{}}`)
 	t.Setenv("GOFLAGS", "-overlay="+overlay)
-	if _, _, err := PrepareBuild(t.Context(), dir, BuildOptions{GoPackage: ".", GOOS: "wasip1", GOARCH: "wasm"}); err == nil || !strings.Contains(err.Error(), "explicit descriptor") {
+	if _, _, err := PrepareBuild(t.Context(), dir, BuildOptions{GoPackage: ".", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}); err == nil || !strings.Contains(err.Error(), "explicit descriptor") {
 		t.Fatalf("automatic SDK proof accepted overlay: %v", err)
 	}
 	for name, want := range map[string]string{"cordis_gen.go": "previous generated source", "build.json": "previous build descriptor"} {

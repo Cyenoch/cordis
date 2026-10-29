@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -29,7 +28,7 @@ func sourceFixture(t *testing.T, m contract.Manifest) string {
 	if err = os.WriteFile(filepath.Join(dir, ManifestFile), raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(dir, "plugin.wasm"), []byte("fixture artifact"), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(dir, "plugin"), []byte("fixture artifact"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -68,7 +67,7 @@ func openFixture(t *testing.T, root string, trust TrustPolicy) *Store {
 	return s
 }
 
-func TestStoreInstallRecoverySelectionAndData(t *testing.T) {
+func TestStoreInstallRecoveryAndSelection(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	key, trust := signingFixture(t)
@@ -85,7 +84,7 @@ func TestStoreInstallRecoverySelectionAndData(t *testing.T) {
 	if err = s.Select(ctx, p1.Ref, ChangeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.SaveEntry(ctx, contract.Entry{ID: "entry", Package: "demo", Definition: "main", Realm: "root", Config: []byte(`{}`), Enabled: true}); err != nil {
+	if err = s.SaveEntry(ctx, contract.Entry{ID: "entry", Package: "demo", Definition: "main", Config: []byte(`{}`), Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	archive2, _ := archiveFixture(t, manifestFixture("demo", "2.0.0"), key)
@@ -119,20 +118,9 @@ func TestStoreInstallRecoverySelectionAndData(t *testing.T) {
 	if err = s.Select(ctx, p2.Ref, ChangeOptions{InUse: []contract.PackageRef{p1.Ref}}); err == nil {
 		t.Fatal("switched running activation")
 	}
-	data, err := s.DataDirectory("demo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	marker := filepath.Join(data, "saved")
-	if err = os.WriteFile(marker, []byte("keep"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	result, err := s.Uninstall(ctx, p1.Ref, ChangeOptions{})
-	if err != nil || !result.Removed || !result.DataRetained {
+	if err != nil || !result.Removed {
 		t.Fatalf("uninstall: %+v %v", result, err)
-	}
-	if _, err = os.Stat(marker); err != nil {
-		t.Fatal("deleted retained data", err)
 	}
 }
 
@@ -163,7 +151,7 @@ func TestStoreSelectedAbsenceAndExplicitRecovery(t *testing.T) {
 	if err = s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	entry := contract.Entry{ID: "entry", Package: "demo", Definition: "main", Realm: "root", Config: []byte(`{}`), Enabled: false}
+	entry := contract.Entry{ID: "entry", Package: "demo", Definition: "main", Config: []byte(`{}`), Enabled: false}
 	if err = s.SaveEntry(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +229,6 @@ func TestStoreManifestCopiesDoNotAliasCatalog(t *testing.T) {
 	key, trust := signingFixture(t)
 	m := manifestFixture("demo", "1.0.0")
 	m.Protocol.RequiredFeatures = []string{"cancel"}
-	m.HostMetadata = json.RawMessage(`{"name":"original"}`)
 	archive, _ := archiveFixture(t, m, key)
 	root := t.TempDir()
 	s := openFixture(t, root, trust)
@@ -251,7 +238,6 @@ func TestStoreManifestCopiesDoNotAliasCatalog(t *testing.T) {
 	}
 	mutate := func(p Package) {
 		p.Manifest.Protocol.RequiredFeatures[0] = "unsupported"
-		p.Manifest.HostMetadata[0] = '!'
 	}
 	mutate(p)
 	if err := s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
@@ -273,9 +259,6 @@ func TestStoreManifestCopiesDoNotAliasCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	mutate(installed[0])
-	if err = s.ConfirmDataVersion(ctx, "dep", 1); err != nil {
-		t.Fatal("caller mutated durable catalog", err)
-	}
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +313,7 @@ func TestStoreResignedDigestRefreshesTrustDurably(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, input, sig, err := inspect(ctx, snapshot.Directory, "snapshot", false, DefaultLimits(), nil)
+	_, input, sig, err := inspect(ctx, snapshot.Directory, "snapshot", false, DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +433,7 @@ func TestStoreTrustTamperAndConflict(t *testing.T) {
 	if err = s.UpdateTrust(trust); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(p.Directory, "plugin.wasm"), []byte("tampered"), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(p.Directory, "plugin"), []byte("tampered"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.Snapshot(ctx, p.Ref); err == nil {
@@ -601,10 +584,7 @@ func TestStoreSelectionChecksPropagateCancellation(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			s.decoder = func(_ context.Context, _ json.RawMessage, _ fs.FS) (contract.Manifest, error) {
-				cancel()
-				return p.Manifest, nil
-			}
+			cancel()
 			var err error
 			if operation == "select" {
 				err = s.Select(ctx, p.Ref, ChangeOptions{})
@@ -621,64 +601,7 @@ func TestStoreSelectionChecksPropagateCancellation(t *testing.T) {
 	}
 }
 
-func TestStoreUninstallDeleteDataResetsNamespace(t *testing.T) {
-	t.Parallel()
-	ctx := t.Context()
-	key, trust := signingFixture(t)
-	root := t.TempDir()
-	s := openFixture(t, root, trust)
-	m := manifestFixture("demo", "2.0.0")
-	m.DataVersion = 2
-	archive, p := archiveFixture(t, m, key)
-	if _, err := s.Install(ctx, archive); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.ConfirmDataVersion(ctx, "demo", 2); err != nil {
-		t.Fatal(err)
-	}
-	dir, err := s.DataDirectory("demo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(filepath.Join(dir, "saved"), []byte("delete"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	result, err := s.Uninstall(ctx, p.Ref, ChangeOptions{DeleteData: true})
-	if err != nil || !result.Removed || result.Pending || result.DataRetained {
-		t.Fatalf("delete-data uninstall: %+v, %v", result, err)
-	}
-	if _, err = os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("deleted namespace remains: %v", err)
-	}
-	if err = s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	pub, nextKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	trust.Keys["next"] = TrustedKey{PublicKey: pub, Publisher: "next"}
-	trust.Publishers["next"] = []string{"demo"}
-	s = openFixture(t, root, trust)
-	m = manifestFixture("demo", "1.0.0")
-	m.Publisher = "next"
-	archive = filepath.Join(t.TempDir(), "next.zip")
-	if _, err = Pack(ctx, sourceFixture(t, m), archive); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = Sign(ctx, archive, "next", nextKey); err != nil {
-		t.Fatal(err)
-	}
-	p, err = s.Install(ctx, archive)
-	if err != nil {
-		t.Fatal("deleted data retained the previous publisher", err)
-	}
-	if err = s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
-		t.Fatal("deleted data retained the previous version floor", err)
-	}
-}
-
-func TestStoreDependenciesDataVersionAndLock(t *testing.T) {
+func TestStoreDependenciesAndLock(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	key, trust := signingFixture(t)
@@ -709,7 +632,6 @@ func TestStoreDependenciesDataVersionAndLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	m = manifestFixture("dep", "2.0.0")
-	m.DataVersion = 2
 	dep2Archive, _ := archiveFixture(t, m, key)
 	dep2, err := s.Install(ctx, dep2Archive)
 	if err != nil {
@@ -724,11 +646,8 @@ func TestStoreDependenciesDataVersionAndLock(t *testing.T) {
 	if _, err = s.Uninstall(ctx, dep1.Ref, ChangeOptions{Enabled: []string{"demo"}}); err == nil {
 		t.Fatal("removed required selected dependency")
 	}
-	if err = s.Select(ctx, dep2.Ref, ChangeOptions{MigrationCommitted: true, DataVersion: 2}); err != nil {
+	if err = s.Select(ctx, dep2.Ref, ChangeOptions{}); err != nil {
 		t.Fatal(err)
-	}
-	if err = s.Select(ctx, dep1.Ref, ChangeOptions{}); err == nil {
-		t.Fatal("downgraded incompatible committed data")
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
@@ -744,9 +663,6 @@ func TestStoreNestedDocumentsRemainReopenable(t *testing.T) {
 	root := t.TempDir()
 	s := openFixture(t, root, trust)
 	m := manifestFixture("demo", "1.0.0")
-	// The complete manifest reaches depth 32; its catalog envelope reaches 35.
-	scope := strings.Repeat("[", 29) + "0" + strings.Repeat("]", 29)
-	m.Capabilities = []contract.Capability{{ID: "nested", Scope: []byte(scope)}}
 	archive, _ := archiveFixture(t, m, key)
 	p, err := s.Install(ctx, archive)
 	if err != nil {
@@ -756,7 +672,7 @@ func TestStoreNestedDocumentsRemainReopenable(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := "{}"
-	entry := contract.Entry{ID: "nested", Package: "demo", Definition: "main", Realm: "root", Config: []byte(config), Enabled: true}
+	entry := contract.Entry{ID: "nested", Package: "demo", Definition: "main", Config: []byte(config), Enabled: true}
 	if err = s.SaveEntry(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
@@ -773,7 +689,7 @@ func TestStoreNestedDocumentsRemainReopenable(t *testing.T) {
 		t.Fatalf("nested configuration not recovered: %+v, %v", entries, err)
 	}
 	selected, err := s.Selected("demo")
-	if err != nil || selected.Ref != p.Ref || string(selected.Manifest.Capabilities[0].Scope) != scope {
+	if err != nil || selected.Ref != p.Ref {
 		t.Fatalf("nested manifest not recovered: %+v, %v", selected, err)
 	}
 	snapshot, err := s.Snapshot(ctx, p.Ref)
@@ -804,15 +720,15 @@ func TestStoreSaveEntryPersistsOmittedObjectAndExplicitNull(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range []contract.Entry{
-		{ID: "omitted", Package: "demo", Definition: "main", Realm: "root"},
-		{ID: "explicit-null", Package: "demo", Definition: "nullable", Realm: "root", Config: json.RawMessage(`null`)},
+		{ID: "omitted", Package: "demo", Definition: "main"},
+		{ID: "explicit-null", Package: "demo", Definition: "nullable", Config: json.RawMessage(`null`)},
 	} {
 		if err := s.SaveEntry(ctx, entry); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := s.SaveEntry(ctx, contract.Entry{
-		ID: "invalid-null", Package: "demo", Definition: "main", Realm: "root", Config: json.RawMessage(`null`),
+		ID: "invalid-null", Package: "demo", Definition: "main", Config: json.RawMessage(`null`),
 	}); err == nil {
 		t.Fatal("explicit null was silently converted to an object")
 	}
@@ -837,7 +753,7 @@ func TestStoreCandidateValidationPreservesCommittedRoot(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	s := openFixture(t, root, TrustPolicy{})
-	if err := s.ConfirmDataVersion(context.Background(), "demo", 1); err != nil {
+	if err := s.mutate(context.Background(), s.cloneCatalog()); err != nil {
 		t.Fatal(err)
 	}
 	c := s.cloneCatalog()
@@ -853,9 +769,6 @@ func TestStoreCandidateValidationPreservesCommittedRoot(t *testing.T) {
 	entries, err := s.Entries()
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("rejected candidate changed durable entries: %+v, %v", entries, err)
-	}
-	if err = s.ConfirmDataVersion(context.Background(), "demo", 0); err == nil {
-		t.Fatal("rejected candidate lost the previously committed data floor")
 	}
 }
 
@@ -880,177 +793,6 @@ func TestStoreRejectsMissingInstalledSignatureRecord(t *testing.T) {
 	if err == nil {
 		_ = opened.Close()
 		t.Fatal("installed content was admitted without its committed signature record")
-	}
-}
-
-func TestStoreCommittedMigrationSurvivesFailedSelection(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name    string
-		failure string
-	}{
-		{name: "already canceled", failure: "canceled"},
-		{name: "canceled before selection commit", failure: "prepared"},
-		{name: "canceled at migration catalog ready", failure: "migration-ready"},
-		{name: "revoked replacement", failure: "trust"},
-		{name: "old activation in use", failure: "in-use"},
-		{name: "migration version mismatch", failure: "version"},
-		{name: "missing replacement", failure: "missing"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			key, trust := signingFixture(t)
-			root := t.TempDir()
-			s := openFixture(t, root, trust)
-			archive1, _ := archiveFixture(t, manifestFixture("demo", "1.0.0"), key)
-			p1, err := s.Install(ctx, archive1)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = s.Select(ctx, p1.Ref, ChangeOptions{}); err != nil {
-				t.Fatal(err)
-			}
-			m := manifestFixture("demo", "2.0.0")
-			m.DataVersion = 2
-			archive2, _ := archiveFixture(t, m, key)
-			p2, err := s.Install(ctx, archive2)
-			if err != nil {
-				t.Fatal(err)
-			}
-			canceled, cancel := context.WithCancel(ctx)
-			defer cancel()
-			opt := ChangeOptions{MigrationCommitted: true, DataVersion: 2}
-			ref := p2.Ref
-			switch tc.failure {
-			case "canceled":
-				cancel()
-			case "prepared":
-				prepared := 0
-				s.commitObserver = func(stage commitStage) {
-					if stage == commitPrepared {
-						prepared++
-						if prepared == 2 {
-							cancel()
-						}
-					}
-				}
-			case "migration-ready":
-				s.commitObserver = func(stage commitStage) {
-					if stage == commitCatalogSynced {
-						cancel()
-					}
-				}
-			case "trust":
-				revoked := copyTrust(trust)
-				revoked.RevokedPublishers["example"] = true
-				if err = s.UpdateTrust(revoked); err != nil {
-					t.Fatal(err)
-				}
-			case "in-use":
-				opt.InUse = []contract.PackageRef{p1.Ref}
-			case "version":
-				opt.DataVersion = 3
-			case "missing":
-				ref.Digest = strings.Repeat("f", 64)
-			}
-			err = s.Select(canceled, ref, opt)
-			if err == nil {
-				t.Fatal("selection unexpectedly succeeded")
-			}
-			if (tc.failure == "canceled" || tc.failure == "prepared") && !errors.Is(err, context.Canceled) {
-				t.Fatalf("canceled selection: %v", err)
-			}
-			s.commitObserver = nil
-			if err = s.UpdateTrust(trust); err != nil {
-				t.Fatal(err)
-			}
-			assertBlocked := func() {
-				t.Helper()
-				selected, e := s.Selected("demo")
-				if e != nil || selected.Ref != p1.Ref {
-					t.Fatalf("failed selection silently changed code: %+v, %v", selected, e)
-				}
-				if snapshot, e := s.Snapshot(ctx, p1.Ref); e == nil {
-					if e = snapshot.Close(); e != nil {
-						t.Fatal(e)
-					}
-					t.Fatal("old selected code executed after committed migration")
-				} else if !strings.Contains(e.Error(), "data recovery required") {
-					t.Fatalf("old snapshot denied for unrelated reason: %v", e)
-				}
-				if e = s.CheckSelect(t.Context(), p1.Ref, ChangeOptions{}); e == nil {
-					t.Fatal("old code passed preflight after committed migration")
-				}
-			}
-			assertBlocked()
-			if err = s.Close(); err != nil {
-				t.Fatal(err)
-			}
-			s = openFixture(t, root, trust)
-			assertBlocked()
-			if tc.failure != "version" {
-				if err = s.Select(ctx, p2.Ref, ChangeOptions{}); err != nil {
-					t.Fatal("compatible replacement cannot be selected after failure", err)
-				}
-			}
-		})
-	}
-}
-
-func TestStoreConfirmDataVersionIsIndependentAndMonotonic(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	s := openFixture(t, root, TrustPolicy{})
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := s.ConfirmDataVersion(ctx, "demo", 2); err != nil {
-		t.Fatal("cancellation discarded already-committed host migration", err)
-	}
-	if err := s.ConfirmDataVersion(ctx, "demo", 2); err != nil {
-		t.Fatal("repeating confirmation is not idempotent", err)
-	}
-	if err := s.ConfirmDataVersion(context.Background(), "demo", 1); err == nil {
-		t.Fatal("confirmation lowered committed data version")
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s = openFixture(t, root, TrustPolicy{})
-	if err := s.ConfirmDataVersion(context.Background(), "demo", 1); err == nil {
-		t.Fatal("confirmation was not durable without installed or selected code")
-	}
-	if err := s.ConfirmDataVersion(context.Background(), "demo", 3); err != nil {
-		t.Fatal("confirmation cannot advance data version", err)
-	}
-}
-
-func TestStoreConfirmDataVersionCommitErrorRetainsFact(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	s := openFixture(t, root, TrustPolicy{})
-	// Invalid paths fail root synchronization on Unix and Windows after commit.
-	s.commitObserver = func(stage commitStage) {
-		if stage == commitCatalogSwapped {
-			s.root = root + "\x00"
-		}
-	}
-	err := s.ConfirmDataVersion(context.Background(), "demo", 2)
-	var committed *CommitError
-	if !errors.As(err, &committed) {
-		t.Fatalf("postcommit confirmation error lost committed status: %v", err)
-	}
-	s.commitObserver = nil
-	s.root = root
-	if err = s.ConfirmDataVersion(context.Background(), "demo", 1); err == nil {
-		t.Fatal("postcommit error discarded in-memory confirmation")
-	}
-	if err = s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s = openFixture(t, root, TrustPolicy{})
-	if err = s.ConfirmDataVersion(context.Background(), "demo", 1); err == nil {
-		t.Fatal("postcommit error discarded durable confirmation")
 	}
 }
 

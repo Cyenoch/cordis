@@ -15,8 +15,6 @@ import (
 	"github.com/Cyenoch/cordis/config"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/packagehost"
-	native "github.com/Cyenoch/cordis/runtime/native"
-	wasm "github.com/Cyenoch/cordis/runtime/wasm"
 )
 
 type dataInput struct {
@@ -72,7 +70,6 @@ func (input dataInput) load(name string, in io.Reader) (json.RawMessage, error) 
 }
 
 func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, error), in io.Reader, out, errOut io.Writer) (result error) {
-	worker := flags.String("worker", "", "worker binary for WASM")
 	dev := flags.Bool("dev-unsigned", false, "explicitly trust only this archive digest for this run")
 	service := flags.String("service", "", "service name to call")
 	definitionID := flags.String("definition", "", "package definition (default: manifest default)")
@@ -136,7 +133,6 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 			DevDigests: map[string]bool{pkg.Ref.Digest: true},
 			Publishers: map[string][]string{pkg.Manifest.Publisher: {pkg.Ref.ID}},
 		},
-		Runtimes: map[string]contract.Runtime{"native": native.New(), "wasm": wasm.New(*worker)},
 	})
 	if err != nil {
 		return err
@@ -166,7 +162,7 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 	if *service == "" {
 		return writeJSON(out, instance.Status())
 	}
-	value, err := host.Call(ctx, "", required, inputData)
+	value, err := host.Call(ctx, required, inputData)
 	if err != nil {
 		return err
 	}

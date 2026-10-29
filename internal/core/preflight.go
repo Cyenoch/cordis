@@ -34,13 +34,10 @@ func (e *Engine) checkAdmissionLocked(entry contract.Entry, owner *contract.Iden
 	if e.instances[entry.ID] != nil {
 		return contract.Fail(contract.Conflict, "entry already exists")
 	}
-	if _, ok := e.realms[entry.Realm]; !ok {
-		return contract.Fail(contract.Invalid, "unknown realm")
-	}
 	if entry.Parent != "" {
 		parent := e.instances[entry.Parent]
-		if parent == nil || !parent.enabled || parent.removing || !e.descendantLocked(entry.Realm, parent.entry.Realm) {
-			return contract.Fail(contract.Invalid, "parent is unavailable or outside realm ancestry")
+		if parent == nil || !parent.enabled || parent.removing {
+			return contract.Fail(contract.Invalid, "parent is unavailable")
 		}
 		if owner != nil && (parent.activation == nil || parent.activation.identity != *owner || parent.activation.retiring) {
 			return contract.Fail(contract.NotReady, "parent activation is no longer current")

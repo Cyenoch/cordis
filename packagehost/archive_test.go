@@ -157,7 +157,7 @@ func TestPackDeterministicAndSnapshotImmutable(t *testing.T) {
 	if err = s.Select(ctx, installed.Ref, ChangeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(dir, "plugin.wasm"), []byte("modified source"), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(dir, "plugin"), []byte("modified source"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	snap, err := s.Snapshot(ctx, installed.Ref)
@@ -169,7 +169,7 @@ func TestPackDeterministicAndSnapshotImmutable(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	bytes, err := os.ReadFile(filepath.Join(snap.Directory, "plugin.wasm"))
+	bytes, err := os.ReadFile(filepath.Join(snap.Directory, "plugin"))
 	if err != nil {
 		t.Fatal(err)
 	}

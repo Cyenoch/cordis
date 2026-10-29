@@ -63,20 +63,7 @@ func TestStoreUninstallRecoversWindowsHeldArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dataMarkers := map[string]string{}
-	for _, id := range []string{"demo", "dep"} {
-		dir, err := store.DataDirectory(id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		marker := filepath.Join(dir, "saved")
-		if err := os.WriteFile(marker, []byte(id+" data"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		dataMarkers[marker] = id + " data"
-	}
-
-	artifact := filepath.Join(root, "content", removed.Ref.Digest, removed.Manifest.Runtime.Entry)
+	artifact := filepath.Join(root, "content", removed.Ref.Digest, removed.Manifest.Runtime.Artifacts[0].Path)
 	path, err := windows.UTF16PtrFromString(artifact)
 	if err != nil {
 		t.Fatal(err)
@@ -124,8 +111,8 @@ func TestStoreUninstallRecoversWindowsHeldArtifact(t *testing.T) {
 				t.Fatalf("durable pending removals = %+v, want one", durable.Pending)
 			}
 			p := durable.Pending[0]
-			if p.Ref != removed.Ref || p.DeleteData {
-				t.Fatalf("durable pending removal = %+v, want retained data for %+v", p, removed.Ref)
+			if p.Ref != removed.Ref {
+				t.Fatalf("durable pending removal = %+v, want removal for %+v", p, removed.Ref)
 			}
 			if strings.TrimSpace(p.Error) == "" {
 				t.Fatal("durable pending removal omitted the OS failure reason")
@@ -135,7 +122,7 @@ func TestStoreUninstallRecoversWindowsHeldArtifact(t *testing.T) {
 			if p.Directory != contentDir && p.Directory != trashDir {
 				t.Fatalf("unexpected durable pending directory %q", p.Directory)
 			}
-			heldArtifact := filepath.Join(root, filepath.FromSlash(p.Directory), removed.Manifest.Runtime.Entry)
+			heldArtifact := filepath.Join(root, filepath.FromSlash(p.Directory), removed.Manifest.Runtime.Artifacts[0].Path)
 			raw, err := os.ReadFile(heldArtifact)
 			if err != nil || string(raw) != "fixture artifact" {
 				t.Fatalf("held artifact = %q, %v; want original code", raw, err)
@@ -173,30 +160,21 @@ func TestStoreUninstallRecoversWindowsHeldArtifact(t *testing.T) {
 		if durable.Installed[other.Ref.Digest].Ref != other.Ref || durable.Selected[other.Ref.ID] != other.Ref {
 			t.Fatal("durable catalog changed the other package")
 		}
-		otherArtifact := filepath.Join(root, "content", other.Ref.Digest, other.Manifest.Runtime.Entry)
+		otherArtifact := filepath.Join(root, "content", other.Ref.Digest, other.Manifest.Runtime.Artifacts[0].Path)
 		raw, err := os.ReadFile(otherArtifact)
 		if err != nil || string(raw) != "fixture artifact" {
 			t.Fatalf("other package artifact = %q, %v; want original code", raw, err)
 		}
-		for marker, want := range dataMarkers {
-			raw, err := os.ReadFile(marker)
-			if err != nil || string(raw) != want {
-				t.Fatalf("retained data %s = %q, %v; want %q", marker, raw, err, want)
-			}
-		}
+
 	}
 
-	// No live package references or enabled dependents are declared, and
-	// DeleteData remains false: default uninstall retains the plugin's data.
+	// No live package references or enabled dependents are declared.
 	result, err := store.Uninstall(ctx, removed.Ref, ChangeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !result.Pending || result.Removed {
 		t.Fatalf("held artifact removal = %+v, want pending and not removed", result)
-	}
-	if !result.DataRetained {
-		t.Fatal("default uninstall did not retain plugin data")
 	}
 	if strings.TrimSpace(result.Reason) == "" {
 		t.Fatal("pending removal omitted the OS failure reason")

@@ -1,13 +1,4 @@
 ---
-codeCommit: e6e5f172b7e6dd1099edf8e5f0016432548383a9
-codePaths:
-  - contract/data.go
-  - contract/json.go
-  - contract/event.go
-  - contract/middleware.go
-  - schema
-  - conformance/validate-schemas.py
-  - packagehost/interoperability_test.go
 ---
 
 # 数据契约与 Go 代码生成

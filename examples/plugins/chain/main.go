@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/schema"
@@ -17,7 +16,12 @@ import (
 // Set with -ldflags '-X main.rejectInitialization=true' for recovery conformance.
 var rejectInitialization string
 
-func main() { sdk.Main(provider(), middle(), consumer(), optionalParent()) }
+func main() {
+	if err := sdk.Run(context.Background(), provider(), middle(), consumer(), optionalParent()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
 
 func optionalParent() contract.Definition {
 	return NewOptionalParentDefinition(func(ctx context.Context, scope contract.Scope, _ OptionalParentConfig) error {
@@ -35,7 +39,6 @@ func optionalParent() contract.Definition {
 }
 
 type providerServer struct {
-	scope              contract.Scope
 	label              string
 	leases             map[string]bool
 	acquired, released int
@@ -59,7 +62,7 @@ func provider() contract.Definition {
 		}); err != nil {
 			return err
 		}
-		p := &providerServer{scope: scope, label: settings.Label.Value, leases: map[string]bool{}}
+		p := &providerServer{label: settings.Label.Value, leases: map[string]bool{}}
 		if err := scope.Defer(func(context.Context) error {
 			if len(p.leases) != 0 || p.acquired != p.released {
 				return fmt.Errorf("provider leaked resources: acquired=%d released=%d live=%d", p.acquired, p.released, len(p.leases))
@@ -88,17 +91,7 @@ func (p *providerServer) Execute(ctx context.Context, input ChainAExecuteRequest
 		p.released++
 	case "stats":
 	case "wait":
-		task, err := contract.BeginTask(p.scope.Context(), p.scope, "blocked")
-		if err != nil {
-			return ChainAExecuteResponse{}, err
-		}
 		<-ctx.Done()
-		// Task completion has an independent activation control context after the call retires.
-		finishCtx, cancel := context.WithTimeout(p.scope.Context(), 3*time.Second)
-		defer cancel()
-		if err := task.Finish(finishCtx, "completed", json.RawMessage(`{"canceled":true}`), ""); err != nil {
-			return ChainAExecuteResponse{}, fmt.Errorf("acknowledge cancellation: %w", err)
-		}
 		return ChainAExecuteResponse{}, ctx.Err()
 	case "crash":
 		os.Exit(7)

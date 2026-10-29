@@ -86,7 +86,7 @@ func TestOversizedResponseWritesOnlyFixedError(t *testing.T) {
 	}
 	guest, err := New(Options{Transport: transport, Guest: true, Handler: func(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
 		if method == "initialize" {
-			return json.RawMessage(`{"frameBytes":4096,"minor":0,"features":[],"services":[],"subscriptions":[],"contributions":[]}`), nil
+			return json.RawMessage(`{"frameBytes":4096,"minor":0,"features":[],"services":[],"subscriptions":[]}`), nil
 		}
 		return json.RawMessage(`"` + strings.Repeat("x", 8192) + `"`), nil
 	}})

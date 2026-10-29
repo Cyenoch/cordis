@@ -21,7 +21,7 @@ export default defineConfig({
         '@fontsource-variable/jetbrains-mono',
         './src/styles/custom.css',
       ],
-      components: { Hero: './src/components/Hero.astro', Footer: './src/components/Footer.astro' },
+      components: { Hero: './src/components/Hero.astro' },
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/Cyenoch/cordis' },
       ],
@@ -57,7 +57,6 @@ export default defineConfig({
           label: '实操教程',
           items: [
             { label: '组合实操', slug: 'composition-tutorial' },
-            { label: '授权、任务与存储', slug: 'access-tutorial' },
             { label: '生成服务', slug: 'generated-service' },
           ],
         },
@@ -66,10 +65,9 @@ export default defineConfig({
           items: [
             { label: '组合、实例与清理', slug: 'composition' },
             { label: '数据契约与代码生成', slug: 'contracts' },
-            { label: '显式资源组', slug: 'resources' },
+            { label: '资源清理', slug: 'resources' },
             { label: '外部插件包与签名', slug: 'packages' },
-            { label: 'Native 与 WASM', slug: 'runtimes' },
-            { label: '授权、任务与存储', slug: 'access' },
+            { label: 'Native 运行时', slug: 'runtimes' },
             { label: '中断恢复', slug: 'recovery' },
           ],
         },

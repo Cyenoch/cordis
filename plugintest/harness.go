@@ -1,5 +1,5 @@
 // Package plugintest runs real SDK definitions and codecs with explicit test
-// ports. It is not an authorization, protocol conformance or runtime sandbox test.
+// service ports. Process execution is covered by runtime integration tests.
 package plugintest
 
 import (
@@ -16,11 +16,10 @@ import (
 )
 
 // Options configures only business inputs and test doubles. Ports do not grant
-// production capabilities or enforce the host's dependency/permission policy.
+// production services.
 type Options struct {
 	Config   json.RawMessage
 	Business contract.Caller
-	Host     contract.HostInvoker
 }
 
 // Harness owns one initialized, published definition. Always Close it, including
@@ -50,7 +49,7 @@ func New(ctx context.Context, definition contract.Definition, options Options) (
 	}
 	h.endpoint = endpoint
 	go func() {
-		h.serveErr = sdk.ServeTransport(context.WithoutCancel(ctx), definition, guest)
+		h.serveErr = sdk.RunTransport(context.WithoutCancel(ctx), definition, guest)
 		h.serveErr = errors.Join(h.serveErr, guest.Close())
 		close(h.serveDone)
 	}()
@@ -87,14 +86,6 @@ func (o Options) handle(ctx context.Context, method string, input json.RawMessag
 		}
 		if o.Business != nil {
 			return o.Business.Call(ctx, call.Required, call.Input)
-		}
-	case "host.invoke":
-		var call contract.HostCall
-		if err := contract.Decode(input, &call); err != nil {
-			return nil, err
-		}
-		if o.Host != nil {
-			return o.Host.InvokeHost(ctx, call.Capability, call.Input)
 		}
 	}
 	return nil, contract.Fail(contract.NotReady, "test port not configured: "+method)

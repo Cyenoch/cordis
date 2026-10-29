@@ -1,4 +1,4 @@
-//go:build !wasip1 && !windows
+//go:build !windows
 
 package sdk
 

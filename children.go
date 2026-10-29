@@ -6,7 +6,6 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/Cyenoch/cordis/access"
 	"github.com/Cyenoch/cordis/contract"
 )
 
@@ -17,8 +16,8 @@ type ownedChild struct {
 
 type hostScope struct {
 	contract.Scope
-	host  *Host
-	realm string
+	host        *Host
+	definitions []contract.Definition
 }
 
 func (s *hostScope) Go(work func(context.Context) error) error {
@@ -31,80 +30,6 @@ func (s *hostScope) OnPublish(hook func(context.Context) error) error {
 
 func (s *hostScope) OnRetire(hook func(context.Context) error) error {
 	return s.Scope.(contract.ActivationScope).OnRetire(hook)
-}
-
-func (s *hostScope) InvokeHost(ctx context.Context, capability string, input json.RawMessage) (json.RawMessage, error) {
-	return s.host.broker.Call(ctx, s.Identity(), capability, input)
-}
-
-type localTask struct{ task *access.Task }
-
-func (t localTask) Context() context.Context { return t.task.Context() }
-func (t localTask) Finish(ctx context.Context, state string, result json.RawMessage, failure contract.Code) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	var cause error
-	if failure != "" {
-		cause = contract.Fail(failure, "task failed")
-	}
-	return t.task.Finish(access.TaskState(state), result, cause)
-}
-func (t localTask) Release(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return t.task.Release()
-}
-func (s *hostScope) BeginTask(ctx context.Context, id string) (contract.Task, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	task, err := s.host.tasks.Create(s.Context(), s.Identity(), id, contract.NewID())
-	if err != nil {
-		return nil, err
-	}
-	if err := task.Start(); err != nil {
-		return nil, err
-	}
-	return localTask{task}, nil
-}
-
-func (s *hostScope) Contribute(item contract.Contribution) error {
-	batch, err := s.host.contributions.Stage(s.Context(), s.Identity(), []contract.Contribution{item})
-	if err != nil {
-		return err
-	}
-	if err := batch.Abort(); err != nil {
-		return err
-	}
-	s.host.mu.Lock()
-	defer s.host.mu.Unlock()
-	if err := s.Context().Err(); err != nil {
-		return err
-	}
-	owner := s.Identity()
-	s.host.staged[owner.Activation] = append(s.host.staged[owner.Activation], item)
-	return nil
-}
-
-// RegisterDefinition makes a builtin definition available to same-package children.
-func (h *Host) RegisterDefinition(ctx context.Context, packageID string, definition contract.Definition) error {
-	if packageID == "" || definition.ID == "" || definition.Start == nil {
-		return contract.Fail(contract.Invalid, "package, definition id and start are required")
-	}
-	if err := h.lockOperation(ctx); err != nil {
-		return err
-	}
-	defer h.unlockOperation()
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	key := packageID + "/" + definition.ID
-	if h.definitions[key].Start != nil {
-		return contract.Fail(contract.Conflict, "definition already registered")
-	}
-	h.definitions[key] = definition
-	return nil
 }
 
 type localChild struct{ contract.Instance }
@@ -166,7 +91,7 @@ func (s *hostScope) CreateChild(ctx context.Context, child contract.Child) (cont
 		return nil, contract.Fail(contract.Denied, "child instance quota exceeded")
 	}
 	entry := contract.Entry{ID: owner.Entry + "." + child.ID, Parent: owner.Entry, Package: owner.Package,
-		Definition: child.Definition, Realm: s.realm, Config: child.Config, Enabled: true}
+		Definition: child.Definition, Config: child.Config, Enabled: true}
 	if owner.Digest != "builtin" {
 		instance, err := h.enableEntry(ctx, entry, &owner)
 		if err != nil {
@@ -179,15 +104,23 @@ func (s *hostScope) CreateChild(ctx context.Context, child contract.Child) (cont
 		return nil, err
 	}
 	defer release()
-	h.mu.Lock()
-	definition := h.definitions[owner.Package+"/"+child.Definition]
-	h.mu.Unlock()
+	var definition contract.Definition
+	found := false
+	for _, candidate := range s.definitions {
+		if candidate.ID == child.Definition {
+			if found {
+				return nil, contract.Fail(contract.Conflict, "duplicate child definition: "+child.Definition)
+			}
+			definition = candidate
+			found = true
+		}
+	}
 	if definition.Start == nil {
 		return nil, contract.Fail(contract.Invalid, "child definition is not registered")
 	}
 	original := definition
 	definition.Start = func(ctx context.Context, scope contract.Scope) error {
-		return h.startBuiltin(ctx, scope, entry.Realm, original)
+		return original.Start(ctx, &hostScope{Scope: scope, host: h, definitions: original.Children})
 	}
 	instance, err := h.engine.AddOwned(entry, definition, contract.Identity{Package: owner.Package, Digest: "builtin"}, owner)
 	if err != nil {
@@ -256,8 +189,6 @@ func (h *Host) handleChild(ctx context.Context, scope contract.Scope, input json
 		err = child.instance.Wait(ctx)
 	case "stop":
 		err = child.instance.Stop(ctx)
-	case "retry":
-		err = child.instance.Retry(ctx)
 	case "update":
 		result, updateErr := child.instance.Update(ctx, request.Child.Config)
 		if updateErr != nil {

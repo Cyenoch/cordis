@@ -14,39 +14,19 @@ import (
 )
 
 func TestManagedWorkWaitsForFinalPublication(t *testing.T) {
-	for _, failure := range []string{"start", "prepare", "missing-service", "duplicate", "cycle"} {
+	for _, failure := range []string{"start", "missing-service", "duplicate"} {
 		t.Run(failure, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				publishErr := errors.New("publication rejected")
-				e := core.NewWithHooks(core.Hooks{BeforePublish: func(id contract.Identity) error {
-					if failure == "prepare" && id.Entry == "work" {
-						return publishErr
-					}
-					return nil
-				}})
+				e := core.New()
 				defer func() { _ = e.Close(t.Context()) }()
-				if failure == "duplicate" || failure == "cycle" {
+				if failure == "duplicate" {
 					p := add(t, e, "provider", provider(`1`))
 					if err := p.Wait(t.Context()); err != nil {
 						t.Fatal(err)
 					}
 				}
 				entry := contract.Entry{ID: "work", Enabled: true}
-				if failure == "cycle" {
-					if err := e.ConfigureRealm("child", "", nil); err != nil {
-						t.Fatal(err)
-					}
-					parent, err := e.Add(contract.Entry{ID: "parent", Realm: "child", Enabled: true}, contract.Definition{
-						Requires: []contract.Requirement{requirement}, Start: definitionNoop().Start,
-					}, contract.Identity{})
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err := parent.Wait(t.Context()); err != nil {
-						t.Fatal(err)
-					}
-					entry.Realm, entry.Parent = "child", "parent"
-				}
 				var ran, published, cleaned atomic.Bool
 				def := contract.Definition{Provides: []contract.Service{service}, Start: func(_ context.Context, s contract.Scope) error {
 					if err := s.Defer(func(context.Context) error { cleaned.Store(true); return nil }); err != nil {
@@ -135,10 +115,10 @@ func TestPublicationAcknowledgmentGatesAdmission(t *testing.T) {
 			t.Fatalf("wait completed before acknowledgment: %v", err)
 		default:
 		}
-		if _, err := e.Call(t.Context(), "", requirement, nil); err == nil {
+		if _, err := e.Call(t.Context(), requirement, nil); err == nil {
 			t.Fatal("service called before publication acknowledgment")
 		}
-		if _, err := e.Emit(t.Context(), "", "ready", nil, contract.Sequential); err != nil || events.Load() != 0 {
+		if _, err := e.Emit(t.Context(), "ready", nil, contract.Sequential); err != nil || events.Load() != 0 {
 			t.Fatalf("event admitted before acknowledgment: %v", err)
 		}
 		if !errors.Is(startCtx.Err(), context.Canceled) || activationCtx.Err() != nil {
@@ -216,69 +196,6 @@ func TestLatePublicationCannotReviveRetiredWork(t *testing.T) {
 	})
 }
 
-func TestFailedPendingOverrideRevealsReadyProvider(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		e := core.New()
-		defer func() { _ = e.Close(t.Context()) }()
-		if err := e.ConfigureRealm("middle", "", nil); err != nil {
-			t.Fatal(err)
-		}
-		if err := e.ConfigureRealm("leaf", "middle", nil); err != nil {
-			t.Fatal(err)
-		}
-		root := add(t, e, "root", provider(`1`))
-		if err := root.Wait(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		var starts atomic.Int32
-		consumer, err := e.Add(contract.Entry{ID: "consumer", Realm: "leaf", Enabled: true}, contract.Definition{
-			Requires: []contract.Requirement{requirement}, Start: func(context.Context, contract.Scope) error { starts.Add(1); return nil },
-		}, contract.Identity{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := consumer.Wait(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		publishing, reject := make(chan struct{}), make(chan struct{})
-		pendingDef := provider(`3`)
-		pendingStart := pendingDef.Start
-		pendingDef.Start = func(ctx context.Context, s contract.Scope) error {
-			if err := pendingStart(ctx, s); err != nil {
-				return err
-			}
-			return s.(contract.ActivationScope).OnPublish(func(context.Context) error {
-				close(publishing)
-				<-reject
-				return errors.New("override acknowledgment failed")
-			})
-		}
-		pending, err := e.Add(contract.Entry{ID: "pending", Realm: "leaf", Enabled: true}, pendingDef, contract.Identity{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		<-publishing
-		middle, err := e.Add(contract.Entry{ID: "middle-provider", Realm: "middle", Enabled: true}, provider(`2`), contract.Identity{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := middle.Wait(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		if starts.Load() != 1 {
-			t.Fatal("pending provider acknowledgment caused premature rebinding")
-		}
-		close(reject)
-		if err := pending.Wait(t.Context()); err == nil {
-			t.Fatal("failed override was published")
-		}
-		synctest.Wait()
-		if starts.Load() != 2 || consumer.Status().State != contract.Active {
-			t.Fatal("revealed provider did not replace stale consumer binding")
-		}
-	})
-}
-
 func TestRetireNotificationPrecedesConsumerAndGlobalCleanup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		notifying, ack := make(chan struct{}), make(chan struct{})
@@ -330,7 +247,7 @@ func TestRetireNotificationPrecedesConsumerAndGlobalCleanup(t *testing.T) {
 			t.Fatal(err)
 		}
 		<-workStarted
-		if _, err := e.Call(t.Context(), "", requirement, nil); err != nil {
+		if _, err := e.Call(t.Context(), requirement, nil); err != nil {
 			t.Fatalf("managed work occupied service gate: %v", err)
 		}
 		var err error

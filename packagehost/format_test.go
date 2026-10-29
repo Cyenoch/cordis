@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func manifestFixture(id, version string) contract.Manifest {
-	return contract.Manifest{Schema: contract.PackageSchema, ID: id, Version: version, Publisher: "example", Protocol: contract.Protocol{Major: 1, MaxMinor: 0}, Definitions: []contract.DefinitionSpec{{ID: "main", ConfigSchema: []byte(`{"type":"object"}`)}}, DefaultDefinition: "main", Runtime: contract.RuntimeSpec{Kind: "wasm", Entry: "plugin.wasm"}, DataVersion: 1}
+	return contract.Manifest{Schema: contract.PackageSchema, ID: id, Version: version, Publisher: "example", Protocol: contract.Protocol{Major: 1, MaxMinor: 0}, Definitions: []contract.DefinitionSpec{{ID: "main", ConfigSchema: []byte(`{"type":"object"}`)}}, DefaultDefinition: "main", Runtime: contract.RuntimeSpec{Kind: "native", Artifacts: []contract.Artifact{{OS: runtime.GOOS, Arch: runtime.GOARCH, Path: "plugin"}}}}
 }
 func TestValidateManifest(t *testing.T) {
 	t.Parallel()
@@ -21,8 +22,8 @@ func TestValidateManifest(t *testing.T) {
 		change func(*contract.Manifest)
 	}{
 		{"unknown schema", func(m *contract.Manifest) { m.Schema = "future" }},
-		{"ambiguous runtime", func(m *contract.Manifest) {
-			m.Runtime.Artifacts = []contract.Artifact{{OS: "linux", Arch: "amd64", Path: "native"}}
+		{"missing native artifacts", func(m *contract.Manifest) {
+			m.Runtime.Artifacts = nil
 		}},
 		{"invalid semver", func(m *contract.Manifest) { m.Version = "1.0" }},
 		{"unknown definition", func(m *contract.Manifest) { m.DefaultDefinition = "missing" }},
@@ -80,7 +81,7 @@ func TestSignatureInput(t *testing.T) {
 	}
 }
 func FuzzPackagePath(f *testing.F) {
-	for _, seed := range []string{"plugin.wasm", "../escape", "CON", "e\u0301", "a/b"} {
+	for _, seed := range []string{"plugin", "../escape", "CON", "e\u0301", "a/b"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, name string) {

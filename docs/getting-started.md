@@ -1,18 +1,6 @@
 ---
 title: 快速开始
-description: 从 TOML 声明生成独立插件，完成 init、build、test、pack、run，再切换到 WASM。
-codeCommit: 727f8f4e2c8df9429ec47b3ba0e04ec287ca276a
-codePaths:
-  - go.mod
-  - cmd
-  - config
-  - schema
-  - sdk
-  - plugintest
-  - examples/pluginmeta
-  - examples/plugins/counter
-  - packagehost
-  - runtime
+description: 从 TOML 声明生成独立插件，完成 init、build、test、pack、run。
 ---
 
 # 快速开始
@@ -27,11 +15,10 @@ codePaths:
 CORDIS_ROOT="$(pwd)"
 mkdir -p bin
 go build -o ./bin/cordis ./cmd/cordis
-go build -o ./bin/cordis-worker ./cmd/cordis-worker
 CORDIS="$CORDIS_ROOT/bin/cordis"
 ```
 
-本页 shell 命令面向 macOS / Linux。Windows 使用 PowerShell、`cordis.exe` 和 `cordis-worker.exe`，本地检出的路径也必须是绝对路径。
+本页 shell 命令面向 macOS / Linux。Windows 使用 PowerShell、`cordis.exe`，本地检出的路径也必须是绝对路径。
 
 ## 初始化独立 module
 
@@ -79,6 +66,8 @@ package main
 
 import (
     "context"
+    "fmt"
+    "os"
 
     "github.com/Cyenoch/cordis/contract"
     "github.com/Cyenoch/cordis/sdk"
@@ -99,11 +88,14 @@ func start(_ context.Context, scope contract.Scope, config MainConfig) error {
 }
 
 func main() {
-    sdk.Main(NewMainDefinition(start))
+    if err := sdk.Run(context.Background(), NewMainDefinition(start)); err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(1)
+    }
 }
 ```
 
-配置校验和解码由生成的 `MainConfig` / `NewMainDefinition` 完成；`sdk.Main` 处理协议、信号和错误退出，stdout 留给协议。
+配置校验和解码由生成的 `MainConfig` / `NewMainDefinition` 完成；`sdk.Run` 处理协议、信号和清理，错误交给 main，stdout 留给协议。
 
 ## 构建、测试、打包
 
@@ -157,38 +149,10 @@ printf '%s' '{"prefix":"hello, "}' | "$CORDIS" run -dev-unsigned -service exampl
 
 stdin 只允许一个输入使用，且必须指定格式；内联与对应文件参数不能同时使用。Windows PowerShell 的原生命令 JSON 转义依版本不同，优先使用文件参数。
 
-## 切换到 WASM
-
-将作者 module 复制到另一个目录，继续复用同一份契约和业务：
-
-```sh
-cp -R "$PLUGIN" "$PLUGIN-wasm"
-cd "$PLUGIN-wasm"
-```
-
-在副本的 `plugin.toml` 中，只把 `[runtime]` 和 `[[runtime.artifacts]]` 两段替换成：
-
-```toml title="plugin.toml（WASM runtime）"
-[runtime]
-kind = "wasm"
-entry = "plugin.wasm"
-```
-
-保留其余身份、契约引用和独立 `go.mod` 的 replace。然后生成并构建 WASI command：
-
-```sh
-"$CORDIS" build -go-package . -goos wasip1 -goarch wasm .
-go test .
-"$CORDIS" pack . "$PLUGIN-wasm.zip"
-"$CORDIS" run -dev-unsigned -worker "$CORDIS_ROOT/bin/cordis-worker" -service example.echo -config-file config.toml -input-file input.toml "$PLUGIN-wasm.zip"
-```
-
-结果仍为 `{"text":"hello, Cordis"}`。worker 使用绝对路径，不从 PATH 或插件目录查找。WASM 默认不获得宿主文件、环境或任意网络权限；宿主能力走授权代理。Windows 的构建参数同样是 `-goos wasip1 -goarch wasm`，无需修改全局环境变量；worker 指向绝对路径的 `cordis-worker.exe`。
-
 ## 继续阅读
 
-- [数据契约](contracts.md)、[生成服务实操](generated-service.md)：配置约束、消费者范围和编辑器 schema；TOML 编辑器使用 Taplo `#:schema`，YAML 使用 language-server modeline，JSON 用文件关联，不往闭合业务对象塞 `$schema`。
-- [编写插件](plugin-author.md)、[接入宿主](host-guide.md)：能力、清理、签名信任和可靠关闭。
-- [组合实操](composition-tutorial.md)、[访问实操](access-tutorial.md)：子实例、realm、事件、任务与存储。
-- 仓库示例 `examples/plugins/counter` / `chain` 各自是独立 module；`go generate ./examples/pluginmeta` 从它们的作者源同时更新插件代码与宿主元数据，真实验收保留 Native/WASM 的原始调用和故障场景。
-- 完整仓库验收：macOS / Linux 执行 `bash conformance/run.sh`，Windows 执行 `./conformance/run.ps1`；不以业务 harness 测试代替真实运行时验收。
+- [组合实操](composition-tutorial.md)：父子实例、依赖激活与资源清理。
+- [插件作者](plugin-author.md)、[宿主接入](host-guide.md)：运行 native 插件和可靠关闭。
+- [数据契约](contracts.md)、[生成服务](generated-service.md)：配置类型、服务范围和编辑器 schema。
+
+仓库示例 counter 与 chain 各自使用独立 module。`go generate ./examples/pluginmeta` 同时更新示例契约与 Host 元数据；`bash conformance/run.sh` 验证真实 native 进程，Windows 使用 `conformance/run.ps1`。

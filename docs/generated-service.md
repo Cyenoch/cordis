@@ -1,14 +1,6 @@
 ---
 title: 生成服务实操
 description: 从一份受限 JSON 契约生成 Go client/server，在真实 Host Scope 上注册和调用。
-codeCommit: e6e5f172b7e6dd1099edf8e5f0016432548383a9
-codePaths:
-  - go.mod
-  - host.go
-  - service.go
-  - contract
-  - schema
-  - cmd/cordis
 ---
 
 # 生成服务实操
@@ -204,7 +196,7 @@ client 在发送前校验 request，server 在分派前校验另一端的数据�
 
 `contract.Consumer` 包含 Requirement 与本地方法契约指纹。client 检查服务名、major、范围是否包含声明 minor，以及方法身份；同名同 major 的另一份方法 schema 不会仅凭版本通过。身份不包含 provider minor，不要求 provider 整体指纹相等，也不证明语义兼容。包 SemVer、服务版本和会话协议各自独立。
 
-宿主入口应使用其公开的 realm-bound Caller；生成 client 只依赖 `contract.Caller`，不需要具体 SDK Client 断言或重复生成接口。宿主自身的 realm、可见性和授权策略仍由 Host 决定。
+Host 直接实现 `contract.Caller`，可以交给生成 client；插件使用自身 Scope 的依赖绑定。生成 client 不依赖具体 SDK Client。
 
 ## 可选、null 与联合
 

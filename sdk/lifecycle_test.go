@@ -59,7 +59,7 @@ func TestCanceledInitializationDrainsStartBeforeCleaningLateResources(t *testing
 			registered <- err
 			return err
 		}}
-		go func() { serveDone <- sdk.ServeTransport(t.Context(), definition, right) }()
+		go func() { serveDone <- sdk.RunTransport(t.Context(), definition, right) }()
 		host, err := wire.New(wire.Options{FrameBytes: contract.MaxFrameBytes,
 			Transport: left,
 			Identity:  contract.Identity{Activation: "cancel-start"},

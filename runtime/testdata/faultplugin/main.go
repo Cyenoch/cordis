@@ -1,4 +1,4 @@
-// faultplugin is a real native/WASI command for runtime integration tests.
+// faultplugin is a real native command for runtime integration tests.
 package main
 
 import (
@@ -55,7 +55,7 @@ func main() {
 			if err := json.Unmarshal(request.Payload, &input); err != nil {
 				panic(err)
 			}
-			value = map[string]any{"frameBytes": input.FrameBytes, "minor": 0, "features": []any{}, "services": []any{}, "subscriptions": []any{}, "contributions": []any{}}
+			value = map[string]any{"frameBytes": input.FrameBytes, "minor": 0, "features": []any{}, "services": []any{}, "subscriptions": []any{}}
 		case "health":
 			value = map[string]bool{"healthy": true}
 		case "counter":

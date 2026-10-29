@@ -85,13 +85,9 @@ func (s *Scope) Call(ctx context.Context, requirement contract.Requirement, inpu
 	ctx = context.WithValue(ctx, actorKey{}, a)
 	return e.callLocked(ctx, p, input, cleanup)
 }
-func (e *Engine) Call(ctx context.Context, namespace string, requirement contract.Requirement, input json.RawMessage) (json.RawMessage, error) {
+func (e *Engine) Call(ctx context.Context, requirement contract.Requirement, input json.RawMessage) (json.RawMessage, error) {
 	e.mu.Lock()
-	if _, ok := e.realms[namespace]; !ok {
-		e.mu.Unlock()
-		return nil, contract.Fail(contract.Invalid, "unknown realm")
-	}
-	p := e.resolveLocked(namespace, requirement)
+	p := e.resolveLocked(requirement)
 	if p == nil {
 		e.mu.Unlock()
 		return nil, contract.Fail(contract.NotReady, "service is unavailable")
@@ -211,21 +207,17 @@ func (s *Scope) Emit(ctx context.Context, name string, input json.RawMessage, mo
 	if retiring {
 		return nil, contract.Fail(contract.NotReady, "scope is retiring")
 	}
-	return e.Emit(context.WithValue(ctx, actorKey{}, a), a.instance.entry.Realm, name, input, mode)
+	return e.Emit(context.WithValue(ctx, actorKey{}, a), name, input, mode)
 }
-func (e *Engine) Emit(ctx context.Context, namespace, name string, input json.RawMessage, mode contract.Dispatch) ([]contract.EventResult, error) {
+func (e *Engine) Emit(ctx context.Context, name string, input json.RawMessage, mode contract.Dispatch) ([]contract.EventResult, error) {
 	if mode != contract.Sequential && mode != contract.Parallel && mode != contract.First {
 		return nil, contract.Fail(contract.Invalid, "unknown event dispatch mode")
 	}
 	ctx = context.WithValue(ctx, dispatchKey{}, mode)
 	e.mu.Lock()
-	if _, ok := e.realms[namespace]; !ok {
-		e.mu.Unlock()
-		return nil, contract.Fail(contract.Invalid, "unknown realm")
-	}
 	listeners := []*subscription{}
 	for _, listener := range e.events {
-		if listener.name == name && e.descendantLocked(namespace, listener.owner.instance.entry.Realm) && listener.owner.ready && !listener.owner.retiring {
+		if listener.name == name && listener.owner.ready && !listener.owner.retiring {
 			listeners = append(listeners, listener)
 		}
 	}

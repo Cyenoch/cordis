@@ -121,7 +121,7 @@ func TestTypedEventStrictDecodeAndFirstHandledZero(t *testing.T) {
 					laterCalls.Add(1)
 					return contract.EventResult{}, nil
 				})
-				if _, err := engine.Emit(t.Context(), "", event.Name, test.data, event.Mode); err == nil {
+				if _, err := engine.Emit(t.Context(), event.Name, test.data, event.Mode); err == nil {
 					t.Fatalf("typed event accepted %s", test.data)
 				}
 				if firstCalls.Load() != 0 || laterCalls.Load() != 0 {
@@ -139,7 +139,7 @@ func TestTypedEventStrictDecodeAndFirstHandledZero(t *testing.T) {
 				}
 				// The second consumer is real and subscribed: non-short-circuiting
 				// dispatch reaches it, proving First stopped because of Handled, not 0.
-				if _, err := engine.Emit(t.Context(), "", event.Name, json.RawMessage(`{"count":0}`), contract.Sequential); err != nil {
+				if _, err := engine.Emit(t.Context(), event.Name, json.RawMessage(`{"count":0}`), contract.Sequential); err != nil {
 					t.Fatal(err)
 				}
 				if firstCalls.Load() != 2 || laterCalls.Load() != 1 {
@@ -155,5 +155,5 @@ type typedEngineEmitter struct {
 }
 
 func (e typedEngineEmitter) Emit(ctx context.Context, name string, data json.RawMessage, mode contract.Dispatch) ([]contract.EventResult, error) {
-	return e.engine.Emit(ctx, "", name, data, mode)
+	return e.engine.Emit(ctx, name, data, mode)
 }

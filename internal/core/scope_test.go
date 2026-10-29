@@ -34,11 +34,11 @@ func TestEventDispatchHandledZeroAndParallelErrors(t *testing.T) {
 		if err := second.Wait(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		results, err := e.Emit(t.Context(), "", "value", nil, contract.First)
+		results, err := e.Emit(t.Context(), "value", nil, contract.First)
 		if err != nil || len(results) != 1 || string(results[0].Value) != `0` || later.Load() != 0 {
 			t.Fatalf("handled zero: %+v %v", results, err)
 		}
-		if _, err := e.Emit(t.Context(), "", "value", nil, contract.Sequential); err != nil {
+		if _, err := e.Emit(t.Context(), "value", nil, contract.Sequential); err != nil {
 			t.Fatal(err)
 		}
 		if later.Load() != 1 {
@@ -65,7 +65,7 @@ func TestEventDispatchHandledZeroAndParallelErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 		done := make(chan error, 1)
-		go func() { _, err := e.Emit(t.Context(), "", "parallel", nil, contract.Parallel); done <- err }()
+		go func() { _, err := e.Emit(t.Context(), "parallel", nil, contract.Parallel); done <- err }()
 		<-entered
 		synctest.Wait()
 		select {
@@ -103,7 +103,7 @@ func TestInstanceCallbacksRemainSerialAndStopRejectsQueue(t *testing.T) {
 			t.Fatal(err)
 		}
 		emitted := make(chan error, 1)
-		go func() { _, err := e.Emit(t.Context(), "", "event", nil, contract.Parallel); emitted <- err }()
+		go func() { _, err := e.Emit(t.Context(), "event", nil, contract.Parallel); emitted <- err }()
 		<-entered
 		synctest.Wait()
 		if calls.Load() != 1 {
@@ -115,7 +115,7 @@ func TestInstanceCallbacksRemainSerialAndStopRejectsQueue(t *testing.T) {
 		if err := <-emitted; err == nil {
 			t.Fatal("dispatch hid canceled callbacks")
 		}
-		if _, err := e.Emit(t.Context(), "", "event", nil, contract.Sequential); err != nil {
+		if _, err := e.Emit(t.Context(), "event", nil, contract.Sequential); err != nil {
 			t.Fatal(err)
 		}
 		if calls.Load() != 1 {
@@ -137,7 +137,7 @@ func TestWaitGraphRejectsCrossRootCycle(t *testing.T) {
 					if string(input) == `"root"` {
 						close(entered)
 						<-proceed
-						return e.Call(ctx, "", target, json.RawMessage(`"nested"`))
+						return e.Call(ctx, target, json.RawMessage(`"nested"`))
 					}
 					return json.RawMessage(`0`), nil
 				})
@@ -152,8 +152,8 @@ func TestWaitGraphRejectsCrossRootCycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		doneA, doneB := make(chan error, 1), make(chan error, 1)
-		go func() { _, err := e.Call(t.Context(), "", aReq, json.RawMessage(`"root"`)); doneA <- err }()
-		go func() { _, err := e.Call(t.Context(), "", bReq, json.RawMessage(`"root"`)); doneB <- err }()
+		go func() { _, err := e.Call(t.Context(), aReq, json.RawMessage(`"root"`)); doneA <- err }()
+		go func() { _, err := e.Call(t.Context(), bReq, json.RawMessage(`"root"`)); doneB <- err }()
 		<-enteredA
 		<-enteredB
 		close(proceedA)

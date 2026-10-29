@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,11 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cyenoch/cordis/access"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/packagehost"
 	"github.com/Cyenoch/cordis/runtime/native"
-	"github.com/Cyenoch/cordis/runtime/wasm"
 	"github.com/Cyenoch/cordis/schema"
 )
 
@@ -41,7 +38,7 @@ func TestExternalDefinitionPreflightAndManagedLifecycle(t *testing.T) {
 	source := t.TempDir()
 	files := map[string]string{"go.mod": "module dx-author\n\ngo 1.27.3\n\nrequire github.com/Cyenoch/cordis v0.0.0\nreplace github.com/Cyenoch/cordis => " + strconv.Quote(repo) + "\n", "cordis_gen.go": generated.String(), "main.go": `package main
 import("context";"encoding/json";"fmt";"os";"sync/atomic";"github.com/Cyenoch/cordis/contract";"github.com/Cyenoch/cordis/sdk")
-func main(){sdk.Main(NewListDefinition(func(context.Context,contract.Scope,ListConfig)error{return nil}),NewMainDefinition(start))}
+func main(){if err:=sdk.Run(context.Background(),NewListDefinition(func(context.Context,contract.Scope,ListConfig)error{return nil}),NewMainDefinition(start));err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}
 func start(_ context.Context,s contract.Scope,_ MainConfig)error{
  started:=make(chan struct{});var running atomic.Bool
  if err:=contract.Go(s,func(ctx context.Context)error{running.Store(true);close(started);<-ctx.Done();running.Store(false);fmt.Fprintln(os.Stderr,"managed-canceled");return ctx.Err()});err!=nil{return err}
@@ -57,207 +54,138 @@ func start(_ context.Context,s contract.Scope,_ MainConfig)error{
 			t.Fatal(err)
 		}
 	}
-	worker := filepath.Join(t.TempDir(), "worker")
+	artifact := "plugin"
+	goos, goarch := runtime.GOOS, runtime.GOARCH
 	if runtime.GOOS == "windows" {
-		worker += ".exe"
+		artifact += ".exe"
 	}
-	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", worker, "./cmd/cordis-worker")
+	cmd := exec.CommandContext(t.Context(), "go", "build", "-mod=mod", "-o", artifact, ".")
+	cmd.Dir = source
+	cmd.Env = append(os.Environ(), "GOWORK=off", "GOOS="+goos, "GOARCH="+goarch)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build worker: %v\n%s", err, out)
+		t.Fatalf("build author: %v\n%s", err, out)
 	}
-	for _, kind := range []string{"native", "wasm"} {
-		t.Run(kind, func(t *testing.T) {
-			artifact := "plugin"
-			goos, goarch := runtime.GOOS, runtime.GOARCH
-			if kind == "wasm" {
-				artifact += ".wasm"
-				goos, goarch = "wasip1", "wasm"
-			} else if runtime.GOOS == "windows" {
-				artifact += ".exe"
-			}
-			cmd := exec.CommandContext(t.Context(), "go", "build", "-mod=mod", "-o", artifact, ".")
-			cmd.Dir = source
-			cmd.Env = append(os.Environ(), "GOWORK=off", "GOOS="+goos, "GOARCH="+goarch)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("build author: %v\n%s", err, out)
-			}
-			// The deadline bounds the lifecycle under test, not the toolchain build.
-			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
-			defer cancel()
-			specs, err := declaration.Specs()
-			if err != nil {
-				t.Fatal(err)
-			}
-			var archives []string
-			trust := packagehost.TrustPolicy{DevDigests: map[string]bool{}, Publishers: map[string][]string{"author": {"dx"}}}
-			for _, version := range []string{"1.0.0", "2.0.0"} {
-				dir := t.TempDir()
-				binary, err := os.ReadFile(filepath.Join(source, artifact))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(dir, artifact), binary, 0600); err != nil {
-					t.Fatal(err)
-				}
-				manifest := contract.Manifest{Schema: contract.PackageSchema, ID: "dx", Version: version, Publisher: "author", Protocol: contract.Protocol{Major: 1}, DefaultDefinition: "main", Definitions: specs, Runtime: contract.RuntimeSpec{Kind: kind}}
-				if version == "2.0.0" {
-					for n := range manifest.Definitions {
-						if manifest.Definitions[n].ID == "main" {
-							manifest.Definitions[n].ConfigSchema = json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer","minimum":10}},"required":["n"]}`)
-						}
-					}
-				}
-				if kind == "wasm" {
-					manifest.Runtime.Entry = artifact
-				} else {
-					manifest.Runtime.Artifacts = []contract.Artifact{{OS: goos, Arch: goarch, Path: artifact}}
-				}
-				raw, err := json.Marshal(manifest)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(dir, "plugin.json"), raw, 0600); err != nil {
-					t.Fatal(err)
-				}
-				archive := filepath.Join(t.TempDir(), "package.zip")
-				pkg, err := packagehost.Pack(ctx, dir, archive)
-				if err != nil {
-					t.Fatal(err)
-				}
-				trust.DevDigests[pkg.Ref.Digest] = true
-				archives = append(archives, archive)
-			}
-			var mu sync.Mutex
-			var stages, rawStderr []string
-			broken := errors.New("diagnostic writer failure")
-			failSink := false
-			sink, err := access.NewSink(access.SinkOptions{Redact: func(_ context.Context, in access.DiagnosticInput) (string, error) {
-				mu.Lock()
-				if in.Stage == "stderr" {
-					rawStderr = append(rawStderr, in.Summary)
-				}
-				mu.Unlock()
-				return "redacted", nil
-			}, Write: func(_ context.Context, d access.Diagnostic) error {
-				mu.Lock()
-				defer mu.Unlock()
-				stages = append(stages, d.Stage)
-				if strings.Contains(d.Summary, "private-token") {
-					t.Error("stderr escaped redactor")
-				}
-				if failSink {
-					return broken
-				}
-				return nil
-			}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			var adapter contract.Runtime = native.New()
-			if kind == "wasm" {
-				// Hosts that start one module repeatedly use the compile cache; without
-				// it every activation recompiles the guest from scratch.
-				adapter = wasm.New(worker, wasm.Options{CacheDirectory: t.TempDir()})
-			}
-			h, err := Open(Options{Directory: t.TempDir(), Trust: trust, Runtimes: map[string]contract.Runtime{kind: adapter}, FrameBytes: contract.MaxFrameBytes, Sink: sink, DiagnosticStderr: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() {
-				if err := h.Close(context.Background()); err != nil {
-					t.Error(err)
-				}
-			}()
-			installed := make([]packagehost.Package, 0, 2)
-			for _, archive := range archives {
-				p, err := h.Install(ctx, archive)
-				if err != nil {
-					t.Fatal(err)
-				}
-				installed = append(installed, p)
-			}
-			if err := h.Select(ctx, installed[0].Ref); err != nil {
-				t.Fatal(err)
-			}
-			for _, entry := range []contract.Entry{{ID: "absent", Package: "dx"}, {ID: "null", Package: "dx", Config: json.RawMessage(`null`)}, {ID: "list", Package: "dx", Definition: "list"}, {ID: "wrong-definition", Package: "dx", Definition: "list", Config: json.RawMessage(`{"n":1}`)}} {
-				if _, err := h.Enable(ctx, entry); err == nil {
-					t.Fatalf("invalid config accepted: %+v", entry)
+	// The deadline bounds the lifecycle under test, not the toolchain build.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	specs, err := declaration.Specs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var archives []string
+	trust := packagehost.TrustPolicy{DevDigests: map[string]bool{}, Publishers: map[string][]string{"author": {"dx"}}}
+	for _, version := range []string{"1.0.0", "2.0.0"} {
+		dir := t.TempDir()
+		binary, err := os.ReadFile(filepath.Join(source, artifact))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, artifact), binary, 0600); err != nil {
+			t.Fatal(err)
+		}
+		manifest := contract.Manifest{Schema: contract.PackageSchema, ID: "dx", Version: version, Publisher: "author", Protocol: contract.Protocol{Major: 1}, DefaultDefinition: "main", Definitions: specs, Runtime: contract.RuntimeSpec{Kind: "native"}}
+		if version == "2.0.0" {
+			for n := range manifest.Definitions {
+				if manifest.Definitions[n].ID == "main" {
+					manifest.Definitions[n].ConfigSchema = json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer","minimum":10}},"required":["n"]}`)
 				}
 			}
-			if entries, err := h.Store().Entries(); err != nil || len(entries) != 0 {
-				t.Fatalf("preflight persisted invalid entries: %+v %v", entries, err)
-			}
-			list, err := h.Enable(ctx, contract.Entry{ID: "valid-list", Package: "dx", Definition: "list", Config: json.RawMessage(`["ok"]`)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := list.Wait(ctx); err != nil {
-				t.Fatal(err)
-			}
-			i, err := h.Enable(ctx, contract.Entry{ID: "main", Package: "dx", Config: json.RawMessage(`{"n":1}`)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := i.Wait(ctx); err != nil {
-				t.Fatal(err)
-			}
-			before := i.Status()
-			if _, err := i.Update(ctx, json.RawMessage(`{"n":"bad"}`)); err == nil {
-				t.Fatal("invalid update accepted")
-			}
-			if err := h.Replace(ctx, installed[1].Ref, packagehost.ChangeOptions{}); err == nil {
-				t.Fatal("invalid replacement config accepted")
-			}
-			if selected, err := h.Store().Selected("dx"); err != nil || selected.Ref != installed[0].Ref {
-				t.Fatal("invalid replacement committed selection", err)
-			}
-			if after := i.Status(); after.Identity != before.Identity || after.Desired != before.Desired || after.State != contract.Active {
-				t.Fatalf("preflight retired active instance: %+v", after)
-			}
-			required := contract.Requirement{Name: "dx", Major: 1}
-			if _, err := h.Call(ctx, "", required, json.RawMessage(`{"op":"child"}`)); err == nil {
-				t.Fatal("invalid child config accepted")
-			}
-			if _, err := h.Call(ctx, "", required, json.RawMessage(`{"op":"state"}`)); err != nil {
-				t.Fatalf("resident work blocked business: %v", err)
-			}
-			if err := h.Disable(ctx, "main"); err != nil {
-				t.Fatalf("managed normal cancellation/cleanup failed: %v", err)
-			}
+		}
+		manifest.Runtime.Artifacts = []contract.Artifact{{OS: goos, Arch: goarch, Path: artifact}}
+		raw, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "plugin.json"), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		archive := filepath.Join(t.TempDir(), "package.zip")
+		pkg, err := packagehost.Pack(ctx, dir, archive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		trust.DevDigests[pkg.Ref.Digest] = true
+		archives = append(archives, archive)
+	}
+	var mu sync.Mutex
+	var rawStderr []string
+	h, err := Open(Options{Directory: t.TempDir(), Trust: trust,
+		Runtime: native.New(), FrameBytes: contract.MaxFrameBytes,
+		Stderr: func(chunk []byte) error {
 			mu.Lock()
-			all := strings.Join(rawStderr, "")
-			mu.Unlock()
-			if !strings.Contains(all, "managed-canceled") || !strings.Contains(all, "cleaned") {
-				t.Fatalf("real process did not cancel work before cleanup: %q", all)
-			}
-			// A real runtime callback failure reaches bounded local diagnostics, not only a fake adapter.
-			i, err = h.Enable(ctx, contract.Entry{ID: "failing-sink", Package: "dx", Config: json.RawMessage(`{"n":1}`)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := i.Wait(ctx); err != nil {
-				t.Fatal(err)
-			}
-			mu.Lock()
-			failSink = true
-			mu.Unlock()
-			_, _ = h.Call(ctx, "", required, json.RawMessage(`{"op":"stderr"}`))
-			for len(h.DiagnosticErrors()) == 0 {
-				select {
-				case <-ctx.Done():
-					t.Fatal("runtime stderr callback failure was lost")
-				case <-time.After(time.Millisecond):
-				}
-			}
-			if !errors.Is(h.DiagnosticErrors()[0], broken) {
-				t.Fatal(h.DiagnosticErrors())
-			}
-			mu.Lock()
-			failSink = false
-			mu.Unlock()
-			if err := h.Disable(ctx, "failing-sink"); err != nil && !errors.Is(err, broken) {
-				t.Fatal(err)
-			}
-		})
+			defer mu.Unlock()
+			rawStderr = append(rawStderr, string(chunk))
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := h.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+	installed := make([]packagehost.Package, 0, 2)
+	for _, archive := range archives {
+		p, err := h.Install(ctx, archive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		installed = append(installed, p)
+	}
+	if err := h.Select(ctx, installed[0].Ref); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []contract.Entry{{ID: "absent", Package: "dx"}, {ID: "null", Package: "dx", Config: json.RawMessage(`null`)}, {ID: "list", Package: "dx", Definition: "list"}, {ID: "wrong-definition", Package: "dx", Definition: "list", Config: json.RawMessage(`{"n":1}`)}} {
+		if _, err := h.Enable(ctx, entry); err == nil {
+			t.Fatalf("invalid config accepted: %+v", entry)
+		}
+	}
+	if entries, err := h.Store().Entries(); err != nil || len(entries) != 0 {
+		t.Fatalf("preflight persisted invalid entries: %+v %v", entries, err)
+	}
+	list, err := h.Enable(ctx, contract.Entry{ID: "valid-list", Package: "dx", Definition: "list", Config: json.RawMessage(`["ok"]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := list.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	i, err := h.Enable(ctx, contract.Entry{ID: "main", Package: "dx", Config: json.RawMessage(`{"n":1}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := i.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := i.Status()
+	if _, err := i.Update(ctx, json.RawMessage(`{"n":"bad"}`)); err == nil {
+		t.Fatal("invalid update accepted")
+	}
+	if err := h.Replace(ctx, installed[1].Ref); err == nil {
+		t.Fatal("invalid replacement config accepted")
+	}
+	if selected, err := h.Store().Selected("dx"); err != nil || selected.Ref != installed[0].Ref {
+		t.Fatal("invalid replacement committed selection", err)
+	}
+	if after := i.Status(); after.Identity != before.Identity || after.Desired != before.Desired || after.State != contract.Active {
+		t.Fatalf("preflight retired active instance: %+v", after)
+	}
+	required := contract.Requirement{Name: "dx", Major: 1}
+	if _, err := h.Call(ctx, required, json.RawMessage(`{"op":"child"}`)); err == nil {
+		t.Fatal("invalid child config accepted")
+	}
+	if _, err := h.Call(ctx, required, json.RawMessage(`{"op":"state"}`)); err != nil {
+		t.Fatalf("resident work blocked business: %v", err)
+	}
+	if err := h.Disable(ctx, "main"); err != nil {
+		t.Fatalf("managed normal cancellation/cleanup failed: %v", err)
+	}
+	mu.Lock()
+	all := strings.Join(rawStderr, "")
+	mu.Unlock()
+	if !strings.Contains(all, "managed-canceled") || !strings.Contains(all, "cleaned") {
+		t.Fatalf("real process did not cancel work before cleanup: %q", all)
 	}
 }

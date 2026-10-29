@@ -47,7 +47,7 @@ func BenchmarkServiceDispatch(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(input)))
 			for b.Loop() {
-				output, err := engine.Call(b.Context(), "", requirement, input)
+				output, err := engine.Call(b.Context(), requirement, input)
 				if err != nil {
 					b.Fatal(err)
 				}

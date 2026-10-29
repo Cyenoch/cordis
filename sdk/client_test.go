@@ -18,10 +18,10 @@ func TestExternalAuthorInitializationAndShutdown(t *testing.T) {
 	cleaned := make(chan struct{})
 	result := make(chan error, 1)
 	go func() {
-		result <- sdk.ServeTransport(t.Context(), contract.Definition{ID: "sample", Start: func(ctx context.Context, scope contract.Scope) error {
-			greeting, err := contract.InvokeHost[struct{}, struct {
+		result <- sdk.RunTransport(t.Context(), contract.Definition{ID: "sample", Start: func(ctx context.Context, scope contract.Scope) error {
+			greeting, err := sdk.Call[struct{}, struct {
 				Value int `json:"value"`
-			}](ctx, scope, "greeting", struct{}{})
+			}](ctx, scope, contract.Requirement{Name: "greeting", Major: 1}, struct{}{})
 			if err != nil {
 				return err
 			}
@@ -41,7 +41,7 @@ func TestExternalAuthorInitializationAndShutdown(t *testing.T) {
 		}}, right)
 	}()
 	host, err := wire.New(wire.Options{FrameBytes: contract.MaxFrameBytes, Transport: left, Identity: contract.Identity{Package: "example", Entry: "one", Activation: "activation"}, Handler: func(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
-		if method != "host.invoke" {
+		if method != "call" {
 			return nil, contract.Fail(contract.Invalid, "unexpected host method")
 		}
 		return json.RawMessage(`{"value":42}`), nil

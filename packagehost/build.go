@@ -191,9 +191,6 @@ func normalizeBuildOptions(a *Author, o BuildOptions) (BuildOptions, error) {
 	if !validName(o.GOOS) || !validName(o.GOARCH) {
 		return o, fmt.Errorf("build requires explicit GOOS and GOARCH")
 	}
-	if a.Manifest.Runtime.Kind == "wasm" && (o.GOOS != "wasip1" || o.GOARCH != "wasm") {
-		return o, fmt.Errorf("wasm runtime requires wasip1/wasm")
-	}
 	artifact, err := Artifact(a.Manifest, o.GOOS, o.GOARCH)
 	if err != nil {
 		return o, err
@@ -488,24 +485,6 @@ func atomicBuildFile(dir, name string, data []byte) (err error) {
 func checkBinarySDK(file, goos, goarch string, sdk SDKBuild) error {
 	info, err := buildinfo.ReadFile(file)
 	if err != nil {
-		// Go's buildinfo reader does not support WASM; an explicit descriptor is
-		// the evidence there, and no artifact is ever run to discover capabilities.
-		if goos == "wasip1" && goarch == "wasm" {
-			f, openErr := openRegular(nil, file)
-			if openErr != nil {
-				return openErr
-			}
-			var header [8]byte
-			_, readErr := io.ReadFull(f, header[:])
-			closeErr := f.Close()
-			if readErr != nil || closeErr != nil {
-				return errors.Join(readErr, closeErr)
-			}
-			if header != [8]byte{0, 'a', 's', 'm', 1, 0, 0, 0} {
-				return fmt.Errorf("artifact is not a WASM v1 module")
-			}
-			return nil
-		}
 		return fmt.Errorf("read artifact SDK build info: %w", err)
 	}
 	settings := map[string]string{}
@@ -568,12 +547,8 @@ func stageAuthor(ctx context.Context, dir string) error {
 		return fmt.Errorf("generated contract %s changed; regenerate and rebuild", d.GeneratedOutput)
 	}
 	expected := map[string]string{}
-	if a.Manifest.Runtime.Kind == "wasm" {
-		expected["wasip1/wasm"] = a.Manifest.Runtime.Entry
-	} else {
-		for _, target := range a.Manifest.Runtime.Artifacts {
-			expected[target.OS+"/"+target.Arch] = target.Path
-		}
+	for _, target := range a.Manifest.Runtime.Artifacts {
+		expected[target.OS+"/"+target.Arch] = target.Path
 	}
 	if len(d.Targets) != len(expected) {
 		return fmt.Errorf("%s: built targets do not cover the declared runtime artifacts", BuildDescriptorFile)

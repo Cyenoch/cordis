@@ -21,7 +21,7 @@ func TestDiscoverDiagnosesAllSourcesWithoutTrustOrInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := sourceFixture(t, manifestFixture("demo", "1.0.0"))
-	if err := os.WriteFile(filepath.Join(changed, "plugin.wasm"), []byte("different"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(changed, "plugin"), []byte("different"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	sources := []Source{

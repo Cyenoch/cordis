@@ -27,9 +27,9 @@ func (i *instance) Status() contract.Status {
 	}
 	if i.state == contract.Waiting {
 		for _, req := range i.definition.Requires {
-			if p := e.resolveLocked(i.entry.Realm, req); p == nil || !p.owner.ready {
+			if p := e.resolveLocked(req); p == nil || !p.owner.ready {
 				reason := contract.WaitReason{Kind: "service", Requirement: &req, Reason: "missing"}
-				reason.Visible = e.visibleServicesLocked(i.entry.Realm, req)
+				reason.Visible = e.visibleServicesLocked(req)
 				if len(reason.Visible) != 0 {
 					reason.Reason = "incompatible"
 				}
@@ -46,27 +46,12 @@ func (i *instance) Status() contract.Status {
 	return status
 }
 
-func (e *Engine) visibleServicesLocked(namespace string, req contract.Requirement) []contract.Service {
+func (e *Engine) visibleServicesLocked(req contract.Requirement) []contract.Service {
 	visible := []contract.Service{}
-	seen := map[string]bool{}
-	for {
-		for key, p := range e.services[namespace] {
-			if p.service.Name != req.Name || seen[key] {
-				continue
-			}
-			seen[key] = true
-			if p.owner.ready && !p.owner.retiring {
-				visible = append(visible, p.service)
-			}
+	for _, p := range e.services {
+		if p.service.Name == req.Name && p.owner.ready && !p.owner.retiring {
+			visible = append(visible, p.service)
 		}
-		r := e.realms[namespace]
-		if namespace == "" || r.isolated[req.Key()] {
-			break
-		}
-		for key := range r.isolated {
-			seen[key] = true
-		}
-		namespace = r.parent
 	}
 	slices.SortFunc(visible, func(a, b contract.Service) int {
 		if a.Major < b.Major {
@@ -150,8 +135,8 @@ func (i *instance) waitEdgeLocked(ctx context.Context) (func(), error) {
 	}, nil
 }
 func (i *instance) finishRevisionLocked(revision uint64, result contract.UpdateResult, err error) {
-	pending := i.revisions[revision]
-	if pending == nil || pending.finished {
+	pending := i.pending
+	if revision != i.desired || pending == nil || pending.finished {
 		return
 	}
 	pending.result = result
@@ -191,21 +176,14 @@ func (i *instance) configure(config json.RawMessage, commit func() error) (func(
 		e.mu.Unlock()
 		return nil, contract.Fail(contract.NotReady, "instance is stopped or removed")
 	}
-	for rev, pending := range i.revisions {
-		if !pending.finished {
-			i.finishRevisionLocked(rev, contract.UpdateResult{Revision: rev, Superseded: true}, nil)
-		}
-		if pending.finished {
-			delete(i.revisions, rev)
-		}
-	}
+	i.finishRevisionLocked(i.desired, contract.UpdateResult{Revision: i.desired, Superseded: true}, nil)
 	i.desired++
 	revision := i.desired
 	i.config = config
 	i.entry.Config = slices.Clone(config)
 	i.failure = nil
 	result := &revisionResult{done: make(chan struct{})}
-	i.revisions[revision] = result
+	i.pending = result
 	if i.activation != nil {
 		i.activation.terminal = contract.Waiting
 		e.retireLocked(i.activation, contract.Waiting)
@@ -303,11 +281,7 @@ func (i *instance) stop(ctx context.Context, disable bool) (func(context.Context
 				stopTree(child)
 			}
 		}
-		for rev, pending := range owner.revisions {
-			if !pending.finished {
-				owner.finishRevisionLocked(rev, contract.UpdateResult{Revision: rev}, contract.Fail(contract.Canceled, "instance stopped"))
-			}
-		}
+		owner.finishRevisionLocked(owner.desired, contract.UpdateResult{Revision: owner.desired}, contract.Fail(contract.Canceled, "instance stopped"))
 		if owner.activation != nil {
 			e.retireLocked(owner.activation, contract.Stopped)
 		} else {
@@ -383,24 +357,6 @@ func ownedByLocked(e *Engine, i *instance, parent string) bool {
 		i = e.instances[i.entry.Parent]
 	}
 	return false
-}
-func (i *instance) Retry(ctx context.Context) error {
-	e := i.engine
-	e.mu.Lock()
-	if !i.enabled || e.closed || i.removing || e.instances[i.entry.ID] != i {
-		e.mu.Unlock()
-		return contract.Fail(contract.NotReady, "instance is stopped or removed")
-	}
-	if i.state != contract.Failed {
-		e.mu.Unlock()
-		return contract.Fail(contract.Conflict, "only failed instances can be retried")
-	}
-	i.failure = nil
-	i.state = contract.Waiting
-	i.revisions[i.desired] = &revisionResult{done: make(chan struct{})}
-	e.signalLocked()
-	e.mu.Unlock()
-	return i.Wait(ctx)
 }
 
 // Configure validates, durably records the desired configuration through the

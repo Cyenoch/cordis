@@ -10,7 +10,3 @@ kind = "native"
 os = "darwin"
 arch = "arm64"
 path = "plugin"
-
-[[capabilities]]
-id = "example.greeting"
-scope = {}

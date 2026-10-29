@@ -28,7 +28,7 @@ func openSDKSession(t *testing.T, definition contract.Definition) *sdkTestSessio
 	left, right := net.Pipe()
 	session := &sdkTestSession{done: make(chan struct{})}
 	go func() {
-		session.err = sdk.ServeTransport(t.Context(), definition, right)
+		session.err = sdk.RunTransport(t.Context(), definition, right)
 		close(session.done)
 	}()
 	var err error

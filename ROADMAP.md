@@ -5,6 +5,7 @@
 | 阶段 | 入口 |
 |---|---|
 | 通用插件框架与独立公开交付 | [build-go-plugin-framework](openspec/changes/archive/2026-10-28-build-go-plugin-framework/) |
+| 精简组合与 native 执行 | [simplify-native-composition](openspec/changes/archive/2026-10-29-simplify-native-composition/) |
 | 稳定版本发布 | 当前 change 验证完成后另行提案，不以公开源码等同稳定认证 |
 
-VortexGo 等消费者独立拥有其领域 Adapter、UI、业务插件和产品认证，不列入 Cordis 阶段出口。
+应用自行维护业务服务和产品验收，不列入 Cordis 的能力范围。

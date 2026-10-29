@@ -1,22 +1,14 @@
 ---
 title: CLI 命令
 description: Cordis 命令行工具的初始化、生成、构建、打包、签名与本地调试用法。
-codeCommit: 727f8f4e2c8df9429ec47b3ba0e04ec287ca276a
-codePaths:
-  - cmd/cordis
-  - cmd/cordis-worker
-  - packagehost
-  - schema
-  - config
 ---
 
 # CLI 命令
 
-从本文代码基线对应的检出构建工具：
+从当前检出构建工具：
 
 ```sh
 go build -o ./bin/cordis ./cmd/cordis
-go build -o ./bin/cordis-worker ./cmd/cordis-worker
 ./bin/cordis help
 ./bin/cordis version
 ```
@@ -50,22 +42,12 @@ go build -o ./bin/cordis-worker ./cmd/cordis-worker
 
 默认创建 `plugin.toml`、`main.go`、`main_test.go` 和 `go.mod`。作者源是对象型 TOML，内联最小 `main` definition，未声明的配置是严格空对象。业务入口使用生成的 `NewMainDefinition` 与 SDK 的标准进程入口，测试使用 `plugintest`。不会生成另一套构建脚本，也不写入开发信任或 native 执行许可。
 
-默认声明当前系统的 native 目标；也可初始化 WASM：
-
-```sh
-./bin/cordis init -module example.net/my-wasm-plugin -runtime wasm ./my-wasm-plugin
-(cd ./my-wasm-plugin && go mod tidy)
-./bin/cordis build -go-package . -goos wasip1 -goarch wasm ./my-wasm-plugin
-(cd ./my-wasm-plugin && go test .)
-./bin/cordis pack ./my-wasm-plugin ./my-wasm-plugin.zip
-```
-
-Native 构建同样必须显式指定 `-goos` 和 `-goarch`，值须与作者源中的 artifact 一致。`build` 只调用 `packagehost.Build`，不运行产物探测能力。
+默认声明当前系统的 native 目标。构建必须显式指定 `-goos` 和 `-goarch`，值须与作者源中的 artifact 一致。`build` 调用 `packagehost.Build`，不运行产物探测能力。
 
 | build 标志 | 说明 |
 | --- | --- |
 | `-go-package PACKAGE` | 必填，明确的 Go 构建包，例如 `.` |
-| `-goos OS` / `-goarch ARCH` | 必填，Go 构建目标；WASM 为 `wasip1/wasm` |
+| `-goos OS` / `-goarch ARCH` | 必填，原生 Go 构建目标 |
 | `-output PATH` | 相对作者目录的产物路径；默认取声明目标，显式值必须与声明一致 |
 | `-generated-package NAME` | 生成代码包名，默认 `main` |
 | `-generated-output PATH` | 相对作者目录的生成文件，默认 `cordis_gen.go` |
@@ -95,12 +77,11 @@ Native 构建同样必须显式指定 `-goos` 和 `-goarch`，值须与作者源
 | 标志 | 说明 |
 | --- | --- |
 | `-dev-unsigned` | 必须显式给出，仅许可本次精确摘要，不持久化信任 |
-| `-worker PATH` | WASM worker 的绝对路径，例如 `"$(pwd)/bin/cordis-worker"`；Native 不需要 |
 | `-definition ID` | 包内定义；默认用 Manifest 的默认定义 |
 | `-service NAME` | 启动后调用的服务；省略则打印实例状态 |
 | `-major N` | 服务主版本；省略时必须能唯一匹配，不能猜测 |
 | `-min-minor N` / `-max-minor N` | 兼容 minor 闭区间 |
-| `-startup-timeout DURATION` | 默认 `30s`，与 WASM 默认编译期限一致；必须大于零；只约束启动，不缩短后续业务调用 deadline |
+| `-startup-timeout DURATION` | 默认 `30s`；必须大于零；只约束启动，不缩短后续业务调用 deadline |
 | `-config JSON` / `-input JSON` | 内联 JSON，默认均为 `{}` |
 | `-config-file PATH` / `-input-file PATH` | 从文件加载；`-` 显式选择 stdin |
 | `-config-format FORMAT` / `-input-format FORMAT` | `toml`、`yaml` 或 `json`；省略时只按已知扩展名选择 |
@@ -115,7 +96,7 @@ printf '%s' '{"method":"execute","input":{"operation":"get","delta":0}}' | ./bin
 
 启动等待状态变化时，stderr 输出有界 `startup` JSON 诊断：definition、状态、实际 Requirement 范围、可见 provider 和不兼容原因；缺 provider 到期后非零退出。stdout 只输出最终状态或调用结果。启动超时不等于业务调用超时，取消也不回滚外部副作用。
 
-临时宿主不替你注册产品 capability、contribution validator 或业务存储。需要这些机制时使用[宿主公开 API](host-guide.md)。已签名但未被信任的包不会由 `-dev-unsigned` 绕过坏信任；正式签名包由宿主 TrustPolicy 加载。Native 仍拥有用户权限，不是沙箱；初始化和构建不会额外授权执行。
+应用服务可通过[宿主公开 API](host-guide.md)组合。已签名但未被信任的包不会由 `-dev-unsigned` 绕过坏信任；正式签名包由宿主 TrustPolicy 加载。Native 仍拥有用户权限，不是沙箱；初始化和构建不会额外授权执行。
 
 ## 生成 Go 契约
 

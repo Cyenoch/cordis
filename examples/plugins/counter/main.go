@@ -3,22 +3,27 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"strconv"
 
 	"github.com/Cyenoch/cordis/contract"
-	"github.com/Cyenoch/cordis/schema"
 	"github.com/Cyenoch/cordis/sdk"
 )
 
-func main() { sdk.Main(NewCounterDefinition(start)) }
+func main() {
+	if err := sdk.Run(context.Background(), NewCounterDefinition(start)); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
 
 type counter struct {
-	scope         contract.Scope
 	value, events int64
 }
 
 func start(_ context.Context, scope contract.Scope, config CounterConfig) error {
-	c := &counter{scope: scope}
+	c := &counter{}
 	if config.Initial.Present {
 		value, err := config.Initial.Value.Float64()
 		if err != nil {
@@ -45,18 +50,6 @@ func (c *counter) Execute(ctx context.Context, input ExampleCounterExecuteReques
 		}
 		c.value += int64(delta)
 	case "get":
-	case "host":
-		greeting, err := contract.InvokeHost[struct {
-			Name string `json:"name"`
-		}, struct {
-			Message string `json:"message"`
-		}](ctx, c.scope, "example.greeting", struct {
-			Name string `json:"name"`
-		}{Name: "plugin"})
-		if err != nil {
-			return out, err
-		}
-		out.Host = schema.Some(greeting.Message)
 	case "wait":
 		<-ctx.Done()
 		return out, ctx.Err()

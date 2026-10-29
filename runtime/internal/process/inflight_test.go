@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -25,23 +23,5 @@ func TestGenericInflightBudgetIsValidatedBeforeProcessCreation(t *testing.T) {
 				t.Fatalf("invalid inflight budget reached executable lookup: %v", err)
 			}
 		})
-	}
-}
-
-func TestCustomSessionRetainsItsOwnInflightPolicy(t *testing.T) {
-	factory := &contract.SessionFactory{
-		Protocol: contract.CustomSession,
-		Open: func(io.ReadWriteCloser, contract.Identity, contract.SessionHandler, int) (contract.Session, error) {
-			t.Fatal("missing executable unexpectedly started")
-			return nil, nil
-		},
-	}
-	_, err := Start(t.Context(), filepath.Join(t.TempDir(), "missing"), nil, contract.Launch{
-		Identity: contract.Identity{Activation: "custom-budget"}, SessionFactory: factory,
-		Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) { return nil, nil },
-	}, Options{Limits: wire.Limits{Inflight: 8}})
-	var pathError *os.PathError
-	if !errors.As(err, &pathError) {
-		t.Fatalf("generic inflight policy applied to custom protocol: %v", err)
 	}
 }

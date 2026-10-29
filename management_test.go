@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Cyenoch/cordis/contract"
-	"github.com/Cyenoch/cordis/packagehost"
 	"github.com/Cyenoch/cordis/schema"
 )
 
@@ -61,15 +60,15 @@ func TestResumeWaitDoesNotBlockLateProviderOrUnrelatedManagement(t *testing.T) {
 	})
 }
 
-func TestRestoreIsPartialRepeatableAndDoesNotUndoTemporaryStop(t *testing.T) {
+func TestRestoreIsRepeatableAndDoesNotUndoTemporaryStop(t *testing.T) {
 	h, pkg, _ := lifecycleHost(t)
-	for _, entry := range []contract.Entry{{ID: "a", Package: pkg.ID, Definition: "main", Enabled: true}, {ID: "b", Package: pkg.ID, Definition: "main", Realm: "later", Enabled: true}} {
+	for _, entry := range []contract.Entry{{ID: "a", Package: pkg.ID, Definition: "main", Enabled: true}, {ID: "b", Package: pkg.ID, Definition: "main", Enabled: true}} {
 		if err := h.store.SaveEntry(t.Context(), entry); err != nil {
 			t.Fatal(err)
 		}
 	}
 	report, err := h.Restore(t.Context())
-	if err == nil || len(report.Entries) != 2 {
+	if err != nil || len(report.Entries) != 2 {
 		t.Fatal(report, err)
 	}
 	a, err := h.Instance("a")
@@ -80,9 +79,6 @@ func TestRestoreIsPartialRepeatableAndDoesNotUndoTemporaryStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity := a.Status().Identity
-	if err := h.ConfigureRealm("later", "", nil); err != nil {
-		t.Fatal(err)
-	}
 	report, err = h.Restore(t.Context())
 	if err != nil {
 		t.Fatal(report, err)
@@ -244,75 +240,6 @@ func TestDefinitionPreflightDoesNotCommitOrRetireInvalidUpdates(t *testing.T) {
 	}
 	if string(entries[0].Config) != "{}" || external.Status().Identity != before.Identity {
 		t.Fatal("invalid external update committed")
-	}
-}
-
-func TestDefaultDispatcherDelegatesOnceAndPreservesFailure(t *testing.T) {
-	h, err := Open(Options{Directory: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := h.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
-	})
-	if err := h.RegisterDefinition(t.Context(), "builtin", contract.Definition{ID: "child", Start: func(context.Context, contract.Scope) error { return nil }}); err != nil {
-		t.Fatal(err)
-	}
-	h.options.Authorize = func(context.Context, contract.Identity, contract.Capability) (json.RawMessage, error) {
-		return json.RawMessage(`{}`), nil
-	}
-	if err := h.Broker().Register("delegated", func(context.Context, contract.Identity, json.RawMessage, json.RawMessage, json.RawMessage) error {
-		return nil
-	}, func(context.Context, contract.Identity, json.RawMessage) (json.RawMessage, error) {
-		return json.RawMessage(`true`), nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	original := errors.New("local scope failure")
-	calls := 0
-	h.options.HandleGuest = func(ctx context.Context, s contract.Scope, method string, raw json.RawMessage) (json.RawMessage, error) {
-		if method == "mine" {
-			calls++
-			return nil, original
-		}
-		return h.DispatchGuest(ctx, s, method, raw)
-	}
-	scopes := make(chan contract.Scope, 1)
-	i, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "caller"}, contract.Definition{Capabilities: []contract.Capability{{ID: "delegated", Scope: json.RawMessage(`{}`)}}, Start: func(_ context.Context, s contract.Scope) error { scopes <- s; return nil }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := i.Wait(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	scope := <-scopes
-	if _, err := h.handleGuest(t.Context(), scope, "mine", json.RawMessage(`{}`)); !errors.Is(err, original) || calls != 1 {
-		t.Fatal(calls, err)
-	}
-	data, _ := json.Marshal(contract.TaskRequest{ID: "one", Token: "token"})
-	if _, err := h.handleGuest(t.Context(), scope, "task.begin", data); err != nil {
-		t.Fatal(err)
-	}
-	tasks := h.tasks.Snapshot()
-	if len(tasks) != 1 || tasks[0].ID != "one" {
-		t.Fatal(tasks)
-	}
-	data, _ = json.Marshal(contract.HostCall{Capability: "delegated", Input: json.RawMessage(`{}`)})
-	if out, err := h.handleGuest(t.Context(), scope, "host.invoke", data); err != nil || string(out) != "true" {
-		t.Fatal(string(out), err)
-	}
-	data, _ = json.Marshal(contract.ChildRequest{Action: "create", Child: contract.Child{ID: "created", Definition: "child"}})
-	if _, err := h.handleGuest(t.Context(), scope, "child", data); err != nil {
-		t.Fatal(err)
-	}
-	data, _ = json.Marshal(contract.ChildRequest{Action: "wait", ID: "created"})
-	if _, err := h.handleGuest(t.Context(), scope, "child", data); err != nil {
-		t.Fatal(err)
-	}
-	if calls != 1 {
-		t.Fatal("delegation replayed custom business method")
 	}
 }
 
@@ -497,7 +424,7 @@ func (s *blockedShutdownSession) Call(ctx context.Context, method string, raw js
 func TestCanceledDisableCannotResumeDurablyDisabledEntry(t *testing.T) {
 	h, pkg, _ := lifecycleHost(t)
 	entered, release := make(chan struct{}), make(chan struct{})
-	h.options.Runtimes["wasm"] = blockedShutdownRuntime{entered, release}
+	h.options.Runtime = blockedShutdownRuntime{entered, release}
 	i, err := h.Enable(t.Context(), contract.Entry{ID: "disabled", Package: pkg.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -549,7 +476,7 @@ func TestRestoreCannotStartOldPackageDuringReplacement(t *testing.T) {
 	h, p1, p2 := lifecycleHost(t)
 	entered, release := make(chan struct{}), make(chan struct{})
 	adapter := &blockFirstShutdownRuntime{entered: entered, release: release}
-	h.options.Runtimes["wasm"] = adapter
+	h.options.Runtime = adapter
 	i, err := h.Enable(t.Context(), contract.Entry{ID: "live", Package: p1.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -561,7 +488,7 @@ func TestRestoreCannotStartOldPackageDuringReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- h.Replace(t.Context(), p2, packagehost.ChangeOptions{}) }()
+	go func() { done <- h.Replace(t.Context(), p2) }()
 	<-entered
 	report, err := h.Restore(t.Context())
 	if err == nil {

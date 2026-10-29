@@ -17,7 +17,7 @@ func TestParallelEventContinuesAfterLocalError(t *testing.T) {
 	var later atomic.Int32
 	done := make(chan error, 1)
 	go func() {
-		done <- sdk.ServeTransport(t.Context(), contract.Definition{ID: "audit", Start: func(_ context.Context, s contract.Scope) error {
+		done <- sdk.RunTransport(t.Context(), contract.Definition{ID: "audit", Start: func(_ context.Context, s contract.Scope) error {
 			if err := s.On("audit", func(context.Context, json.RawMessage) (contract.EventResult, error) {
 				return contract.EventResult{}, contract.Fail(contract.Invalid, "first failed")
 			}); err != nil {

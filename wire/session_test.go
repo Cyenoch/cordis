@@ -52,13 +52,13 @@ func testInitialize(activation string) json.RawMessage {
 }
 
 func testRegistration() json.RawMessage {
-	return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[],"subscriptions":[],"contributions":[]}`)
+	return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[],"subscriptions":[]}`)
 }
 
 func TestEndpointBidirectionalCalls(t *testing.T) {
 	var guest *Endpoint
 	hostHandler := func(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
-		if method != "host.invoke" {
+		if method != "call" {
 			return nil, contract.Fail(contract.Invalid, "unknown method")
 		}
 		return json.RawMessage(`{"value":42}`), nil
@@ -67,7 +67,7 @@ func TestEndpointBidirectionalCalls(t *testing.T) {
 		if method == "initialize" {
 			return json.RawMessage(`{}`), nil
 		}
-		return guest.Call(ctx, "host.invoke", input)
+		return guest.Call(ctx, "call", input)
 	}
 	h, g := pair(t, hostHandler, guestHandler)
 	guest = g

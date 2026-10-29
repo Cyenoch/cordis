@@ -67,7 +67,7 @@ func TestStoreRecoveryProcessExit(t *testing.T) {
 						t.Fatal(err)
 					}
 					entry := contract.Entry{
-						ID: "entry", Package: "demo", Definition: "main", Realm: "root",
+						ID: "entry", Package: "demo", Definition: "main",
 						Config: []byte(`{}`), Enabled: true,
 					}
 					if err = s.SaveEntry(ctx, entry); err != nil {
@@ -142,7 +142,7 @@ func TestStoreRecoveryProcessExit(t *testing.T) {
 						if p.Ref != p1.Ref && (!wantV2 || p.Ref != p2.Ref) {
 							t.Fatalf("unexpected installed reference: %+v", p.Ref)
 						}
-						checked, input, sig, err := inspect(ctx, p.Directory, p.Source, p.Development, s.limits, nil)
+						checked, input, sig, err := inspect(ctx, p.Directory, p.Source, p.Development, s.limits)
 						if err != nil || checked.Ref != p.Ref {
 							t.Fatalf("recovered content is inconsistent for %+v: %+v, %v", p.Ref, checked.Ref, err)
 						}

@@ -14,29 +14,23 @@ import (
 	"time"
 
 	"github.com/Cyenoch/cordis/contract"
-	"github.com/Cyenoch/cordis/runtime/wasm"
+	"github.com/Cyenoch/cordis/runtime/native"
 )
 
-func TestWASICommandAuthorSDK(t *testing.T) {
+func TestNativeCommandAuthorSDK(t *testing.T) {
 	dir := t.TempDir()
-	worker := filepath.Join(dir, "worker")
+	plugin := filepath.Join(dir, "counter")
 	if runtime.GOOS == "windows" {
-		worker += ".exe"
+		plugin += ".exe"
 	}
-	plugin := filepath.Join(dir, "counter.wasm")
-	build := exec.Command("go", "build", "-o", worker, "./cmd/cordis-worker")
-	build.Dir = ".."
-	if data, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("worker build %v: %s", err, data)
-	}
-	build = exec.Command("go", "build", "-o", plugin, ".")
+	build := exec.Command("go", "build", "-o", plugin, ".")
 	build.Dir = "../examples/plugins/counter"
-	build.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
+	build.Env = os.Environ()
 	if data, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("author build %v: %s", err, data)
 	}
 	identity := contract.Identity{Package: "example.counter", Entry: "one", Activation: contract.NewID(), Digest: "fixture"}
-	session, err := wasm.New(worker).Start(t.Context(), contract.Launch{FrameBytes: contract.MaxFrameBytes, Identity: identity, Directory: dir, Artifact: plugin, Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	session, err := native.New().Start(t.Context(), contract.Launch{FrameBytes: contract.MaxFrameBytes, Identity: identity, Directory: dir, Artifact: plugin, Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 		return json.RawMessage(`{"message":"host callback"}`), nil
 	}})
 	if err != nil {
@@ -54,7 +48,7 @@ func TestWASICommandAuthorSDK(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := session.Call(startup, "initialize", input); err != nil {
-		t.Fatalf("WASI SDK initialize: %v", err)
+		t.Fatalf("native SDK initialize: %v", err)
 	}
 	if _, err := session.Call(startup, "activation.publish", json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
@@ -62,23 +56,22 @@ func TestWASICommandAuthorSDK(t *testing.T) {
 	startupCancel()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	input, err = json.Marshal(contract.Invocation{Service: contract.Service{Name: "example.counter", Major: 1}, Input: json.RawMessage(`{"method":"execute","input":{"operation":"host","delta":0}}`)})
+	input, err = json.Marshal(contract.Invocation{Service: contract.Service{Name: "example.counter", Major: 1}, Input: json.RawMessage(`{"method":"execute","input":{"operation":"get","delta":0}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	data, err := session.Call(ctx, "call", input)
 	if err != nil {
-		t.Fatalf("WASI SDK callback: %v", err)
+		t.Fatalf("native SDK callback: %v", err)
 	}
 	var result struct {
-		Value  int    `json:"value"`
-		Events int    `json:"events"`
-		Host   string `json:"host"`
+		Value  int `json:"value"`
+		Events int `json:"events"`
 	}
 	if err := contract.Decode(data, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Value != 4 || result.Host != "host callback" {
+	if result.Value != 4 {
 		t.Fatalf("wrong guest result: %s", data)
 	}
 	waitInput, err := json.Marshal(contract.Invocation{Service: contract.Service{Name: "example.counter", Major: 1}, Input: json.RawMessage(`{"method":"execute","input":{"operation":"wait","delta":0}}`)})
@@ -89,10 +82,10 @@ func TestWASICommandAuthorSDK(t *testing.T) {
 	_, err = session.Call(waitCtx, "call", waitInput)
 	stop()
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("WASI cancellation: %v", err)
+		t.Fatalf("native cancellation: %v", err)
 	}
 	if _, err := session.Call(ctx, "health", json.RawMessage(`{}`)); err != nil {
-		t.Fatalf("cancellation froze WASI control loop: %v", err)
+		t.Fatalf("cancellation froze native control loop: %v", err)
 	}
 	if _, err := session.Call(ctx, "shutdown", json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)

@@ -57,67 +57,53 @@ func TestGettingStarted(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		suffix = ".exe"
 	}
-	cli, worker := filepath.Join(bin, "cordis"+suffix), filepath.Join(bin, "worker"+suffix)
+	cli := filepath.Join(bin, "cordis"+suffix)
 	run(root, "", "go", "build", "-o", cli, "./cmd/cordis")
-	run(root, "", "go", "build", "-o", worker, "./cmd/cordis-worker")
-	for _, kind := range []string{"native", "wasm"} {
-		t.Run(kind, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "hello")
-			run(root, "", cli, "init", "-module", "example.net/cordis-hello", "-sdk-version", "v0.0.0",
-				"-id", "example.hello", "-publisher", "example.author", dir)
-			run(dir, "", "go", "mod", "edit", "-replace=github.com/Cyenoch/cordis="+root)
-			path := filepath.Join(dir, "plugin.toml")
-			declaration, err := os.ReadFile(path)
-			if err != nil {
+	dir := filepath.Join(t.TempDir(), "hello")
+	run(root, "", cli, "init", "-module", "example.net/cordis-hello", "-sdk-version", "v0.0.0",
+		"-id", "example.hello", "-publisher", "example.author", dir)
+	run(dir, "", "go", "mod", "edit", "-replace=github.com/Cyenoch/cordis="+root)
+	path := filepath.Join(dir, "plugin.toml")
+	declaration, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declaration = bytes.Split(declaration, []byte("[[contract.definitions]]"))[0]
+	declaration = bytes.Replace(declaration, []byte("[runtime]"), append(block("toml", "plugin.toml（添加到顶层）"), []byte("\n[runtime]")...), 1)
+	write(path, declaration)
+	for _, file := range []struct{ language, name string }{
+		{"go", "main.go"}, {"toml", "contract.toml"}, {"toml", "config.toml"}, {"toml", "input.toml"},
+	} {
+		write(filepath.Join(dir, file.name), block(file.language, file.name))
+	}
+	run(dir, "", "go", "mod", "tidy")
+	goos, goarch := runtime.GOOS, runtime.GOARCH
+	run(dir, "", cli, "build", "-go-package", ".", "-goos", goos, "-goarch", goarch, ".")
+	run(dir, "", "go", "test", ".")
+	archive := dir + ".zip"
+	run(dir, "", cli, "pack", ".", archive)
+	run(dir, "", cli, "inspect", archive)
+	for _, input := range []struct {
+		name, stdin string
+		args        []string
+	}{
+		{"TOML files", "", []string{"-config-file", "config.toml", "-input-file", "input.toml"}},
+		{"inline JSON", "", []string{"-config", `{"prefix":"hello, "}`, "-input", `{"method":"echo","input":{"text":"Cordis"}}`}},
+		{"JSON stdin", `{"prefix":"hello, "}`, []string{"-config-file", "-", "-config-format", "json", "-input-file", "input.toml"}},
+	} {
+		t.Run(input.name, func(t *testing.T) {
+			args := []string{"run", "-dev-unsigned", "-service", "example.echo"}
+			args = append(append(args, input.args...), archive)
+			got := run(dir, input.stdin, cli, args...)
+			var want, actual bytes.Buffer
+			if err := json.Compact(&want, block("json", "调用结果")); err != nil {
 				t.Fatal(err)
 			}
-			declaration = bytes.Split(declaration, []byte("[[contract.definitions]]"))[0]
-			declaration = bytes.Replace(declaration, []byte("[runtime]"), append(block("toml", "plugin.toml（添加到顶层）"), []byte("\n[runtime]")...), 1)
-			if kind == "wasm" {
-				declaration = append(bytes.Split(declaration, []byte("[runtime]"))[0], block("toml", "plugin.toml（WASM runtime）")...)
+			if err := json.Compact(&actual, got); err != nil {
+				t.Fatal(err)
 			}
-			write(path, declaration)
-			for _, file := range []struct{ language, name string }{
-				{"go", "main.go"}, {"toml", "contract.toml"}, {"toml", "config.toml"}, {"toml", "input.toml"},
-			} {
-				write(filepath.Join(dir, file.name), block(file.language, file.name))
-			}
-			run(dir, "", "go", "mod", "tidy")
-			goos, goarch := runtime.GOOS, runtime.GOARCH
-			if kind == "wasm" {
-				goos, goarch = "wasip1", "wasm"
-			}
-			run(dir, "", cli, "build", "-go-package", ".", "-goos", goos, "-goarch", goarch, ".")
-			run(dir, "", "go", "test", ".")
-			archive := dir + ".zip"
-			run(dir, "", cli, "pack", ".", archive)
-			run(dir, "", cli, "inspect", archive)
-			for _, input := range []struct {
-				name, stdin string
-				args        []string
-			}{
-				{"TOML files", "", []string{"-config-file", "config.toml", "-input-file", "input.toml"}},
-				{"inline JSON", "", []string{"-config", `{"prefix":"hello, "}`, "-input", `{"method":"echo","input":{"text":"Cordis"}}`}},
-				{"JSON stdin", `{"prefix":"hello, "}`, []string{"-config-file", "-", "-config-format", "json", "-input-file", "input.toml"}},
-			} {
-				t.Run(input.name, func(t *testing.T) {
-					args := []string{"run", "-dev-unsigned", "-service", "example.echo"}
-					if kind == "wasm" {
-						args = append(args, "-worker", worker)
-					}
-					args = append(append(args, input.args...), archive)
-					got := run(dir, input.stdin, cli, args...)
-					var want, actual bytes.Buffer
-					if err := json.Compact(&want, block("json", "调用结果")); err != nil {
-						t.Fatal(err)
-					}
-					if err := json.Compact(&actual, got); err != nil {
-						t.Fatal(err)
-					}
-					if !bytes.Equal(actual.Bytes(), want.Bytes()) {
-						t.Fatalf("tutorial result differs: %s", got)
-					}
-				})
+			if !bytes.Equal(actual.Bytes(), want.Bytes()) {
+				t.Fatalf("tutorial result differs: %s", got)
 			}
 		})
 	}

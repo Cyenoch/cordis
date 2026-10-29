@@ -2,28 +2,11 @@ package cordis
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"slices"
 
 	"github.com/Cyenoch/cordis/contract"
 )
-
-// Realm returns a view that reuses the host's routing and visibility rules.
-func (h *Host) Realm(name string) *Realm { return &Realm{host: h, name: name} }
-
-type Realm struct {
-	host *Host
-	name string
-}
-
-func (r *Realm) Call(ctx context.Context, required contract.Requirement, input json.RawMessage) (json.RawMessage, error) {
-	return r.host.Call(ctx, r.name, required, input)
-}
-
-func (r *Realm) Emit(ctx context.Context, name string, input json.RawMessage, mode contract.Dispatch) ([]contract.EventResult, error) {
-	return r.host.Emit(ctx, r.name, name, input, mode)
-}
 
 func (h *Host) Instance(id string) (contract.Instance, error) {
 	h.mu.Lock()
@@ -117,7 +100,7 @@ func (h *Host) reserveTrees(roots []string) (func(), error) {
 }
 
 // Remove deletes the durable entry record after its runtime tree has stopped.
-// It never deletes plugin namespace data or uninstalls package code.
+// It does not uninstall package code.
 func (h *Host) Remove(ctx context.Context, id string) error {
 	if err := h.lockOperation(ctx); err != nil {
 		return err
@@ -178,32 +161,6 @@ func (h *Host) reservePackage(id string) (func(), error) {
 	}
 	h.packageOps[id] = true
 	return func() { h.mu.Lock(); delete(h.packageOps, id); h.mu.Unlock() }, nil
-}
-
-func (h *Host) reservePlan(plan CascadePlan) (func(), error) {
-	releasePackage, err := h.reservePackage(plan.Target.ID)
-	if err != nil {
-		return nil, err
-	}
-	roots := make([]string, 0, len(plan.Entries))
-	for _, entry := range plan.Entries {
-		roots = append(roots, entry.ID)
-	}
-	// Selection cascades omit the target from the removal plan, but replacement
-	// still snapshots and rebuilds its entire current ownership tree.
-	h.mu.Lock()
-	for id, ref := range h.packages {
-		if ref.ID == plan.Target.ID && !slices.Contains(roots, id) {
-			roots = append(roots, id)
-		}
-	}
-	h.mu.Unlock()
-	releaseTrees, err := h.reserveTrees(roots)
-	if err != nil {
-		releasePackage()
-		return nil, err
-	}
-	return func() { releaseTrees(); releasePackage() }, nil
 }
 
 // waitOperation relinquishes only global admission. Entry/tree reservations

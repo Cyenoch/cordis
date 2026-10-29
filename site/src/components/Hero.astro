@@ -4,7 +4,7 @@ import { Code, Icon } from '@astrojs/starlight/components'
 
 const isHome = Astro.locals.starlightRoute.entry.id === ''
 const base = import.meta.env.BASE_URL.replace(/\/$/, '')
-const plugin = `sdk.Serve(ctx, contract.Definition{
+const plugin = `sdk.Run(ctx, contract.Definition{
     ID: "counter",
     Start: func(ctx context.Context,
         scope contract.Scope) error {
@@ -30,13 +30,13 @@ const plugin = `sdk.Serve(ctx, contract.Definition{
         <a class="source-link" href="https://github.com/Cyenoch/cordis">查看源码 <Icon name="github" size="1.1rem" /></a>
       </div>
       <div class="runtime-labels" aria-label="运行形式与许可">
-        <span>Go SDK</span><span>WASM / Native</span><span>MIT</span>
+        <span>Go SDK</span><span>Native</span><span>MIT</span>
       </div>
     </div>
     <div class="hero-code">
       <Code code={plugin} lang="go" title="counter.go · 服务定义片段" />
-      <div class="package-route" aria-label="插件经宿主管理，可以运行于 WASM 或原生进程">
-        <span>plugin.zip</span><Icon name="right-arrow" size="1rem" /><strong>Cordis Host</strong><Icon name="right-arrow" size="1rem" /><span>WASM / Native</span>
+      <div class="package-route" aria-label="插件经宿主管理，运行于原生进程">
+        <span>plugin.zip</span><Icon name="right-arrow" size="1rem" /><strong>Cordis Host</strong><Icon name="right-arrow" size="1rem" /><span>Native</span>
       </div>
     </div>
   </section>

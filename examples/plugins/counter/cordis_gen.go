@@ -69,7 +69,7 @@ func (v *Settings) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-const CounterDefinitionDeclarationFingerprint = "25daa2b30d9bf4337584a339f4aa1e41fa5df64823c40ba95ca577abc42d9f35"
+const CounterDefinitionDeclarationFingerprint = "ace3973e31d3a9465c5898daa7a6c9a2b55ac31bfb81f8e8b162a9f6cf0f064a"
 const CounterConfigSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"initial\":{\"type\":\"integer\"}},\"required\":[],\"type\":\"object\"}"
 
 var compiledCounterConfig, compiledCounterConfigError = schema.Compile(json.RawMessage(CounterConfigSchemaJSON))
@@ -146,7 +146,7 @@ func NewCounterDefinition(start func(context.Context, contract.Scope, CounterCon
 	}}
 }
 
-const ExampleCounterServiceDeclarationFingerprint = "25daa2b30d9bf4337584a339f4aa1e41fa5df64823c40ba95ca577abc42d9f35"
+const ExampleCounterServiceDeclarationFingerprint = "ace3973e31d3a9465c5898daa7a6c9a2b55ac31bfb81f8e8b162a9f6cf0f064a"
 const ExampleCounterExecuteRequestSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"delta\":{\"type\":\"integer\"},\"operation\":{\"type\":\"string\"}},\"required\":[\"delta\",\"operation\"],\"type\":\"object\"}"
 
 var compiledExampleCounterExecuteRequest, compiledExampleCounterExecuteRequestError = schema.Compile(json.RawMessage(ExampleCounterExecuteRequestSchemaJSON))
@@ -216,7 +216,7 @@ func (v *ExampleCounterExecuteRequest) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-const ExampleCounterExecuteResponseSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"events\":{\"type\":\"integer\"},\"host\":{\"type\":\"string\"},\"value\":{\"type\":\"integer\"}},\"required\":[\"events\",\"value\"],\"type\":\"object\"}"
+const ExampleCounterExecuteResponseSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"events\":{\"type\":\"integer\"},\"value\":{\"type\":\"integer\"}},\"required\":[\"events\",\"value\"],\"type\":\"object\"}"
 
 var compiledExampleCounterExecuteResponse, compiledExampleCounterExecuteResponseError = schema.Compile(json.RawMessage(ExampleCounterExecuteResponseSchemaJSON))
 
@@ -228,28 +228,18 @@ func validateExampleCounterExecuteResponse(data []byte) error {
 }
 
 type ExampleCounterExecuteResponse struct {
-	Events json.Number             `json:"events"`
-	Host   schema.Optional[string] `json:"host"`
-	Value  json.Number             `json:"value"`
+	Events json.Number `json:"events"`
+	Value  json.Number `json:"value"`
 }
 
 func (v ExampleCounterExecuteResponse) MarshalJSON() ([]byte, error) {
-	object := make(map[string]json.RawMessage, 3)
+	object := make(map[string]json.RawMessage, 2)
 	{
 		data, err := contract.Encode(v.Events)
 		if err != nil {
 			return nil, fmt.Errorf("encode field events: %w", err)
 		}
 		object["events"] = data
-	}
-	if v.Host.Present {
-		{
-			data, err := contract.Encode(v.Host.Value)
-			if err != nil {
-				return nil, fmt.Errorf("encode field host: %w", err)
-			}
-			object["host"] = data
-		}
 	}
 	{
 		data, err := contract.Encode(v.Value)
@@ -285,12 +275,6 @@ func (v *ExampleCounterExecuteResponse) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("decode field events: %w", err)
 		}
 	}
-	if raw, exists := object["host"]; exists {
-		value.Host.Present = true
-		if err := json.Unmarshal(raw, &value.Host.Value); err != nil {
-			return fmt.Errorf("decode field host: %w", err)
-		}
-	}
 	{
 		raw := object["value"]
 		if err := json.Unmarshal(raw, &value.Value); err != nil {
@@ -304,7 +288,7 @@ func ExampleCounterService() contract.Service {
 	return contract.Service{Name: "example.counter", Major: 1, Minor: 0}
 }
 func ExampleCounterConsumer(minMinor, maxMinor uint32) contract.Consumer {
-	return contract.Consumer{Requirement: contract.Requirement{Name: "example.counter", Major: 1, MinMinor: minMinor, MaxMinor: maxMinor}, Contract: "ac8fecbb640fb55b22ea15b8b8a90365eca4d37e80d0e7db5b94b51c782464bc"}
+	return contract.Consumer{Requirement: contract.Requirement{Name: "example.counter", Major: 1, MinMinor: minMinor, MaxMinor: maxMinor}, Contract: "4c4b3c748511f8e491d0851de095710b34f7a4f6d1d5903ce779f78a7c380a8f"}
 }
 
 type ExampleCounterClient struct {
@@ -316,7 +300,7 @@ func NewExampleCounterClient(caller contract.Caller, consumer contract.Consumer)
 	if caller == nil {
 		return nil, fmt.Errorf("service client requires caller")
 	}
-	if err := consumer.Check("example.counter", 1, 0, "ac8fecbb640fb55b22ea15b8b8a90365eca4d37e80d0e7db5b94b51c782464bc"); err != nil {
+	if err := consumer.Check("example.counter", 1, 0, "4c4b3c748511f8e491d0851de095710b34f7a4f6d1d5903ce779f78a7c380a8f"); err != nil {
 		return nil, err
 	}
 	return &ExampleCounterClient{caller: caller, consumer: consumer}, nil
