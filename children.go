@@ -55,6 +55,9 @@ func (h *Host) reserveEntry(id string, dynamic bool) (func(), error) {
 	if h.closed {
 		return nil, contract.Fail(contract.NotReady, "host is closed")
 	}
+	if _, owned := h.dynamic[id]; owned {
+		return nil, contract.Fail(contract.Conflict, "entry id is still owned by a dynamic child")
+	}
 	if h.admissions[id] || dynamic && h.controls[id] {
 		return nil, contract.Fail(contract.Conflict, "entry registration is already in progress")
 	}

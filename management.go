@@ -135,12 +135,18 @@ func (h *Host) Remove(ctx context.Context, id string) error {
 		return err
 	}
 	owned := ownedEntries(entries, map[string]bool{id: true})
+	h.mu.Lock()
+	builtins := make(map[string]bool, len(owned))
+	for _, entry := range owned {
+		_, builtins[entry.ID] = h.builtins[entry.ID]
+	}
+	h.mu.Unlock()
 	if err := h.disable(ctx, id); err != nil {
 		return err
 	}
 	var result error
 	for n := len(owned) - 1; n >= 0; n-- {
-		if owned[n].Package != "builtin" {
+		if !builtins[owned[n].ID] {
 			err := h.store.DeleteEntry(ctx, owned[n].ID)
 			result = errors.Join(result, err)
 			if err != nil && !catalogCommitted(err) {

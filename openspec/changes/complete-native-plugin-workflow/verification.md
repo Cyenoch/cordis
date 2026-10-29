@@ -62,3 +62,14 @@ reviewer 未发现最近边界、完整 key、登记 token、旧 Caller/cleanup 
 - `/tmp/cordis-schema-jsonschema-venv/bin/python conformance/validate-schemas.py` 通过。Python 检查仍不替代真实 Go codec、签名和进程测试。
 
 最终实现的独立审查与五平台 SHA/run/job 证据待后续记录；以上不代表 Linux/Windows 已在本机运行。
+
+## Final independent review
+
+独立 reviewer Nash 对 `bb29fab..19d4185e2c7bd157c74f2d210cce9598422c392a` 做只读实现审查，发现两项 P2：
+
+1. core 移除 child 后、Host 删除元数据前，同 ID 的静态登记可能进入，导致旧动态元数据无法删除。登记预留现在把尚在 `h.dynamic` 中的 ID 视为占用，直到归属元数据删除完成。
+2. Host.Remove 用 Package 名称推断 builtin 来源，导致自定义 Package 的 builtin 被误当成持久 entry 删除，可能中断父树移除。现在在停用前保存实际 builtin 身份，按来源决定持久删除。
+
+新增回归先在未修复实现上复现三个失败（移除窗口、独立 builtin、持久父项下的 builtin），修复后执行 `go test -tags=integration -race . -count=1 -timeout 3m` 及 `go vet -tags=integration ./...` 通过。测试控制实际 core/Host 移除间隙，不使用随机 sleep 或生产测试 hook。小范围修正由 Integrator 完成，没有再把已有结论的复查交给其他 Agent。
+
+首份实现提交 `19d4185e2c7bd157c74f2d210cce9598422c392a` 的 [Conformance run](https://github.com/Cyenoch/cordis/actions/runs/40953249643) 已全绿，包含五个真实 native 平台和 contracts；这份结果尚未包含上面两项修正，最终验收以修正后提交的 run 为准。

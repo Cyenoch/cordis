@@ -53,7 +53,7 @@ Integrator 独占 `contract/`、schema、go.mod/go.sum、SDK 能力声明及 Ope
 
 - [x] 7.1 在现有 `conformance/` 中整合三批端到端场景，保持 POSIX/Windows 同范围；通过 `go test -tags=integration -race ./...`、`go vet -tags=integration ./...`、`go mod verify`，复核已存在的替换预检/取消/清理契约。
 - [ ] 7.2 对最终待交付提交执行既有五平台 workflow，检查每个平台真实 native 安装、退出、更新、child、事件与 dev 场景成功；在本 change 记录 SHA、run/job 链接、失败或未执行范围，不复用基线 run 充当本轮证据。
-- [ ] 7.3 由非作者审查公共契约和实现边界，尤其新取消准入、作用域环检测、已排空但带错误及静态/动态身份；修正具体发现后运行相关验证，保存审查与修正结论。
+- [x] 7.3 由非作者审查公共契约和实现边界，尤其新取消准入、作用域环检测、已排空但带错误及静态/动态身份；修正具体发现后运行相关验证，保存审查与修正结论。
 - [x] 7.4 汇总 README/文档站中的已实现能力及明确非目标，更新 ROADMAP 阶段入口；通过 `bun run docs:test`、`bun run docs:examples`、`bun run docs:build`、`bun run spec:validate`，确认 GitHub Pages 导航只宣传实际完成能力。
 
 ## Workflow follow-up
