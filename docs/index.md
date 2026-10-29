@@ -19,7 +19,8 @@ Cordis 是独立的 Go 插件组合框架。插件声明服务与依赖，框架
 | 理解实例、服务与清理 | [核心概念](concepts.md)、[组合实操](composition-tutorial.md) |
 | 编写插件 | [插件作者](plugin-author.md)、[数据契约](contracts.md) |
 | 在 Go 应用里加载插件 | [宿主接入](host-guide.md)、[API](api.md) |
-| 构建、打包与签名 | [CLI](cli.md)、[包格式](packages.md) |
+| 开发循环、签名包管理和前台运行 | [CLI](cli.md)、[包格式](packages.md) |
+| 对照官方 Cordis 的组合语义 | [组合与能力边界](composition.md#与官方-cordis-的对应) |
 | 排查运行问题 | [排障](troubleshooting.md)、[生命周期验收](lifecycle-acceptance.md) |
 
 native 进程拥有启动用户的权限，签名证明来源与完整性。资源清理不会撤销已经发生的业务副作用。应用策略通过普通服务实现。

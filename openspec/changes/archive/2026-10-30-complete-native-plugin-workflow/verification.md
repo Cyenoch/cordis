@@ -73,3 +73,23 @@ reviewer 未发现最近边界、完整 key、登记 token、旧 Caller/cleanup 
 新增回归先在未修复实现上复现三个失败（移除窗口、独立 builtin、持久父项下的 builtin），修复后执行 `go test -tags=integration -race . -count=1 -timeout 3m` 及 `go vet -tags=integration ./...` 通过。测试控制实际 core/Host 移除间隙，不使用随机 sleep 或生产测试 hook。小范围修正由 Integrator 完成，没有再把已有结论的复查交给其他 Agent。
 
 首份实现提交 `19d4185e2c7bd157c74f2d210cce9598422c392a` 的 [Conformance run](https://github.com/Cyenoch/cordis/actions/runs/40953249643) 已全绿，包含五个真实 native 平台和 contracts；这份结果尚未包含上面两项修正，最终验收以修正后提交的 run 为准。
+
+## Five-platform acceptance
+
+2026-10-30（Asia/Taipei），最终实现提交 `aa8b0858a10274ac2c7a084a96e166d902821282`，包含两项最终审查修正。
+
+[Conformance run 40954607947](https://github.com/Cyenoch/cordis/actions/runs/40954607947) 全部成功；已核对各 job 的实际日志、Go 1.27.3 与目标 OS/arch。POSIX 四个平台均完成 `bash conformance/run.sh`，Windows 实际完成 `conformance/run.ps1`；日志确认 full platform/Windows acceptance、两个独立 native Host 程序以及完整 integration/race 包测试通过。
+
+| 平台 / job | 签名包安装 | 离线 CLI / 前台 Host | native 退出分类 | dev 编辑重启 | 服务隔离 | 动态 child | 动态事件 |
+|---|---|---|---|---|---|---|---|
+| [Linux amd64](https://github.com/Cyenoch/cordis/actions/runs/40954607947/job/123731329967) | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 |
+| [Linux arm64](https://github.com/Cyenoch/cordis/actions/runs/40954607947/job/123731330258) | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 |
+| [macOS amd64](https://github.com/Cyenoch/cordis/actions/runs/40954607947/job/123731330194) | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 |
+| [macOS arm64](https://github.com/Cyenoch/cordis/actions/runs/40954607947/job/123731330035) | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 |
+| [Windows amd64](https://github.com/Cyenoch/cordis/actions/runs/40954607947/job/123731329500) | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 |
+
+上述新增功能场景没有失败或未执行项。Windows 不执行 `os.Process.Signal(os.Interrupt)` 子进程投递及 POSIX SIGTERM 专属测试；前台取消、native 清理和进程树回收由 Windows 实际运行路径验证，没有把 Unix signal 填入 Windows 结果。
+
+同一 run 的 [contracts job](https://github.com/Cyenoch/cordis/actions/runs/40954607947/job/123731330211) 通过 schema 和 OpenSpec 验证。[Documentation run 40954607627](https://github.com/Cyenoch/cordis/actions/runs/40954607627) 构建与 GitHub Pages 发布成功。修正后本机再次执行完整 `bash conformance/run.sh` 通过；补充固定官方版本的对照及文档入口后，docs:test/docs:build 再次通过。
+
+归档提交只同步主规格、证据和文档，不追加 Go 行为改动；五平台实现证据对应以上完整 SHA，不以先前基线或首轮候选替代。

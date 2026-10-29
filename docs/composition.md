@@ -37,4 +37,21 @@ builtin 父定义通过 `Children` 携带可选定义；native 子定义来自�
 
 普通调用与生命周期等待都参与环检测。A 调 B、B 再等 A，或父 Start 等子发布，会返回可诊断错误。全局管理准入只覆盖短提交，不等待插件初始化和清理。
 
+## 与官方 Cordis 的对应
+
+以下对照使用只读参考提交 `35fdc969e4b6c48c48ed44717c7a018324e4dd88`，不是对官方最新版本的兼容承诺。本项目按 Go/native 的执行方式实现对应场景，不能直接加载官方 TypeScript 插件。
+
+| 场景 | 固定参考版本 | 本项目 |
+|---|---|---|
+| 两组插件使用同名服务 | `Context.isolate` 创建带服务隔离信息的上下文 | Entry/Child 声明完整 service key，边界在登记时固定，由子树继承 |
+| 取消监听、只听一次、优先监听 | `on` 返回撤销函数，`once` 与 prepend | `On` / typed `Subscribe` 返回 Cancel 句柄，options 提供 Once/Prepend |
+| 取首个处理结果 | serial/bail 按返回值决定是否结束 | First 按显式 Handled 决定，允许明确处理 false |
+| 过滤事件范围 | 发射对象可携带 filter，global 监听跳过过滤；普通事件不自动按祖先传播 | Host 广播，不提供 filter/global，也不随服务隔离改变范围 |
+| 围绕后续监听执行逻辑 | waterfall 传递 next | 不提供跨进程 waterfall；本地 `contract.Chain` 只包装一个业务 handler |
+| 按上下文覆盖服务配置 | `Context.intercept` | 本轮不提供 intercept |
+| 改代码后重新加载 | HMR 插件跟踪模块并重载 | dev 构建、预检后关闭旧 Host，再创建新 activation，不保留进程内存 |
+| 组合配置及写回 | include/patch 管理配置树和变更写回 | 静态 entry 保存配置及父子关系；动态 child 绑定父 activation，不独立持久化，不提供 include/patch/源配置写回 |
+
+官方参考实现可定位到 [context](https://github.com/cordiverse/cordis/blob/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/core/src/context.ts)、[events](https://github.com/cordiverse/cordis/blob/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/core/src/events.ts)、[HMR](https://github.com/cordiverse/cordis/tree/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/hmr) 和 [include](https://github.com/cordiverse/cordis/tree/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/include)。本项目的 Replace 会清理并重建 activation，旧句柄不控制新实例；离线 CLI 不控制正在运行的 Host。服务隔离也不限制进程权限。
+
 [完整组合程序](composition-tutorial.md) · [资源释放](resources.md)
