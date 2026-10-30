@@ -170,25 +170,12 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	}
 	cleanupDirectory := func() error { return removeActivationDirectory(cwd) }
 	if options.CopyExecutable {
-		source, openErr := os.Open(path)
-		if openErr != nil {
-			return nil, errors.Join(openErr, cleanupDirectory())
-		}
 		targetPath := filepath.Join(cwd, "plugin")
 		if runtime.GOOS == "windows" {
 			targetPath += ".exe"
 		}
-		target, createErr := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
-		if createErr != nil {
-			return nil, errors.Join(createErr, source.Close(), cleanupDirectory())
-		}
-		_, copyErr := io.Copy(target, source)
-		copyErr = errors.Join(copyErr, source.Close(), target.Close())
-		if copyErr != nil {
+		if copyErr := copyExecutable(path, targetPath); copyErr != nil {
 			return nil, errors.Join(copyErr, cleanupDirectory())
-		}
-		if chmodErr := os.Chmod(targetPath, 0700); chmodErr != nil {
-			return nil, errors.Join(chmodErr, cleanupDirectory())
 		}
 		path = targetPath
 	}
@@ -393,4 +380,27 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 		return nil, errors.Join(err, s.Close())
 	}
 	return s, nil
+}
+
+func copyExecutable(sourcePath, targetPath string) (err error) {
+	if runtime.GOOS == "linux" {
+		// A concurrent fork can inherit even a close-on-exec writer until exec,
+		// causing ETXTBSY after our Close. Keep forks outside the writable lifetime.
+		syscall.ForkLock.RLock()
+		defer syscall.ForkLock.RUnlock()
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, source.Close()) }()
+	target, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(target, source)
+	if err = errors.Join(err, target.Close()); err != nil {
+		return err
+	}
+	return os.Chmod(targetPath, 0700)
 }

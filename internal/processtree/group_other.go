@@ -1,4 +1,4 @@
-//go:build aix || dragonfly || freebsd || linux || netbsd || openbsd || solaris
+//go:build aix || dragonfly || freebsd || netbsd || openbsd || solaris
 
 package processtree
 

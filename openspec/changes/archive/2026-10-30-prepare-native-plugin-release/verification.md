@@ -58,3 +58,21 @@ Tesla 审查发行脚本、workflow 和版本注入，发现发布前仅检查�
 ## Archive
 
 2026-10-30：7/7 项任务完成，主规格已同步并通过严格校验，按 release → dev → control → recovery 的依赖顺序归档。归档及证据通过后续文档提交交付；发行 tag 保持指向已验收的实现提交。
+
+## Linux lifecycle follow-up
+
+归档提交 `abd85fb4df4237617b78a97b44d78cf3ede5ae60` 的 [Linux amd64 job](https://github.com/Cyenoch/cordis/actions/runs/41014380025/job/123927270623) 在 `TestNativeIsolationRestoreAndChildBoundaries` 启动私有副本时返回 `text file busy`。这不能用先前成功的发布验收代替处理；alpha.1 资产保留，Release 说明已记录已知问题。
+
+本机 Linux arm64 容器、Go 1.27.3 复现：并发复制并启动 1600 次，原逻辑出现 275 次 ETXTBSY。即使父进程已关闭写 FD，并发 fork 的子进程仍可能在 exec 前持有继承副本。复制目标可写期间持有 Go 已有的 ForkLock 读锁，关闭后释放，阻止这一继承窗口；同一复现保护后为零错误，不增加启动重试。生产复制函数对应的新回归在未修复时立即失败，修复后连续 20 次通过。
+
+进一步的 Linux 全量检查还暴露构建取消后的后代端口未关闭。单独复跑取消测试 30 次通过，但新的受控场景证明原 Unix Tree.Close 在 leader 已退出、后台子进程仍运行时直接返回。Linux 现在等待本进程组无存活成员，等待期限沿用 Windows 已有的 30 秒；忽略资源已释放、仅待 init 回收的僵尸，同时检查剩余线程数，不将 leader 的退出等同于全部后代退出。
+
+Wegener 独立审查复制与 ForkLock 边界，未发现生产缺陷；发现测试复制 BusyBox 后改变 argv[0] 会误报失败，已修正为实际执行新文件但保留 applet 名 `true`。新增进程组完成检查和完整交付的后续证据继续补记；alpha.2 在跨平台验收完成后发布，不替换 alpha.1 的 tag 或资产。
+
+修复后的本机实际结果：Linux arm64 容器、Go 1.27.3 中，两项新回归在 race 下各运行 20 次，构建取消测试运行 30 次，随后完整 `bash conformance/run.sh` 全部通过；darwin/arm64 的 runtime/packagehost integration/race 与全量 vet 通过。严格 OpenSpec 和 diff 检查通过。容器结果不代替后续 Linux amd64 与其他平台的提交级 CI。
+
+将修正 argv[0] 后的测试交叉编译为 Linux arm64，在现有 Alpine/BusyBox 容器中实际执行五次，全部通过；该项未开启 race，不冒称为 race 结果。
+
+Carver 独立审查进程组边界，复现受限 `/proc` 隐藏活成员时可能吞掉 EPERM，以及打开 stat 后进程消失导致读取 ESRCH。已保留 Linux 权限错误，将 EPERM 僵尸例外限于原有 Darwin 路径；非完整可见的 hidepid 挂载明确报告无法确认排空，ESRCH 与 ENOENT 一样继续检查其余成员。临时只读 Linux 容器在 hidepid=2、移除 CAP_KILL 后直接执行修正后的 Tree.Kill/Close，确认隐藏视图不假报成功、EPERM 被保留；这两项专门验证未开启 race。
+
+上述修正之后再次通过 Linux arm64 的两个 race 回归各 20 次、完整 conformance 和 vet；文档测试与构建通过。全程未替换 alpha.1 的发行资产。

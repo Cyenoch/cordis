@@ -16,6 +16,7 @@ description: 从状态和错误定位依赖、启动、调用与清理问题。
 | 包已安装但不能启用 | 是否显式 Select，平台是否匹配，必需包依赖是否选中 |
 | 单次结果超限 | 缩小或分页业务返回值；完整 JSON 编码帧必须符合 frameBytes |
 | 协议会话关闭 | stdout 是否混入日志，消息格式、身份与方向是否正确 |
+| Linux 无法确认进程组清理 | 检查进程权限与 `/proc` 挂载；启用非零 hidepid 或无法查询时会明确报错，不能把看不见后代当作已退出 |
 
 初始化失败时，结构化日志会记录 Starting 到 Quiescing/Failed，包含 entry、activation、启动耗时和错误类别，不会记录成功发布。意外 exit 0 仍是 unexpected_exit；主动停止是 requested_stop，Forced 另行表示是否升级为强制终止。清理失败保存在独立 CleanupCode，不覆盖退出原因。
 
