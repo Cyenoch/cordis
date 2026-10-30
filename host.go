@@ -494,6 +494,7 @@ func (h *Host) handleGuest(ctx context.Context, scope contract.Scope, subscripti
 	cleanupOwner, _ := ctx.Value(externalCleanupKey{}).(contract.Identity)
 	cleanupCall := method == "call" && cleanupOwner == scope.Identity()
 	if !cleanupCall {
+		defer subscriptions.scope.WaitRetirementNotification(ctx)
 		if err := scope.Context().Err(); err != nil {
 			return nil, err
 		}

@@ -11,6 +11,22 @@ import (
 var _ contract.ManagedScope = (*Scope)(nil)
 var _ contract.ActivationScope = (*Scope)(nil)
 
+// WaitRetirementNotification orders a reverse-call response after cancellation
+// reaches its guest. It never waits for work or cleanup that may need that reply.
+func (s *Scope) WaitRetirementNotification(ctx context.Context) {
+	a := s.activation
+	e := a.instance.engine
+	e.mu.Lock()
+	retiring := a.retiring
+	e.mu.Unlock()
+	if retiring {
+		select {
+		case <-a.retireNotified:
+		case <-ctx.Done():
+		}
+	}
+}
+
 // Go registers explicit concurrent work during Start, without using the service gate.
 func (s *Scope) Go(work func(context.Context) error) error {
 	if work == nil {

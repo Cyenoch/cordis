@@ -59,6 +59,8 @@ Restore 由现有 Host 同时登记所有启用 entry 后等待，不按包的�
 
 实现集中于 `cmd/cordis/dev*.go`，必要的 watcher 泛化属于 CLI 私有类型。示例为两个独立 Go module；集成测试通过可观察输出确认 provider 改动到达 consumer，故障时两个旧 activation 均保留，修复和连续编辑启动最新组。
 
+文档 CI 暴露全组停机时的既有 Host bridge 竞争：核心先取消 activation，native 进程尚未接收退役通知就收到反向调用错误，受管任务将正常停机当成失败。普通 guest 请求在返回前，通过核心锁确认退役状态，再等待既有 `retireNotified` 通知屏障或原请求取消；不等待任务结束/资源清理，清理调用继续保留原有通行权限。该顺序修复不改 runtime/SDK 协议，也不吞掉真实业务错误。
+
 ## Risks / Trade-offs
 
 - 全组构建和重启可能较慢 → 首版换取简单一致的行为，不引入缓存/增量切换。
