@@ -34,6 +34,7 @@ func (e *Engine) stateLocked(i *instance, next contract.State) {
 	}
 	previous := i.state
 	i.state = next
+	i.failedActivation = false
 	if e.hooks.Logger == nil {
 		return
 	}

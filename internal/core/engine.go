@@ -54,21 +54,22 @@ type Engine struct {
 }
 
 type instance struct {
-	engine     *Engine
-	entry      contract.Entry
-	parent     *instance
-	definition contract.Definition
-	identity   contract.Identity
-	desired    uint64
-	applied    uint64
-	config     json.RawMessage
-	state      contract.State
-	failure    error
-	enabled    bool
-	removing   bool
-	activation *activation
-	pending    *revisionResult
-	outcome    contract.Outcome
+	engine           *Engine
+	entry            contract.Entry
+	parent           *instance
+	definition       contract.Definition
+	identity         contract.Identity
+	desired          uint64
+	applied          uint64
+	config           json.RawMessage
+	state            contract.State
+	failure          error
+	enabled          bool
+	removing         bool
+	activation       *activation
+	pending          *revisionResult
+	outcome          contract.Outcome
+	failedActivation bool
 }
 
 type activation struct {
@@ -559,6 +560,7 @@ func (e *Engine) dispose(a *activation, dependents []*activation) {
 			state = contract.Failed
 		}
 		e.stateLocked(i, state)
+		i.failedActivation = state == contract.Failed
 		if i.state == contract.Failed {
 			i.finishRevisionLocked(i.desired, contract.UpdateResult{Revision: i.desired}, a.cleanupErr)
 		}

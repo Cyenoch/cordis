@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  documents:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require an exact release tag
+        shell: bash
+        run: |
+          test "$GITHUB_REF_TYPE" = tag
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$GITHUB_REF_NAME")"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run docs:test
+      - run: bun run docs:examples
+      - run: bun run docs:build
+
+  conformance:
+    uses: ./.github/workflows/conformance.yml
+
+  build:
+    needs: documents
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+          - runner: macos-15-intel
+            platform: darwin-amd64
+          - runner: macos-15
+            platform: darwin-arm64
+          - runner: windows-2025
+            platform: windows-amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build and execute the archived CLI
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: go run ./scripts/release -version "$RELEASE_TAG" -output dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: [documents, conformance, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Verify the complete distribution
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, os
+          from pathlib import Path
+          tag = os.environ["RELEASE_TAG"]
+          lines = []
+          expected = set()
+          for platform in ["linux_amd64", "linux_arm64", "darwin_amd64", "darwin_arm64", "windows_amd64"]:
+              suffix = ".zip" if platform.startswith("windows_") else ".tar.gz"
+              name = f"cordis_{tag}_{platform}{suffix}"
+              path = Path("dist") / name
+              line = f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {name}\n"
+              if Path(str(path) + ".sha256").read_text() != line:
+                  raise SystemExit(f"Checksum mismatch: {name}")
+              expected.update([name, name + ".sha256"])
+              lines.append(line)
+          if {p.name for p in Path("dist").iterdir()} != expected:
+              raise SystemExit("Unexpected release asset set")
+          Path("dist/SHA256SUMS").write_text("".join(sorted(lines)))
+          PY
+      - name: Publish complete assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          remote_refs="$(git ls-remote --exit-code origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}")"
+          remote_commit="$(printf '%s\n' "$remote_refs" | awk '
+            /\^\{\}$/ { peeled=$1; next }
+            { direct=$1 }
+            END { print (peeled != "" ? peeled : direct) }
+          ')"
+          test "$remote_commit" = "$(git rev-parse HEAD)"
+          printf 'Cordis 预发布，用于试用与反馈，不表示稳定版兼容承诺。\n\n提交：%s\n验收：https://github.com/%s/actions/runs/%s\n\n下载对应平台归档，并使用 SHA256SUMS 检查完整性。native 插件拥有运行用户权限。\n' \
+            "$(git rev-parse HEAD)" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > release-notes.txt
+          if draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$draft" != true ]; then
+              echo "Refusing to replace an already published release."
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --latest=false \
+              --title "Cordis $RELEASE_TAG" --notes-file release-notes.txt
+          fi
+          gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/SHA256SUMS --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false --notes-file release-notes.txt

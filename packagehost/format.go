@@ -170,6 +170,9 @@ func ValidateManifest(m contract.Manifest) error {
 	default:
 		return fmt.Errorf("unsupported runtime %q", m.Runtime.Kind)
 	}
+	if _, err := releaseFiles(m); err != nil {
+		return err
+	}
 	dependencies := map[string]bool{}
 	for _, list := range [][]contract.Dependency{m.Dependencies, m.OptionalDependencies} {
 		for _, d := range list {

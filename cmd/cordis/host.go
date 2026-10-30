@@ -17,6 +17,8 @@ import (
 func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, error), out, errOut io.Writer) (result error) {
 	directory := flags.String("store", "", "explicit persistent store directory")
 	trustFile := flags.String("trust", "", "explicit JSON/TOML/YAML public-key trust file")
+	controlFile := flags.String("control-file", "", "create a private local-control connection file")
+	recoveryFile := flags.String("recovery", "", "explicit per-entry recovery policy file")
 	shutdownTimeout := flags.Duration("shutdown-timeout", 5*time.Second, "maximum shutdown wait")
 	if done, err := parse(); done {
 		return err
@@ -29,15 +31,34 @@ func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, e
 		return err
 	}
 	logger := slog.New(slog.NewJSONHandler(errOut, nil))
-	h, err := cordis.Open(cordis.Options{Directory: *directory, Trust: trust, Logger: logger})
+	var recovery map[string]cordis.RecoveryPolicy
+	if *recoveryFile != "" {
+		recovery, err = loadRecovery(*recoveryFile)
+		if err != nil {
+			return err
+		}
+	}
+	h, err := cordis.Open(cordis.Options{Directory: *directory, Trust: trust, Logger: logger, Recovery: recovery})
 	if err != nil {
 		return err
 	}
 	runCtx, cancel := context.WithCancel(ctx)
+	var control *controlServer
 	defer func() {
 		cancel()
+		if control != nil {
+			result = errors.Join(result, control.close())
+		}
 		result = errors.Join(result, closeHost(h, *shutdownTimeout))
 	}()
+	var controlDone <-chan struct{}
+	if *controlFile != "" {
+		control, err = startControl(runCtx, h, *controlFile)
+		if err != nil {
+			return err
+		}
+		controlDone = control.done
+	}
 	type restored struct {
 		report contract.RestoreReport
 		err    error
@@ -52,6 +73,8 @@ func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, e
 	var last []byte
 	for {
 		select {
+		case <-controlDone:
+			return control.err
 		case <-ctx.Done():
 			cancel()
 			if restoring != nil {
@@ -72,7 +95,8 @@ func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, e
 		case <-ticker.C:
 			status := struct {
 				Instances []contract.InstanceInfo `json:"instances"`
-			}{h.Instances()}
+				Recovery  []cordis.RecoveryInfo   `json:"recovery"`
+			}{h.Instances(), h.RecoveryStatus()}
 			encoded, err := json.Marshal(status)
 			if err != nil {
 				return err

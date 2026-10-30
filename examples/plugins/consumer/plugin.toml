@@ -1,0 +1,26 @@
+id = "example.consumer"
+version = "0.1.0"
+publisher = "example.author"
+dependencies = [{ id = "example.provider", range = ">=0.1.0 <0.2.0" }]
+
+[runtime]
+kind = "native"
+
+[[runtime.artifacts]]
+os = "darwin"
+arch = "arm64"
+path = "plugin"
+
+[[contract.services]]
+name = "example.message"
+version = 1
+
+[[contract.services.methods]]
+name = "read"
+request = { type = "object", properties = {} }
+response = { type = "string" }
+
+[[contract.definitions]]
+id = "main"
+requires = [{ name = "message", service = "example.message", minMinor = 0, maxMinor = 0 }]
+config = { type = "object", properties = { output = { type = "string" } }, required = ["output"] }

@@ -409,7 +409,7 @@ func TestStoreTrustTamperAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	changedSource := sourceFixture(t, manifestFixture("demo", "1.0.0"))
-	if err = os.WriteFile(filepath.Join(changedSource, "extra"), []byte("change"), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(changedSource, "plugin"), []byte("changed artifact"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	changed := filepath.Join(t.TempDir(), "changed.zip")

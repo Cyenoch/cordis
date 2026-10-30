@@ -22,6 +22,8 @@ import (
 
 const sdkModule = "github.com/Cyenoch/cordis"
 
+var releaseVersion, releaseCommit string
+
 func main() {
 	ignoreBrokenPipe()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -66,8 +68,9 @@ var commandUsage = map[string]string{
 	"remove":    "remove -store DIR ENTRY",
 	"uninstall": "uninstall -store DIR ID@VERSION#DIGEST",
 	"status":    "status -store DIR [ENTRY]",
-	"host":      "host -store DIR -trust FILE [-shutdown-timeout DURATION]",
-	"dev":       "dev -dev-unsigned -go-package PACKAGE [-definition ID] [-config JSON|-config-file FILE] [-watch DIR] DIRECTORY",
+	"host":      "host -store DIR -trust FILE [-control-file FILE] [-recovery FILE] [-shutdown-timeout DURATION]",
+	"control":   "control -connection FILE [-timeout DURATION] status|enable|disable|stop|resume|retry [ENTRY]",
+	"dev":       "dev -dev-unsigned (-project FILE | -go-package PACKAGE [FLAGS] DIRECTORY)",
 }
 
 // Subcommand-local stdlib flag sets avoid hidden environment/config layering.
@@ -139,8 +142,10 @@ func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 		return manageCommand(ctx, args[0], flags, parse, in, out, errOut)
 	case "host":
 		return hostCommand(ctx, flags, parse, out, errOut)
+	case "control":
+		return controlCommand(ctx, flags, parse, out)
 	case "dev":
-		return devCommand(ctx, flags, parse, in, out, errOut)
+		return devCommand(ctx, flags, parse, out, errOut)
 	}
 	if done, err := parse(); done {
 		return err
@@ -164,10 +169,11 @@ func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 			return err
 		}
 		return writeJSON(out, struct {
-			Ref      contract.PackageRef `json:"ref"`
-			Manifest contract.Manifest   `json:"manifest"`
-			Trust    string              `json:"trust"`
-		}{Ref: pkg.Ref, Manifest: pkg.Manifest, Trust: "not evaluated; inspection never authorizes execution"})
+			Ref      contract.PackageRef          `json:"ref"`
+			Manifest contract.Manifest            `json:"manifest"`
+			Files    []packagehost.IntegrityEntry `json:"files"`
+			Trust    string                       `json:"trust"`
+		}{Ref: pkg.Ref, Manifest: pkg.Manifest, Files: pkg.Files, Trust: "not evaluated; inspection never authorizes execution"})
 	case "keygen":
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
@@ -232,8 +238,17 @@ func printVersion(out io.Writer) error {
 	if !ok {
 		return fmt.Errorf("Cordis module metadata unavailable")
 	}
-	if _, err := fmt.Fprintf(out, "cordis %s %s %s/%s\nmodule %s\n", module.Version, info.GoVersion, runtime.GOOS, runtime.GOARCH, module.Path); err != nil {
+	version := module.Version
+	if releaseVersion != "" {
+		version = releaseVersion
+	}
+	if _, err := fmt.Fprintf(out, "cordis %s %s %s/%s\nmodule %s\n", version, info.GoVersion, runtime.GOOS, runtime.GOARCH, module.Path); err != nil {
 		return err
+	}
+	if releaseCommit != "" {
+		if _, err := fmt.Fprintf(out, "release.commit %s\n", releaseCommit); err != nil {
+			return err
+		}
 	}
 	if module.Replace != nil {
 		if _, err := fmt.Fprintf(out, "replace %s %s\n", module.Replace.Path, module.Replace.Version); err != nil {

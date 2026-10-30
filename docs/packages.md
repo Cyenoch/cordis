@@ -7,6 +7,20 @@ description: 作者声明、签名、不可变安装与显式版本选择。
 
 包是 ZIP，包含 `plugin.json`、产物、`integrity.json`，签名包还包含 `signature.json`。作者维护 TOML、YAML 或 JSON 声明，由 CLI 构建和打包，机器 Manifest 描述定义、配置 schema、服务版本和 native 目标。
 
+## 发行文件
+
+Pack 只收集元数据、`runtime.artifacts` 声明的全部产物及顶层 `resources` 指定的运行文件。例如：
+
+```toml
+resources = ["assets/message.txt", "templates/page.html"]
+```
+
+资源路径相对于作者目录，必须是精确的普通文件路径；不支持目录或 glob，重复、链接、越界、与产物或保留元数据冲突均报错。省略清单表示没有额外资源。源码、开发配置、日志和私钥不会仅因为位于目录内就进入 ZIP；显式列入资源的内容仍由发布者负责。
+
+Pack 在私有快照校验作者声明、生成代码、build.json、实际 SDK 和所有声明目标，再生成发行目录。这些校验输入不必进入 ZIP；缺少或修改生成文件仍会导致打包失败。打包失败或取消保留已有 archive。
+
+`cordis inspect ARCHIVE.zip` 返回 `files` 清单，包括路径、大小、SHA-256，以及包引用和 Manifest。它校验包内容，不为发布者授予信任。完整性表和签名文件自身也列在检查结果中，但不递归纳入签名输入。
+
 ## 版本与契约
 
 包版本是发行 semver；服务版本是 major/minor；消费者还声明接受的 minor 闭区间。这三者分别决定包选择、服务绑定和方法契约。
@@ -22,6 +36,8 @@ description: 作者声明、签名、不可变安装与显式版本选择。
 ## 安装与运行
 
 Install 添加不可变内容，不改变已选版本。Select 显式选择；Enable 校验配置并记录启用意图。启动使用私有快照，避免运行期间源目录被修改。
+
+native 可通过 `CORDIS_PACKAGE_DIR` 环境变量定位本次 activation 的包快照，再用标准库读取相对资源。运行工作目录仍独立；不要把包快照当作持久业务数据目录。
 
 Replace 在停止旧实例前校验新包和现有配置。新版本初始化失败时保持可观察失败，不暗中回滚选择或业务行为。应用可以显式选择或替换回另一份代码。
 

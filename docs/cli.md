@@ -39,6 +39,7 @@ go build -o ./bin/cordis ./cmd/cordis
 | `uninstall -store DIRECTORY ID@VERSION#SHA256` | 卸载精确包，保留依赖与使用中保护 |
 | `status -store DIRECTORY [ENTRY]` | 查看离线意图及最近运行记录 |
 | `host -store DIRECTORY -trust FILE` | 在前台恢复启用实例，直到取消 |
+| `control -connection FILE ACTION [ENTRY]` | 查询或启停显式开放本机控制的 Host |
 | `dev -dev-unsigned -go-package PACKAGE [FLAGS] DIRECTORY` | 监视单包输入，构建并重启本机插件 |
 | `version` | 显示实际构建信息 |
 
@@ -76,6 +77,8 @@ go build -o ./bin/cordis ./cmd/cordis
 
 包目录只能有一个作者源候选：`plugin.toml`、`plugin.yaml`、`plugin.yml` 或 `plugin.json`。格式或声明错误直接失败，不按其他格式重试。作者源不被回写；打包在私有 staging 生成完整机器 `plugin.json`，再计算完整性。
 
+Pack 仅发布元数据、全部声明产物和顶层 `resources` 的精确文件清单，例如 `resources = ["assets/message.txt"]`。不接受目录或 glob；未列出的开发文件不进入 ZIP。打包仍校验 build.json 和生成代码。inspect 的 `files` 返回最终文件名、大小和 SHA-256，完整规则见[外部插件包](packages.md#发行文件)。
+
 把公钥交给宿主维护者；私钥存放在仓库外或受控密钥设施，不提交到版本库。`keygen` 拒绝覆盖现有文件。`inspect` / `validate` 不会因为签名存在就信任作者；执行许可由宿主 TrustPolicy 决定。
 
 ## 离线管理与前台运行
@@ -105,7 +108,11 @@ go build -o ./bin/cordis ./cmd/cordis
 ./bin/cordis host -store ./state -trust ./trust.json
 ```
 
-`select` 的 ID、version、digest 取自 install/sign 输出，替换示例中的完整引用。`enable` 只保存意图，`host` 才执行插件。前台输出每个实例的状态、等待原因和恢复错误；部分实例失败或缺依赖时继续运行，不自动重试。Ctrl+C 使用独立的关闭期限回收进程，默认 `5s`，可用 `-shutdown-timeout` 调整。
+`select` 的 ID、version、digest 取自 install/sign 输出，替换示例中的完整引用。`enable` 只保存意图，`host` 才执行插件。前台输出每个实例的状态、等待原因和恢复错误；部分实例失败或缺依赖时继续运行，默认不自动重试。Ctrl+C 使用独立的关闭期限回收进程，默认 `5s`，可用 `-shutdown-timeout` 调整。
+
+`host -control-file FILE` 显式开启[本机在线控制](local-control.md)，供另一个终端通过 connection 文件执行 status、enable、disable、stop、resume、retry。它只管理已有持久 entry，动态子项只查询。请求默认 30s，可用 `control -timeout` 调整至 1ms–5m；超时后的写入结果可能不确定，先查询，不自动重发。
+
+`host -recovery FILE` 按已有 native entry 加载[有限恢复策略](recovery.md)，前台及在线状态都附带恢复计数；省略仍由人工处理 Failed。恢复策略不替代持久 entry，也不重放调用。
 
 所有离线命令都必须取得 Store 独占锁，包括 list/status；运行中的 Host 持锁时直接拒绝。退出后再执行 status，输出带 `"offline": true`：保存的 `enabled` 和历史 Active 记录不代表当前有活进程。诊断写 stderr，结果写 stdout；输出失败发生在提交之后时会明确报告已提交，不自动撤销或重试。
 
@@ -115,17 +122,25 @@ go build -o ./bin/cordis ./cmd/cordis
 
 ## 编辑后自动重启
 
+单包和多包共用同一候选切换流程。多个本地作者包使用：
+
+```sh
+./bin/cordis dev -dev-unsigned -project ./development.toml
+```
+
+清单格式、相对路径和可运行的 provider/consumer 示例见[多插件联合开发](multi-package-dev.md)。project 与单包目录、go-package、definition、config/config-file/config-format 参数互斥；超时和额外 watch 参数仍可使用。
+
 在作者目录已完成 `go mod tidy` 后：
 
 ```sh
 ./bin/cordis dev -dev-unsigned -go-package . -config-file ./development.toml ./my-plugin
 ```
 
-只接受一个匹配本机的 native target；`-definition` 选择一个定义，默认使用包的默认定义。运行范围包含它创建的同包 children。多目标声明明确报错，不会替你删改；`-startup-timeout` 默认 `30s`，`-shutdown-timeout` 默认 `5s`。
+每个作者包只接受一个匹配本机的 native target；单包的 `-definition` 选择一个定义，默认使用包的默认定义。运行范围包含它创建的同包 children。多目标声明明确报错，不会替你删改；`-startup-timeout` 默认 `30s`，`-shutdown-timeout` 默认 `5s`，project 模式对整个候选组计时。
 
 监视最近 Go 模块目录中的源码、资源、作者声明、契约、go.mod/go.sum，以及显式配置文件。模块外依赖用可重复的 `-watch DIRECTORY` 加入；不自动遍历 `replace` 的外部目录。配置可用 `-config` 或 `-config-file`，不能来自 stdin。生成文件、声明产物、`.git` 和工具临时文件不触发自身重建。系统临时根不能位于受监视目录内；这种布局会明确报错，需将 `TMPDIR`（Windows 为 `TMP`）改到外部。
 
-每次候选在作者目录外的临时工作目录中拥有独立 ZIP 和 Store，只许可该候选摘要，因此可以保持发行版本不变连续编辑。Build 仍会更新源码目录中的生成文件、二进制和 build.json；整个源码构建不是事务。Pack 包含作者目录内的全部合法文件，监视排除规则不是打包忽略规则，运行日志与私钥应放在目录外。
+每次候选在作者目录外的临时工作目录中拥有独立 ZIP 和 Store，只许可该候选摘要，因此可以保持发行版本不变连续编辑。Build 仍会更新源码目录中的生成文件、二进制和 build.json；整个源码构建不是事务。Pack 只包含声明产物、resources 和元数据；显式资源绕过编辑器临时文件名过滤，真实生成输出仍不触发重建。
 
 编译、Pack、配置预检失败时旧实例继续运行；输入改变后才重试。预检通过才关闭旧 Host，关闭完成后再核对输入 generation，仅启动最新候选。旧 Host 已排空但带历史错误时，输出错误并继续；未完成清理则停止切换、报告保留路径。新插件初始化失败后保持 Failed，等待下次编辑，不恢复旧进程、内存或业务请求。
 

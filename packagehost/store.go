@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Cyenoch/cordis/contract"
 )
@@ -49,6 +50,7 @@ const (
 
 type Store struct {
 	mu      sync.Mutex
+	entries atomic.Pointer[map[string]contract.Entry]
 	root    string
 	trust   TrustPolicy
 	limits  Limits
@@ -161,6 +163,7 @@ func OpenWithOptions(root string, options Options) (s *Store, err error) {
 	if err = s.recoverRuns(); err != nil {
 		return nil, fmt.Errorf("recover runs: %w", err)
 	}
+	s.publishEntries()
 	return s, nil
 }
 
@@ -414,6 +417,7 @@ func (s *Store) commit(ctx context.Context, c catalog) error {
 	}
 	s.observeCommit(commitCatalogSwapped)
 	s.catalog = c
+	s.publishEntries()
 	err = syncDir(s.root)
 	if err == nil {
 		s.observeCommit(commitRootSynced)
@@ -549,6 +553,7 @@ func clonePackage(p Package) Package {
 		m.Definitions[i].Provides = slices.Clone(m.Definitions[i].Provides)
 	}
 	m.Runtime.Artifacts = slices.Clone(m.Runtime.Artifacts)
+	m.Resources = slices.Clone(m.Resources)
 	m.Dependencies = slices.Clone(m.Dependencies)
 	m.OptionalDependencies = slices.Clone(m.OptionalDependencies)
 	p.Manifest = m
@@ -771,19 +776,24 @@ func validateEntry(m contract.Manifest, e contract.Entry) error {
 	return nil
 }
 func (s *Store) Entries() ([]contract.Entry, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.check(); err != nil {
-		return nil, err
+	entries := s.entries.Load()
+	if entries == nil {
+		return nil, os.ErrClosed
 	}
 	var out []contract.Entry
-	for _, e := range s.catalog.Entries {
+	for _, e := range *entries {
 		e.Config = slices.Clone(e.Config)
 		e.Isolate = slices.Clone(e.Isolate)
 		out = append(out, e)
 	}
 	slices.SortFunc(out, func(a, b contract.Entry) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil
+}
+
+// Catalog maps are immutable after commit. Readers never wait for filesystem I/O.
+func (s *Store) publishEntries() {
+	entries := s.catalog.Entries
+	s.entries.Store(&entries)
 }
 func (s *Store) SaveEntry(ctx context.Context, e contract.Entry) (err error) {
 	var committed bool
@@ -860,17 +870,21 @@ func (p *Snapshot) Close() error {
 }
 func (s *Store) Snapshot(ctx context.Context, ref contract.PackageRef) (snapshot *Snapshot, err error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err = s.check(); err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
 	p, err := s.get(ref)
 	if err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
 	if s.catalog.Selected[ref.ID] != ref {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("package must be explicitly selected before execution")
 	}
+	proof := s.catalog.Signatures[ref.Digest]
+	s.mu.Unlock()
 	dir, err := os.MkdirTemp(filepath.Join(s.root, "snapshots"), "activation-")
 	if err != nil {
 		return nil, err
@@ -884,7 +898,6 @@ func (s *Store) Snapshot(ctx context.Context, ref contract.PackageRef) (snapshot
 		return nil, err
 	}
 	// Only the private execution copy changes; the catalog is the proof's commit point.
-	proof := s.catalog.Signatures[ref.Digest]
 	if proof == nil {
 		err = os.Remove(filepath.Join(dir, SignatureFile))
 		if errors.Is(err, os.ErrNotExist) {
@@ -909,6 +922,22 @@ func (s *Store) Snapshot(ctx context.Context, ref contract.PackageRef) (snapshot
 	}
 	if _, err = Artifact(checked.Manifest, runtime.GOOS, runtime.GOARCH); err != nil {
 		return nil, err
+	}
+	// Copying/hashing may be slow. Recheck selection, proof and current trust
+	// before granting an execution snapshot, without blocking catalog readers.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err = s.check(); err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.catalog.Selected[ref.ID] != ref {
+		return nil, fmt.Errorf("package selection changed while preparing execution")
+	}
+	if current := s.catalog.Signatures[ref.Digest]; current != proof && (current == nil || proof == nil || *current != *proof) {
+		return nil, fmt.Errorf("package signature changed while preparing execution")
 	}
 	if err = s.trust.verify(checked.Manifest, ref.Digest, input, sig, p.Development); err != nil {
 		return nil, err
@@ -1074,6 +1103,7 @@ func (s *Store) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.entries.Store(nil)
 	return releaseLock(s.lock)
 }
 

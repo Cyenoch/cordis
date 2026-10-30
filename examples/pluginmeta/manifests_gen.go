@@ -20,3 +20,24 @@ func Chain() contract.Manifest {
 	}
 	return manifest
 }
+func Resource() contract.Manifest {
+	var manifest contract.Manifest
+	if err := json.Unmarshal([]byte("{\"schema\":\"cordis-go.package/v1\",\"id\":\"example.resource\",\"version\":\"0.1.0\",\"publisher\":\"example.author\",\"protocol\":{\"major\":1,\"minMinor\":0,\"maxMinor\":0},\"definitions\":[{\"id\":\"main\",\"configSchema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"requires\":[],\"provides\":[{\"name\":\"example.resource\",\"major\":1,\"minor\":0}]}],\"defaultDefinition\":\"main\",\"runtime\":{\"kind\":\"native\",\"artifacts\":[{\"os\":\"linux\",\"arch\":\"amd64\",\"path\":\"bin/linux-amd64\"},{\"os\":\"linux\",\"arch\":\"arm64\",\"path\":\"bin/linux-arm64\"},{\"os\":\"darwin\",\"arch\":\"amd64\",\"path\":\"bin/darwin-amd64\"},{\"os\":\"darwin\",\"arch\":\"arm64\",\"path\":\"bin/darwin-arm64\"},{\"os\":\"windows\",\"arch\":\"amd64\",\"path\":\"bin/windows-amd64.exe\"}]},\"resources\":[\"assets/message.txt\"],\"dependencies\":[],\"optionalDependencies\":[]}"), &manifest); err != nil {
+		panic(err)
+	}
+	return manifest
+}
+func Provider() contract.Manifest {
+	var manifest contract.Manifest
+	if err := json.Unmarshal([]byte("{\"schema\":\"cordis-go.package/v1\",\"id\":\"example.provider\",\"version\":\"0.1.0\",\"publisher\":\"example.author\",\"protocol\":{\"major\":1,\"minMinor\":0,\"maxMinor\":0},\"definitions\":[{\"id\":\"main\",\"configSchema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"requires\":[],\"provides\":[{\"name\":\"example.message\",\"major\":1,\"minor\":0}]}],\"defaultDefinition\":\"main\",\"runtime\":{\"kind\":\"native\",\"artifacts\":[{\"os\":\"darwin\",\"arch\":\"arm64\",\"path\":\"plugin\"}]},\"dependencies\":[],\"optionalDependencies\":[]}"), &manifest); err != nil {
+		panic(err)
+	}
+	return manifest
+}
+func Consumer() contract.Manifest {
+	var manifest contract.Manifest
+	if err := json.Unmarshal([]byte("{\"schema\":\"cordis-go.package/v1\",\"id\":\"example.consumer\",\"version\":\"0.1.0\",\"publisher\":\"example.author\",\"protocol\":{\"major\":1,\"minMinor\":0,\"maxMinor\":0},\"definitions\":[{\"id\":\"main\",\"configSchema\":{\"additionalProperties\":false,\"properties\":{\"output\":{\"type\":\"string\"}},\"required\":[\"output\"],\"type\":\"object\"},\"requires\":[{\"requirement\":{\"name\":\"example.message\",\"major\":1,\"minMinor\":0,\"maxMinor\":0},\"contract\":\"bae198b1b7bed2abc73cf7e2e205ec01b7b2658bc8d54a73b258adb5714439db\"}],\"provides\":[]}],\"defaultDefinition\":\"main\",\"runtime\":{\"kind\":\"native\",\"artifacts\":[{\"os\":\"darwin\",\"arch\":\"arm64\",\"path\":\"plugin\"}]},\"dependencies\":[{\"id\":\"example.provider\",\"range\":\"\\u003e=0.1.0 \\u003c0.2.0\"}],\"optionalDependencies\":[]}"), &manifest); err != nil {
+		panic(err)
+	}
+	return manifest
+}

@@ -1,0 +1,45 @@
+id = "example.resource"
+version = "0.1.0"
+publisher = "example.author"
+resources = ["assets/message.txt"]
+
+[runtime]
+kind = "native"
+
+[[runtime.artifacts]]
+os = "linux"
+arch = "amd64"
+path = "bin/linux-amd64"
+
+[[runtime.artifacts]]
+os = "linux"
+arch = "arm64"
+path = "bin/linux-arm64"
+
+[[runtime.artifacts]]
+os = "darwin"
+arch = "amd64"
+path = "bin/darwin-amd64"
+
+[[runtime.artifacts]]
+os = "darwin"
+arch = "arm64"
+path = "bin/darwin-arm64"
+
+[[runtime.artifacts]]
+os = "windows"
+arch = "amd64"
+path = "bin/windows-amd64.exe"
+
+[[contract.services]]
+name = "example.resource"
+version = 1
+
+[[contract.services.methods]]
+name = "read"
+request = { type = "object", properties = {} }
+response = { type = "string" }
+
+[[contract.definitions]]
+id = "main"
+provides = ["example.resource"]

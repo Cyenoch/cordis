@@ -26,13 +26,19 @@ type Author struct {
 	Contracts   []schema.Definition
 	Fingerprint string
 	Source      string
+	sources     []string
 }
+
+// Inputs returns the author and contract files read to produce this declaration.
+// Paths are relative to the author directory; the caller owns the returned slice.
+func (a *Author) Inputs() []string { return slices.Clone(a.sources) }
 
 type authorSource struct {
 	ID                   string                `json:"id"`
 	Version              string                `json:"version"`
 	Publisher            string                `json:"publisher"`
 	Runtime              contract.RuntimeSpec  `json:"runtime"`
+	Resources            []string              `json:"resources,omitempty"`
 	DefaultDefinition    string                `json:"defaultDefinition,omitempty"`
 	Dependencies         []contract.Dependency `json:"dependencies,omitempty"`
 	OptionalDependencies []contract.Dependency `json:"optionalDependencies,omitempty"`
@@ -63,7 +69,7 @@ func LoadAuthor(sourceDir string) (*Author, error) {
 	if err := json.Unmarshal(doc.JSON, &header); err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
-	a := &Author{Source: source, Contracts: []schema.Definition{}}
+	a := &Author{Source: source, sources: []string{source}, Contracts: []schema.Definition{}}
 	if header.Schema == contract.PackageSchema {
 		if source != ManifestFile {
 			return nil, fmt.Errorf("%s: machine Manifest must be plugin.json", source)
@@ -103,9 +109,14 @@ func LoadAuthor(sourceDir string) (*Author, error) {
 		}
 		a.Contracts = loader.contracts
 	}
+	for name := range loader.loaded {
+		a.sources = append(a.sources, name)
+	}
+	slices.Sort(a.sources)
 	m := contract.Manifest{
 		Schema: contract.PackageSchema, ID: input.ID, Version: input.Version, Publisher: input.Publisher,
 		Protocol: contract.Protocol{Major: 1}, Runtime: input.Runtime,
+		Resources:         slices.Clone(input.Resources),
 		DefaultDefinition: input.DefaultDefinition,
 		Definitions:       []contract.DefinitionSpec{}, Dependencies: append([]contract.Dependency{}, input.Dependencies...),
 		OptionalDependencies: append([]contract.Dependency{}, input.OptionalDependencies...),

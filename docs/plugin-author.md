@@ -47,12 +47,14 @@ cordis dev -dev-unsigned -go-package . -config-file ../development.toml .
 
 保存 Go、契约、资源或配置文件会串行构建并重启；模块外依赖需显式 `-watch ../shared`。一次运行一个 definition，可用 `-definition` 选择；其动态同包 children 由父生命周期管理。
 
+需要同时开发 provider 和 consumer 等多个本地包时，使用 `dev -dev-unsigned -project FILE`；清单显式列出包、entry 和配置，任意包修改后整组重建重启。见[多插件联合开发](multi-package-dev.md)。
+
 无需每次改发行版本：每个候选使用作者目录外的独立临时 Store 和精确摘要许可，正式 Store 仍拒绝同版本不同摘要。编译、打包或配置校验失败保留旧 activation；新代码通过预检并关闭旧实例后，若初始化失败，只保留可诊断的 Failed，修复文件后再试。关闭历史错误与实际完成分开判断，未完成清理不会启动下一候选。
 
-Build 会更新作者目录中的生成代码、产物与 build.json，不承诺源码事务；Pack 包含源目录的全部合法文件。配置可在目录外单独监视，日志、密钥及运行状态也放在外部。临时根须位于监视目录之外，完成退出后临时候选自动清理。完整参数和边界见 [CLI](cli.md#编辑后自动重启)。
+Build 会更新作者目录中的生成代码、产物与 build.json，不承诺源码事务；Pack 只发布声明产物、显式 resources 和元数据。配置可在目录外单独监视，日志、密钥及运行状态也放在外部。显式资源会触发重建，即使名字类似编辑器临时文件；真实生成输出仍排除。临时根须位于监视目录之外，完成退出后临时候选自动清理。完整参数和边界见 [CLI](cli.md#编辑后自动重启)。
 
 ## 测试
 
 用 `plugintest.New` 运行真实 SDK 初始化、生成 codecs 和清理；依赖通过 `plugintest.Options.Business` 提供普通服务测试替身。进程、信号和安装行为由真实 native 集成测试验证。
 
-[配置和服务类型](contracts.md) · [资源清理](resources.md) · [native 运行时](runtimes.md)
+[配置和服务类型](contracts.md) · [发布插件](plugin-release.md) · [资源清理](resources.md) · [native 运行时](runtimes.md)

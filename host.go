@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -31,27 +32,33 @@ type Options struct {
 	Logger *slog.Logger
 	// CapturePanic includes builtin stacks in the configured logger, never Status.
 	CapturePanic bool
+	// Recovery is opt-in, keyed by an existing persistent native entry ID.
+	Recovery map[string]RecoveryPolicy
 }
 
 type Host struct {
-	mu         sync.Mutex
-	operations chan struct{}
-	childMu    sync.Mutex
-	engine     *core.Engine
-	store      *packagehost.Store
-	options    Options
-	entries    map[string]*hostInstance
-	entrySpecs map[string]contract.Entry
-	packages   map[string]contract.PackageRef
-	builtins   map[string]contract.Definition
-	dynamic    map[string]ownedChild
-	admissions map[string]bool
-	controls   map[string]bool
-	packageOps map[string]bool
-	runs       map[contract.Identity]bool
-	closed     bool
-	done       chan struct{}
-	doneOnce   sync.Once
+	mu             sync.Mutex
+	operations     chan struct{}
+	childMu        sync.Mutex
+	engine         *core.Engine
+	store          *packagehost.Store
+	options        Options
+	entries        map[string]*hostInstance
+	entrySpecs     map[string]contract.Entry
+	packages       map[string]contract.PackageRef
+	builtins       map[string]contract.Definition
+	dynamic        map[string]ownedChild
+	admissions     map[string]bool
+	controls       map[string]bool
+	packageOps     map[string]bool
+	runs           map[contract.Identity]bool
+	closed         bool
+	done           chan struct{}
+	doneOnce       sync.Once
+	recovery       map[string]*recoveryEntry
+	recoveryEvents []RecoveryInfo
+	recoveryCancel context.CancelFunc
+	recoveryDone   chan struct{}
 }
 
 func Open(options Options) (*Host, error) {
@@ -76,10 +83,14 @@ func Open(options Options) (*Host, error) {
 	if h.options.Grace == 0 {
 		h.options.Grace = time.Second
 	}
+	if err := h.initRecovery(options.Recovery); err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
 	h.engine = core.NewWithHooks(core.Hooks{
 		OnRetire: h.onRetire, OnDisposed: h.onDisposed,
 		Logger: options.Logger, CapturePanic: options.CapturePanic,
 	})
+	h.startRecovery()
 	return h, nil
 }
 
@@ -107,7 +118,10 @@ func (h *Host) lockOperation(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
-func (h *Host) unlockOperation() { <-h.operations }
+func (h *Host) unlockOperation() {
+	<-h.operations
+	h.flushRecoveryDiagnostics()
+}
 func (h *Host) Call(ctx context.Context, required contract.Requirement, input json.RawMessage) (json.RawMessage, error) {
 	return h.engine.Call(ctx, required, input)
 }
@@ -298,6 +312,7 @@ func (h *Host) enableEntry(ctx context.Context, entry contract.Entry, owner *con
 	h.entries[entry.ID] = wrapped
 	h.entrySpecs[entry.ID] = entry
 	h.packages[entry.ID] = pkg.Ref
+	h.resetRecoveryLocked(entry.ID)
 	h.mu.Unlock()
 	return wrapped, commitErr
 }
@@ -358,6 +373,21 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 		return err
 	}
 	plugin := genericPlugin{session: session}
+	var initialized atomic.Bool
+	var retireErr error
+	// A transport failure from an exited process is the activation's failure,
+	// not a second failure to reclaim resources. Process.Close owns that proof.
+	controlCleanupError := func(err error) error {
+		if process, ok := session.(contract.ProcessSession); ok && err != nil &&
+			process.Outcome().FailureCode != "" && errors.Is(session.Err(), err) {
+			return nil
+		}
+		return err
+	}
+	finishSession := func(shutdownErr error) error {
+		closeErr := closeSession()
+		return errors.Join(controlCleanupError(retireErr), controlCleanupError(shutdownErr), closeErr)
+	}
 	subscriptions.plugin = plugin
 	lifecycle := scope.(contract.ActivationScope)
 	if err := lifecycle.OnPublish(func(publishCtx context.Context) error {
@@ -368,6 +398,9 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 		return errors.Join(err, closeSession())
 	}
 	if err := lifecycle.OnRetire(func(retireCtx context.Context) error {
+		if !initialized.Load() {
+			return nil
+		}
 		select {
 		case <-session.Done():
 			return nil
@@ -375,21 +408,26 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 		}
 		retireCtx, cancel := context.WithTimeout(retireCtx, h.options.Grace)
 		defer cancel()
-		return plugin.Retire(retireCtx)
+		err := plugin.Retire(retireCtx)
+		if _, ok := session.(contract.ProcessSession); ok {
+			retireErr = err
+			return nil
+		}
+		return err
 	}); err != nil {
 		return errors.Join(err, closeSession())
 	}
 	if err := scope.Defer(func(cleanupCtx context.Context) error {
 		select {
 		case <-session.Done():
-			return closeSession()
+			return finishSession(nil)
 		default:
 		}
 		shutdownCtx, cancel := context.WithTimeout(cleanupCtx, h.options.Grace)
 		defer cancel()
 		shutdownCtx = context.WithValue(shutdownCtx, externalCleanupKey{}, owner)
 		shutdownErr := plugin.Shutdown(shutdownCtx)
-		return errors.Join(shutdownErr, closeSession())
+		return finishSession(shutdownErr)
 	}); err != nil {
 		return err
 	}
@@ -397,6 +435,7 @@ func (h *Host) startExternal(ctx context.Context, scope contract.Scope, pkg pack
 	if err != nil {
 		return err
 	}
+	initialized.Store(true)
 	if registration.FrameBytes != h.options.FrameBytes {
 		return contract.Fail(contract.Invalid, "registration frameBytes mismatch")
 	}
@@ -579,6 +618,7 @@ func (h *Host) retireOne(ctx context.Context, id string, disable bool) error {
 		h.mu.Lock()
 		h.entrySpecs[id] = entry
 		h.mu.Unlock()
+		h.cancelRecoveryTree(id)
 	}
 	var wait func(context.Context) error
 	var err error
@@ -590,6 +630,7 @@ func (h *Host) retireOne(ctx context.Context, id string, disable bool) error {
 	if err != nil {
 		return errors.Join(persistErr, err)
 	}
+	h.cancelRecoveryTree(id)
 	stopErr := h.waitOperation(func() error { return wait(ctx) })
 	removeErr := h.waitOperation(func() error { return h.engine.Remove(ctx, id) })
 	if !h.engine.Missing(id) {
@@ -725,10 +766,35 @@ func (h *Host) Close(ctx context.Context) error {
 	}
 	h.mu.Lock()
 	h.closed = true
+	for _, recovery := range h.recovery {
+		h.recoveryStateLocked(recovery, RecoveryCanceled, nil)
+	}
 	h.mu.Unlock()
-	err := h.waitOperation(func() error { return h.engine.Close(ctx) })
+	if h.recoveryCancel != nil {
+		h.recoveryCancel()
+	}
+	err := h.waitOperation(func() error {
+		// Closing is submitted even when the caller stops waiting for recovery.
+		// h.closed and the canceled coordinator already forbid new admissions.
+		engineErr := h.engine.Close(ctx)
+		if h.recoveryDone != nil {
+			select {
+			case <-h.recoveryDone:
+			case <-ctx.Done():
+				return errors.Join(engineErr, ctx.Err())
+			}
+		}
+		return engineErr
+	})
 	if !h.engine.Drained() {
 		return err
+	}
+	if h.recoveryDone != nil {
+		select {
+		case <-h.recoveryDone:
+		default:
+			return err
+		}
 	}
 	storeErr := h.store.Close()
 	h.doneOnce.Do(func() { close(h.done) })
@@ -814,6 +880,9 @@ func (h *Host) Resume(ctx context.Context, id string) error {
 		return contract.Fail(contract.NotReady, "entry is persistently disabled")
 	}
 	instance, err := h.engine.Resume(id)
+	if err == nil {
+		h.resetRecovery(id)
+	}
 	release()
 	h.unlockOperation()
 	if err != nil {

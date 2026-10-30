@@ -22,6 +22,14 @@ description: 当前公开入口与职责。
 
 `Scope` 提供 Identity、Config、Context、Defer、Provide、Call、On、Emit。`contract.Go` 登记显式并发工作；`contract.Own` 接管可关闭资源。
 
+## 插件包
+
+`contract.Manifest.Resources` 是额外运行普通文件的精确路径清单，省略表示空集合。`packagehost.Pack` 发布它们与声明产物，不把整个开发目录放进 ZIP；构建证据仍在私有输入快照校验。
+
+`packagehost.Inspect(ctx, archive)` 返回 `Inspection`：内嵌 `Package` 元数据，`Files` 为验证后的完整文件清单（Path、Size、SHA256）。检查不授予信任，也不安装或执行。安装 catalog 仍只存 Package，不重复保存检查清单。
+
+`packagehost.LoadAuthor` 的结果提供 `Inputs()`，返回已解析作者源与契约文件的相对路径副本，供开发工具明确监视这些输入。
+
 ## 事件订阅
 
 ```go
@@ -67,6 +75,12 @@ Host 的 `Instance(id)` 和 `Instances()` 返回当前登记。持久控制、�
 `contract.ProcessSession.Outcome()` 在 Done 后返回最终进程事实；没有退出码不等于退出码 0。`Options.Stderr` 接收 `contract.StderrRecord`，包含 Owner、Data、Truncated。超额输出仍排空，并报告一次截断。`CapturePanic` 只把 builtin 栈输出到显式配置的 Logger，不加入 Status 或历史记录。
 
 `Host.Done()` 在激活完全排空且 Store 关闭后结束。Close 的错误与完成分别判断：历史失败或清理失败可以与完成同时存在；等待超时则不能当作已关闭。之后可使用新的 context 再调用 Close。
+
+## 失败重试与恢复
+
+`Host.Retry(ctx, entryID) error` 原子检查当前静态 Failed 登记及清理完成情况，以现有配置提交新 revision，不重写持久意图。超时只取消等待；并发 Update、Stop 或替换不会被旧重试覆盖。
+
+`Options.Recovery map[string]RecoveryPolicy` 显式选择已有持久 native entry；policy 的 MaxRetries、InitialDelay、MaxDelay 控制有限退避，Open 拷贝并校验。`Host.RecoveryStatus() []RecoveryInfo` 返回会话内的计数、状态、身份/revision 和可选 NextRetryAt，返回值不会与内部调度共享可修改数据。默认无自动恢复，详见[恢复](recovery.md)。
 
 ## 错误
 

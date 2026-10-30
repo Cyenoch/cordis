@@ -52,6 +52,6 @@ builtin 父定义通过 `Children` 携带可选定义；native 子定义来自�
 | 改代码后重新加载 | HMR 插件跟踪模块并重载 | dev 构建、预检后关闭旧 Host，再创建新 activation，不保留进程内存 |
 | 组合配置及写回 | include/patch 管理配置树和变更写回 | 静态 entry 保存配置及父子关系；动态 child 绑定父 activation，不独立持久化，不提供 include/patch/源配置写回 |
 
-官方参考实现可定位到 [context](https://github.com/cordiverse/cordis/blob/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/core/src/context.ts)、[events](https://github.com/cordiverse/cordis/blob/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/core/src/events.ts)、[HMR](https://github.com/cordiverse/cordis/tree/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/hmr) 和 [include](https://github.com/cordiverse/cordis/tree/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/include)。本项目的 Replace 会清理并重建 activation，旧句柄不控制新实例；离线 CLI 不控制正在运行的 Host。服务隔离也不限制进程权限。
+官方参考实现可定位到 [context](https://github.com/cordiverse/cordis/blob/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/core/src/context.ts)、[events](https://github.com/cordiverse/cordis/blob/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/core/src/events.ts)、[HMR](https://github.com/cordiverse/cordis/tree/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/hmr) 和 [include](https://github.com/cordiverse/cordis/tree/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/include)。本项目的 Replace 会清理并重建 activation，旧句柄不控制新实例；离线 CLI 不控制正在运行的 Host，[本机在线控制](local-control.md) 须显式开启，[有限恢复](recovery.md) 须按实例配置。服务隔离也不限制进程权限。
 
 [完整组合程序](composition-tutorial.md) · [资源释放](resources.md)

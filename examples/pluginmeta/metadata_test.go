@@ -15,7 +15,7 @@ func TestGeneratedDeclarationsMatchAuthor(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		manifest contract.Manifest
-	}{{"counter", Counter()}, {"chain", Chain()}} {
+	}{{"counter", Counter()}, {"chain", Chain()}, {"resource", Resource()}, {"provider", Provider()}, {"consumer", Consumer()}} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := filepath.Join("..", "plugins", tc.name)
 			author, err := packagehost.LoadAuthor(dir)

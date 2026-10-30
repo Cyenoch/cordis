@@ -68,11 +68,13 @@ func devSource(t *testing.T) (source, logPath, configFile string) {
 	writeCLIFile(t, filepath.Join(source, "go.mod"), "module dev-fixture\n\ngo 1.27.3\nrequire github.com/Cyenoch/cordis v0.0.0\nreplace github.com/Cyenoch/cordis => "+strconv.Quote(repo)+"\n")
 	writeCLIFile(t, filepath.Join(source, "plugin.json"), fmt.Sprintf(`{
  "id":"dev.test","version":"0.1.0","publisher":"example",
+ "resources":["linked-resource"],
  "runtime":{"kind":"native","artifacts":[{"os":%q,"arch":%q,"path":"plugin"}]},
  "contract":{"definitions":[{"id":"main","config":{"type":"object",
  "properties":{"value":{"type":"integer"},"gate":{"type":"string"},"fail":{"type":"boolean"}},
  "required":["value","gate","fail"],"additionalProperties":false}}]}}`, runtime.GOOS, runtime.GOARCH))
 	writeCLIFile(t, filepath.Join(source, "main.go"), fmt.Sprintf(devPlugin, "a", logPath))
+	writeCLIFile(t, filepath.Join(source, "linked-resource"), "resource")
 	writeCLIFile(t, configFile, `{"value":1,"gate":"","fail":false}`)
 	command := exec.CommandContext(t.Context(), "go", "mod", "tidy")
 	command.Dir = source
@@ -196,6 +198,9 @@ func TestDevNativeEditingAndFailureRecovery(t *testing.T) {
 	}
 	// Pack must reject a source hardlink without disturbing the live candidate.
 	link := filepath.Join(source, "linked-resource")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Link(logPath, link); err != nil {
 		t.Fatal(err)
 	}
@@ -209,6 +214,7 @@ func TestDevNativeEditingAndFailureRecovery(t *testing.T) {
 	if err := os.Remove(link); err != nil {
 		t.Fatal(err)
 	}
+	writeCLIFile(t, link, "resource")
 	waitDevMarker(t, logPath, "a closing 1\n")
 	writeCLIFile(t, filepath.Join(source, "main.go"), fmt.Sprintf(devPlugin, "c", logPath))
 	writeCLIFile(t, gate, "")
@@ -269,7 +275,8 @@ func TestDevInputsExcludeOutputsAndWatchExternalFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	watcher, err := newDevWatcher(source, configFile, []string{extra})
+	options := devOptions{source: source, goPackage: ".", configuration: dataInput{file: configFile}, extra: []string{extra}}
+	watcher, err := newDevWatcher(options.plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +292,11 @@ func TestDevInputsExcludeOutputsAndWatchExternalFiles(t *testing.T) {
 	}
 	for _, path := range []string{filepath.Join(source, "resource.txt"), configFile, filepath.Join(extra, "dependency.go")} {
 		prior := watcher.refresh().generation
-		writeCLIFile(t, path, "changed input")
+		text := "changed input"
+		if path == configFile {
+			text = `{"value":2,"gate":"","fail":false}`
+		}
+		writeCLIFile(t, path, text)
 		if next := watcher.refresh(); next.err != nil || next.generation == prior {
 			t.Fatalf("input not watched: %s: %+v", path, next)
 		}
@@ -293,6 +304,18 @@ func TestDevInputsExcludeOutputsAndWatchExternalFiles(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(source, "plugin.json"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	raw = []byte(strings.Replace(string(raw), `"resources":["linked-resource"]`,
+		`"resources":["linked-resource","assets/.cordis-template~"]`, 1))
+	if err := os.MkdirAll(filepath.Join(source, "assets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeCLIFile(t, filepath.Join(source, "assets", ".cordis-template~"), "template")
+	writeCLIFile(t, filepath.Join(source, "plugin.json"), string(raw))
+	beforeResource := watcher.refresh()
+	writeCLIFile(t, filepath.Join(source, "assets", ".cordis-template~"), "new template")
+	if next := watcher.refresh(); next.err != nil || next.generation == beforeResource.generation {
+		t.Fatalf("declared resource skipped by temporary filename filter: %+v", next)
 	}
 	if err := os.Remove(filepath.Join(source, "plugin")); err != nil {
 		t.Fatal(err)
@@ -311,7 +334,7 @@ func TestDevInputsExcludeOutputsAndWatchExternalFiles(t *testing.T) {
 	}
 	raw = []byte(strings.Replace(string(raw), `"artifacts":[`, `"artifacts":[{"os":"unsupported","arch":"test","path":"other"},`, 1))
 	writeCLIFile(t, filepath.Join(source, "plugin.json"), string(raw))
-	if err := checkDevTarget(source); err == nil || !strings.Contains(err.Error(), "exactly one") {
+	if _, err := options.plan(); err == nil || !strings.Contains(err.Error(), "exactly one") {
 		t.Fatalf("multi-target dev not explicitly rejected: %v", err)
 	}
 	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {

@@ -5,12 +5,17 @@ package native
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/runtime/internal/process"
 	"github.com/Cyenoch/cordis/wire"
 )
+
+// PackageDirectoryEnv names the activation's verified package snapshot.
+const PackageDirectoryEnv = "CORDIS_PACKAGE_DIR"
 
 type Options struct {
 	Environment map[string]string
@@ -45,8 +50,20 @@ func (r *Runtime) Start(ctx context.Context, launch contract.Launch) (contract.S
 	if err != nil {
 		return nil, fmt.Errorf("native artifact: %w", err)
 	}
+	directory, err := filepath.Abs(launch.Directory)
+	if err != nil {
+		return nil, err
+	}
+	environment := make(map[string]string, len(r.options.Environment)+1)
+	for key, value := range r.options.Environment {
+		if strings.EqualFold(key, PackageDirectoryEnv) {
+			return nil, fmt.Errorf("%s is reserved for the native package snapshot", PackageDirectoryEnv)
+		}
+		environment[key] = value
+	}
+	environment[PackageDirectoryEnv] = directory
 	return process.Start(ctx, path, nil, launch, process.Options{
-		Environment: r.options.Environment, Lifetime: r.options.Lifetime, Limits: r.options.Limits,
+		Environment: environment, Lifetime: r.options.Lifetime, Limits: r.options.Limits,
 		Grace: r.options.Grace, StderrBytes: r.options.StderrBytes, CopyExecutable: true,
 	})
 }

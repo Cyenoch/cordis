@@ -195,6 +195,11 @@ func (i *instance) configure(config json.RawMessage, commit func() error) (func(
 	}
 	e.signalLocked()
 	e.mu.Unlock()
+	return i.revisionWaiter(revision, result), nil
+}
+
+func (i *instance) revisionWaiter(revision uint64, result *revisionResult) func(context.Context) (contract.UpdateResult, error) {
+	e := i.engine
 	return func(ctx context.Context) (contract.UpdateResult, error) {
 		e.mu.Lock()
 		release, err := i.waitEdgeLocked(ctx)
@@ -211,7 +216,47 @@ func (i *instance) configure(config json.RawMessage, commit func() error) (func(
 		case <-result.done:
 			return result.result, result.err
 		}
-	}, nil
+	}
+}
+
+// Retry admits only the exact failed registration/revision observed by the host.
+// Automatic recovery additionally requires a completed, clean activation failure.
+func (e *Engine) Retry(target contract.Instance, expected contract.Status, automatic bool) (func(context.Context) (contract.UpdateResult, error), error) {
+	defer e.flushDiagnostics()
+	i, ok := target.(*instance)
+	if !ok || i.engine != e {
+		return nil, contract.Fail(contract.NotReady, "entry not found")
+	}
+	e.configMu.Lock()
+	defer e.configMu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed || e.instances[i.entry.ID] != i || i.removing || !i.enabled ||
+		i.state != contract.Failed || i.activation != nil ||
+		i.identity != expected.Identity || i.desired != expected.Desired {
+		return nil, contract.Fail(contract.NotReady, "retry requires the current fully cleaned Failed instance")
+	}
+	if automatic && (!i.failedActivation || i.outcome.CleanupCode != "") {
+		return nil, contract.Fail(contract.NotReady, "failure is not eligible for automatic recovery")
+	}
+	i.desired++
+	i.failure = nil
+	result := &revisionResult{done: make(chan struct{})}
+	i.pending = result
+	e.stateLocked(i, contract.Waiting)
+	e.signalLocked()
+	return i.revisionWaiter(i.desired, result), nil
+}
+
+// FailedActivation distinguishes an activation failure from graph validation.
+func (e *Engine) FailedActivation(target contract.Instance) bool {
+	i, ok := target.(*instance)
+	if !ok || i.engine != e {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.instances[i.entry.ID] == i && i.state == contract.Failed && i.failedActivation
 }
 func (i *instance) Stop(ctx context.Context) error {
 	wait, err := i.stop(ctx, false)

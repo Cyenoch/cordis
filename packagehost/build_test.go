@@ -47,11 +47,15 @@ func main(){ _ = sdk.Run(context.Background(), NewMainDefinition(func(context.Co
 
 var minimalAuthorTOML = "id='demo'\nversion='1.2.3'\npublisher='example'\n[runtime]\nkind='native'\n[[runtime.artifacts]]\nos='" + runtime.GOOS + "'\narch='" + runtime.GOARCH + "'\npath='plugin'\n[[contract.definitions]]\nid='main'\n"
 
-func TestPackAuthorStagesMachineManifestAndCoversAllFiles(t *testing.T) {
+func TestPackAuthorPublishesOnlyDeclaredFiles(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	externalAuthorBuild(t, dir, minimalAuthorTOML)
+	sourceText := "resources=['assets/message.txt']\n" + minimalAuthorTOML
+	externalAuthorBuild(t, dir, sourceText)
 	writeAuthorFile(t, dir, "assets/message.txt", "signed payload")
+	writeAuthorFile(t, dir, "author.private", "private data")
+	writeAuthorFile(t, dir, "development.toml", "token='development secret'")
+	writeAuthorFile(t, dir, "logs/output.log", "private log")
 	archive := filepath.Join(t.TempDir(), "plugin.zip")
 	p, err := Pack(context.Background(), dir, archive)
 	if err != nil {
@@ -61,7 +65,7 @@ func TestPackAuthorStagesMachineManifestAndCoversAllFiles(t *testing.T) {
 		t.Fatalf("wrong package metadata: %+v", p.Manifest)
 	}
 	source, err := os.ReadFile(filepath.Join(dir, "plugin.toml"))
-	if err != nil || string(source) != minimalAuthorTOML {
+	if err != nil || string(source) != sourceText {
 		t.Fatalf("source changed: %q, %v", source, err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ManifestFile)); !os.IsNotExist(err) {
@@ -84,8 +88,9 @@ func TestPackAuthorStagesMachineManifestAndCoversAllFiles(t *testing.T) {
 		}
 		files[f.Name] = data
 	}
-	if _, ok := files["plugin.toml"]; ok {
-		t.Fatal("archive still has author source candidate")
+	if len(files) != 4 || string(files["assets/message.txt"]) != "signed payload" || len(files["plugin"]) == 0 {
+		t.Fatalf("wrong release contents: %d files, resource %q, artifact %d bytes",
+			len(files), files["assets/message.txt"], len(files["plugin"]))
 	}
 	var manifest contract.Manifest
 	if err := contract.Decode(files[ManifestFile], &manifest); err != nil {

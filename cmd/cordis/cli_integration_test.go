@@ -290,6 +290,29 @@ func writeCLIFile(t *testing.T, path, text string) {
 	}
 }
 
+func TestInspectCLIReportsReleaseFiles(t *testing.T) {
+	archive := missingProviderArchive(t)
+	var output, diagnostics bytes.Buffer
+	if err := execute(t.Context(), []string{"inspect", archive}, strings.NewReader(""), &output, &diagnostics); err != nil {
+		t.Fatal(err)
+	}
+	var inspection struct {
+		Files []packagehost.IntegrityEntry `json:"files"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &inspection); err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{packagehost.IntegrityFile, "never-started", packagehost.ManifestFile}
+	if len(inspection.Files) != len(expected) {
+		t.Fatalf("CLI omitted release contents: %s", &output)
+	}
+	for n, file := range inspection.Files {
+		if file.Path != expected[n] || file.Size == 0 || len(file.SHA256) != 64 {
+			t.Fatalf("invalid release file output: %+v", file)
+		}
+	}
+}
+
 func missingProviderArchive(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

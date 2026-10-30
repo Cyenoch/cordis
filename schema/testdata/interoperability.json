@@ -8,6 +8,12 @@
     "schema/signature.schema.json"
   ],
   "schemaVectors": [
+    {"name": "package-resources", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/resources", "accept": true, "instance": ["assets/message.txt"]},
+    {"name": "package-resources-empty", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/resources", "accept": true, "instance": []},
+    {"name": "package-resources-null", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/resources", "accept": true, "instance": null},
+    {"name": "package-resources-duplicate", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/resources", "accept": false, "instance": ["asset.txt", "asset.txt"]},
+    {"name": "package-resources-empty-path", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/resources", "accept": false, "instance": [""]},
+    {"name": "package-resources-type", "validationLevel": "schema", "schema": "schema/package.schema.json", "pointer": "/properties/resources", "accept": false, "instance": [1]},
     {"name": "subscription-options", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscription", "accept": true, "instance": {"id": "activation/1", "name": "update", "options": {"once": true, "prepend": true}}},
     {"name": "subscription-default-options", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscription", "accept": true, "instance": {"id": "activation/2", "name": "update"}},
     {"name": "subscription-missing-id", "validationLevel": "schema", "schema": "schema/session.schema.json", "pointer": "/$defs/subscription", "accept": false, "instance": {"name": "update"}},

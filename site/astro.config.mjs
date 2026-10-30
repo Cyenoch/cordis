@@ -58,6 +58,8 @@ export default defineConfig({
           items: [
             { label: '组合实操', slug: 'composition-tutorial' },
             { label: '生成服务', slug: 'generated-service' },
+            { label: '发布插件', slug: 'plugin-release' },
+            { label: '多插件联合开发', slug: 'multi-package-dev' },
           ],
         },
         {
@@ -69,6 +71,7 @@ export default defineConfig({
             { label: '外部插件包与签名', slug: 'packages' },
             { label: 'Native 运行时', slug: 'runtimes' },
             { label: '中断恢复', slug: 'recovery' },
+            { label: '本机在线控制', slug: 'local-control' },
           ],
         },
         {

@@ -78,6 +78,9 @@ func (i *hostInstance) Update(ctx context.Context, config json.RawMessage) (cont
 	})
 	// The revision now belongs to core. Later revisions and Stop may supersede
 	// this wait; only registration/replacement operations need a long reservation.
+	if err == nil {
+		h.resetRecovery(i.id)
+	}
 	release()
 	h.unlockOperation()
 	if err != nil {
@@ -111,6 +114,9 @@ func (i *hostInstance) Stop(ctx context.Context) error {
 	}
 	defer release()
 	wait, err := h.engine.Stop(ctx, i.Instance)
+	if err == nil {
+		h.cancelRecoveryTree(i.id)
+	}
 	h.unlockOperation()
 	if err != nil {
 		return err

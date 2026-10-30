@@ -148,6 +148,7 @@ type Manifest struct {
 	Definitions          []DefinitionSpec `json:"definitions"`
 	DefaultDefinition    string           `json:"defaultDefinition"`
 	Runtime              RuntimeSpec      `json:"runtime"`
+	Resources            []string         `json:"resources,omitempty"`
 	Dependencies         []Dependency     `json:"dependencies"`
 	OptionalDependencies []Dependency     `json:"optionalDependencies"`
 }

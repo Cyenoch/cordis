@@ -142,7 +142,7 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 		defer stop()
 		result = errors.Join(result, host.Close(closeCtx))
 	}()
-	pkg, err = host.Install(startupCtx, flags.Arg(0))
+	pkg.Package, err = host.Install(startupCtx, flags.Arg(0))
 	if err != nil {
 		return err
 	}

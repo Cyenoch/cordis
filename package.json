@@ -10,7 +10,7 @@
     "docs:build": "astro build --root site && node scripts/check-docs.mjs",
     "docs:preview": "astro preview --root site",
     "docs:test": "node --test scripts/*.test.mjs",
-    "docs:examples": "go test -tags=integration -race . ./conformance ./examples/pluginmeta ./cmd/cordis -run 'ExampleHost_|TestDocumentationTutorials|TestGettingStarted|TestOfflineCLI|TestForegroundHost|TestDev|TestNativeIsolation|TestNativeDynamicEvents' -count=1 -timeout=3m",
+    "docs:examples": "go test -tags=integration -race . ./conformance ./examples/pluginmeta ./cmd/cordis -run 'ExampleHost_|TestDocumentationTutorials|TestGettingStarted|TestOfflineCLI|TestForegroundHost|TestDev|TestNativeIsolation|TestNativeDynamicEvents|TestNativeReleaseResourceExample|TestLocalControl|TestNativeRecovery' -count=1 -timeout=3m",
     "spec": "openspec",
     "spec:list": "openspec list",
     "spec:validate": "openspec validate --all --strict",

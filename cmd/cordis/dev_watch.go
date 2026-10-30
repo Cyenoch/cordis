@@ -8,80 +8,58 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/Cyenoch/cordis/packagehost"
 )
 
 type devInput struct {
 	generation uint64
 	digest     string
 	err        error
+	plan       *devPlan
 }
 
 type devWatcher struct {
-	mu         sync.Mutex
-	source     string
-	roots      []string
-	excluded   map[string]bool
-	artifacts  map[string]bool
-	configFile string
-	input      devInput
-	changed    chan struct{}
-	done       chan struct{}
+	mu       sync.Mutex
+	load     func() (*devPlan, error)
+	plan     *devPlan
+	excluded map[string]bool
+	input    devInput
+	changed  chan struct{}
+	done     chan struct{}
 }
 
-func newDevWatcher(source, configFile string, extra []string) (*devWatcher, error) {
-	module := source
-	for dir := source; ; dir = filepath.Dir(dir) {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			module = dir
-			break
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return nil, err
-		}
-		if parent := filepath.Dir(dir); parent == dir {
-			break
-		}
+func newDevWatcher(load func() (*devPlan, error)) (*devWatcher, error) {
+	plan, err := load()
+	if plan == nil {
+		return nil, err
 	}
-	roots := append([]string{module}, extra...)
-	if configFile != "" {
-		roots = append(roots, configFile)
-	}
-	for n, root := range roots {
-		absolute, err := filepath.Abs(root)
-		if err != nil {
-			return nil, err
-		}
-		roots[n] = absolute
-	}
-	if configFile != "" {
-		configFile = roots[len(roots)-1]
-	}
-	return &devWatcher{source: source, roots: roots, configFile: configFile,
-		excluded: map[string]bool{
-			filepath.Join(source, "cordis_gen.go"):                 true,
-			filepath.Join(source, packagehost.BuildDescriptorFile): true,
-		}, changed: make(chan struct{}, 1), done: make(chan struct{})}, nil
+	w := &devWatcher{load: load, plan: plan, excluded: map[string]bool{},
+		changed: make(chan struct{}, 1), done: make(chan struct{})}
+	return w, w.checkTemporaryRoot()
 }
 
 func (w *devWatcher) refresh() devInput {
 	// Serialize scans so an earlier slow scan cannot overwrite newer evidence.
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if author, err := packagehost.LoadAuthor(w.source); err == nil {
-		w.artifacts = make(map[string]bool, len(author.Manifest.Runtime.Artifacts))
-		for _, artifact := range author.Manifest.Runtime.Artifacts {
-			w.artifacts[filepath.Join(w.source, filepath.FromSlash(artifact.Path))] = true
+	plan, planErr := w.load()
+	if plan != nil {
+		if err := checkDevTemporaryRoots(plan.roots); err != nil {
+			planErr = errors.Join(planErr, err)
+		} else {
+			w.plan = plan
 		}
 	}
-	digest, err := w.fingerprint()
+	digest, scanErr := w.fingerprint()
+	err := errors.Join(planErr, scanErr)
 	if w.input.generation == 0 || digest != w.input.digest || errorText(err) != errorText(w.input.err) {
-		w.input = devInput{generation: w.input.generation + 1, digest: digest, err: err}
+		w.input = devInput{generation: w.input.generation + 1, digest: digest, err: err, plan: plan}
 		select {
 		case w.changed <- struct{}{}:
 		default:
@@ -113,9 +91,10 @@ func (w *devWatcher) watch(ctx context.Context) {
 
 func (w *devWatcher) fingerprint() (string, error) {
 	sum := sha256.New()
+	sum.Write([]byte(w.plan.digest))
 	seen := map[string]bool{}
-	for _, root := range w.roots {
-		configFile := root == w.configFile
+	for _, root := range slices.Concat(w.plan.roots, slices.Sorted(maps.Keys(w.plan.explicit))) {
+		explicit := w.plan.explicit[root]
 		root, err := filepath.EvalSymlinks(root)
 		if err != nil {
 			return "", fmt.Errorf("watch input: %w", err)
@@ -128,7 +107,7 @@ func (w *devWatcher) fingerprint() (string, error) {
 				return err
 			}
 			name := entry.Name()
-			if !configFile && (name == ".git" || w.excluded[path] || w.artifacts[path] || strings.HasPrefix(name, ".cordis-") ||
+			if w.excluded[path] || w.plan.outputs[path] || !explicit && (name == ".git" || strings.HasPrefix(name, ".cordis-") ||
 				strings.HasPrefix(name, ".#") || strings.HasSuffix(name, "~") || strings.HasSuffix(name, ".swp")) {
 				if entry.IsDir() {
 					return filepath.SkipDir
@@ -150,7 +129,7 @@ func (w *devWatcher) fingerprint() (string, error) {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(sum, "%d:%s:%d:", len(path), path, info.Size())
+			fmt.Fprintf(sum, "%d:%s:%d:%d:", len(path), path, info.Size(), info.ModTime().UnixNano())
 			_, readErr := io.Copy(sum, file)
 			return errors.Join(readErr, file.Close())
 		})
@@ -162,11 +141,15 @@ func (w *devWatcher) fingerprint() (string, error) {
 }
 
 func (w *devWatcher) checkTemporaryRoot() error {
+	return checkDevTemporaryRoots(w.plan.roots)
+}
+
+func checkDevTemporaryRoots(roots []string) error {
 	temporary, err := filepath.EvalSymlinks(os.TempDir())
 	if err != nil {
 		return err
 	}
-	for _, root := range w.roots {
+	for _, root := range roots {
 		info, err := os.Stat(root)
 		if err != nil || !info.IsDir() {
 			continue

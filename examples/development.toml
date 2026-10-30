@@ -1,0 +1,16 @@
+[[packages]]
+directory = "plugins/provider"
+goPackage = "."
+
+[[packages]]
+directory = "plugins/consumer"
+goPackage = "."
+
+[[entries]]
+id = "provider"
+package = "example.provider"
+
+[[entries]]
+id = "consumer"
+package = "example.consumer"
+config = { output = "/absolute/path/to/message.txt" }

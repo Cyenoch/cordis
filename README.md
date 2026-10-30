@@ -56,11 +56,13 @@ if err := instance.Wait(ctx); err != nil { return err }
 bash conformance/run.sh
 ```
 
-Windows 使用 `conformance/run.ps1`。脚本运行 integration/race 测试，从独立作者 module 构建原生插件，覆盖签名包、离线 CLI、开发重启、动态子树、服务隔离、事件、取消、清理和重开恢复。宿主构建不导入插件业务代码。
+Windows 使用 `conformance/run.ps1`。脚本运行 integration/race 测试，从独立作者 module 构建原生插件，覆盖签名包与资源、离线/在线 CLI、多包开发重启、有限故障恢复、动态子树、服务隔离、事件、取消、清理和重开恢复。宿主构建不导入插件业务代码。
 
 ## 文档
 
 [在线文档](https://cyenoch.github.io/cordis/) · [插件作者](docs/plugin-author.md) · [宿主接入](docs/host-guide.md) · [API](docs/api.md) · [CLI](docs/cli.md)
+
+[发布插件](docs/plugin-release.md) · [多包开发](docs/multi-package-dev.md) · [本机控制](docs/local-control.md) · [故障恢复](docs/recovery.md)
 
 [组合实操](docs/composition-tutorial.md) · [生成服务](docs/generated-service.md) · [包格式](docs/packages.md) · [协议](docs/protocol.md) · [排障](docs/troubleshooting.md)
 

@@ -385,10 +385,17 @@ func inspectContent(ctx context.Context, dir, source string, development bool, l
 	for _, entry := range actual {
 		listed[entry.Path] = true
 	}
-	for _, artifact := range m.Runtime.Artifacts {
-		if !listed[artifact.Path] {
-			return p, nil, fmt.Errorf("missing runtime artifact %q", artifact.Path)
+	files, err := releaseFiles(m)
+	if err != nil {
+		return p, nil, err
+	}
+	for _, name := range files {
+		if !listed[name] {
+			return p, nil, fmt.Errorf("missing release file %q", name)
 		}
+	}
+	if len(files) != len(listed) {
+		return p, nil, fmt.Errorf("package contains undeclared release files")
 	}
 	digest := sha256.Sum256(input)
 	p = Package{contract.PackageRef{ID: m.ID, Version: m.Version, Digest: hex.EncodeToString(digest[:])}, m, dir, source, development}
@@ -420,21 +427,35 @@ func generateIntegrity(ctx context.Context, dir string, l Limits) error {
 	return os.WriteFile(filepath.Join(dir, IntegrityFile), data, 0600)
 }
 
-// Pack snapshots a developer directory and writes a deterministic unsigned ZIP.
+// Pack verifies a private snapshot of author inputs and writes only declared
+// runtime artifacts, resources and metadata to a deterministic unsigned ZIP.
 func Pack(ctx context.Context, dir, archive string) (p Package, err error) {
-	stage, err := os.MkdirTemp("", "cordis-pack-")
+	work, err := os.MkdirTemp("", "cordis-pack-")
 	if err != nil {
 		return p, err
 	}
-	defer func() { err = errors.Join(err, os.RemoveAll(stage)) }()
+	defer func() { err = errors.Join(err, os.RemoveAll(work)) }()
+	input, stage := filepath.Join(work, "input"), filepath.Join(work, "release")
 	l := DefaultLimits()
-	if err = copyDirectory(ctx, dir, stage, l); err != nil {
+	if err = snapshotAuthor(ctx, dir, input, l); err != nil {
 		return p, err
 	}
-	if err = stageAuthor(ctx, stage); err != nil {
+	if err = stageAuthor(ctx, input); err != nil {
 		return p, err
 	}
-	if err = os.Remove(filepath.Join(stage, SignatureFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	raw, err := readMetadata(input, ManifestFile)
+	if err != nil {
+		return p, err
+	}
+	manifest, err := decodeManifest(raw)
+	if err != nil {
+		return p, err
+	}
+	files, err := releaseFiles(manifest)
+	if err != nil {
+		return p, err
+	}
+	if err = copySelectedFiles(ctx, input, stage, files, l); err != nil {
 		return p, err
 	}
 	if err = generateIntegrity(ctx, stage, l); err != nil {

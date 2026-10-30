@@ -43,6 +43,7 @@ if err := instance.Wait(ctx); err != nil { return err }
 |---|---|
 | `instance.Stop(ctx)` | 临时停止，保留登记和持久启用意图 |
 | `host.Resume(ctx, id)` | 恢复已临时停止的登记 |
+| `host.Retry(ctx, id)` | 保持配置，重试当前已完成清理的 Failed 登记 |
 | `host.Disable(ctx, id)` | 持久停用并移除运行树 |
 | `host.Remove(ctx, id)` | 停止后删除持久条目 |
 | `host.Replace(ctx, ref)` | 校验新包后替换当前运行实例 |
@@ -55,3 +56,5 @@ if err := instance.Wait(ctx); err != nil { return err }
 退出时调用 `host.Close`，使用独立且有限的 context 并处理错误。取消 Close 的等待不表示资源已释放；不合作的 builtin 仍会阻塞自身依赖树。只有 `host.Done()` 已关闭才表示清理及目录释放完成；此时即使 Close 有错误，也可以继续下一次宿主启动。
 
 重开目录后，调用 `host.Restore(ctx)` 恢复已启用条目并创建新 activation。同一个 Host 重复 Restore 不自动重试 Failed，也不会撤销本次 Host 中的临时 Stop；这不代表跨重启的失败隔离。应用业务数据由应用自己管理。
+
+需要自动恢复时，按已保存的 native entry 显式配置 `Options.Recovery`，见[有限故障恢复](recovery.md)。恢复循环随 Host 关闭，只有调度退出、激活排空且目录释放后 Done 才结束。前台 CLI 可选择开放[本机控制](local-control.md)。
