@@ -2,11 +2,13 @@
 
 Go 的插件组合框架，参考 cordiverse/cordis 的组合语义。module 为 `github.com/Cyenoch/cordis`，MIT 许可。
 
-核心管理定义、实例、服务依赖、事件和资源生命周期；外部插件通过 native 进程运行。项目尚未正式发布，API 和格式直接随设计收敛，不保留兼容包装或迁移胶水。
+核心管理定义、实例、服务依赖、事件和资源生命周期；外部插件通过 native 进程运行。项目处于 alpha 阶段，API 和格式直接随设计收敛，不保留兼容包装或迁移胶水。
 
 ## 使用
 
-Go 版本见 `go.mod`。从本地检出构建 CLI：
+预编译 CLI 见 [v0.1.0-alpha.1](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.1)，提供 Linux amd64/arm64、macOS amd64/arm64、Windows amd64 归档及校验和。
+
+Go 版本见 `go.mod`。也可从本地检出构建 CLI：
 
 ```sh
 go build -o ./bin/cordis ./cmd/cordis

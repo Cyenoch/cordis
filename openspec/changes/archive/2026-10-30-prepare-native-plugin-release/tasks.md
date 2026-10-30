@@ -14,7 +14,7 @@
 ## 3. 集成交付
 
 - [x] 3.1 完成全部四项实施后的完整 conformance/race、vet、module verify、文档示例/构建、schema 和严格 OpenSpec 校验；独立审查改动，修正发现并记录实际证据。
-- [ ] 3.2 推送最终实现并取得五平台真实运行结果，发布首个带完整 CLI 资产的 prerelease；核验实际下载校验和、版本/提交及 CI 链接并记录 verification。
+- [x] 3.2 推送最终实现并取得五平台真实运行结果，发布首个带完整 CLI 资产的 prerelease；核验实际下载校验和、版本/提交及 CI 链接并记录 verification。
 
 ## Workflow follow-up
 

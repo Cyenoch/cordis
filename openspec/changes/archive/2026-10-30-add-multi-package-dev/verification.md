@@ -2,7 +2,7 @@
 
 ## Local implementation
 
-日期 2026-10-30，基线 `1d640b02074db9981a076c483e97999b5b11ec87` 之后的工作树；darwin/arm64、Go 1.27.3。最终实现 SHA 与五平台结果在推送后补记，基线不是本轮证据。
+日期 2026-10-30，基线 `1d640b02074db9981a076c483e97999b5b11ec87` 之后的工作树；darwin/arm64、Go 1.27.3。最终实现 SHA 与五平台结果见下方，基线不是本轮证据。
 
 - 单包和 project 模式共用 devPlan、watcher 和候选生命周期。清单/配置按实际解析字节绑定 generation，显式资源强制监视，生成输出按精确路径排除。
 - 所有包先构建、Pack、安装、按必需依赖选择并保存全部 entry 预检，再关闭旧组；关闭完成后再次复核输入。保留已有的取消进程树、过期候选丢弃与未完成清理目录保留。
@@ -36,6 +36,24 @@ Linnaeus 发现解析计划与后续清单指纹可能不一致、临时文件�
 
 Socrates 独立审查通知顺序、engine 锁、请求取消、初始化与 cleanup 权限，未发现可证实缺陷；独立运行三个同步回归各 50 次及 core/wire/SDK race 测试，全部通过。同步回归模拟通知接收，真实进程覆盖由上述 native 集成承担。
 
-## Pending delivery
+## Verified implementation
 
-五平台实际实现 SHA、CI 运行、归档和最终远端一致性尚待交付。
+2026-10-30，最终实现提交 `e2181fab165b0571c83e85a1d6646060b18d9c3a`。[Conformance](https://github.com/Cyenoch/cordis/actions/runs/41012551756) 的五个平台均在对应原生 runner 上执行 integration/race、真实 native 验收、vet 和 module verify；包含多包开发、本机控制和有限恢复，不是交叉编译结论。Contracts job 的 schema 与严格 OpenSpec 检查通过。
+
+| 平台 | CI job | 结果 |
+|---|---|---|
+| macOS amd64 | [123921460216](https://github.com/Cyenoch/cordis/actions/runs/41012551756/job/123921460216) | 通过 |
+| Linux arm64 | [123921460484](https://github.com/Cyenoch/cordis/actions/runs/41012551756/job/123921460484) | 通过 |
+| Linux amd64 | [123921460568](https://github.com/Cyenoch/cordis/actions/runs/41012551756/job/123921460568) | 通过 |
+| macOS arm64 | [123921460661](https://github.com/Cyenoch/cordis/actions/runs/41012551756/job/123921460661) | 通过 |
+| Windows amd64 | [123921460717](https://github.com/Cyenoch/cordis/actions/runs/41012551756/job/123921460717) | 通过 |
+
+同一提交的[Documentation](https://github.com/Cyenoch/cordis/actions/runs/41012551777) 通过文档测试、可执行示例和构建，并已部署 GitHub Pages。
+
+## Release linkage
+
+本项实现已包含在固定提交 `e2181fab165b0571c83e85a1d6646060b18d9c3a` 的 [v0.1.0-alpha.1](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.1) 中。[Release workflow](https://github.com/Cyenoch/cordis/actions/runs/41013139380) 再次通过五平台真实运行；下载资产核验记录见[发布验收](../2026-10-30-prepare-native-plugin-release/verification.md)。
+
+## Archive
+
+2026-10-30：6/6 项任务完成，主规格已同步并通过严格校验，按 release → dev → control → recovery 的依赖顺序归档。归档及证据通过后续文档提交交付；发行 tag 保持指向已验收的实现提交。

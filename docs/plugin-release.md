@@ -9,7 +9,7 @@ description: 精确选择发行文件，构建多平台包并交给宿主安装�
 
 ## 准备工具
 
-可从 [GitHub Releases](https://github.com/Cyenoch/cordis/releases) 下载对应平台 CLI 和 SHA256SUMS。预发布供试用，不表示稳定版兼容承诺。解压前用 SHA-256 工具核对归档，解压后执行 `cordis version` 查看 tag 和来源提交。
+可从 [v0.1.0-alpha.1](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.1) 下载对应平台 CLI 和 SHA256SUMS。预发布供试用，不表示稳定版兼容承诺。解压前用 SHA-256 工具核对归档，解压后执行 `cordis version` 查看 tag 和来源提交。
 
 本地检出也可以构建相同命令行工具：
 

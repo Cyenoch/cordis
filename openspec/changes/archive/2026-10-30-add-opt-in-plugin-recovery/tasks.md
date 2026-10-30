@@ -13,7 +13,7 @@
 
 ## 3. 集成验收
 
-- [ ] 3.1 独立审查全部并发边界，完成 conformance/race、vet、文档/schema/OpenSpec 检查及五平台实际 native 恢复；记录精确提交与 CI 结果。
+- [x] 3.1 独立审查全部并发边界，完成 conformance/race、vet、文档/schema/OpenSpec 检查及五平台实际 native 恢复；记录精确提交与 CI 结果。
 
 ## Workflow follow-up
 
