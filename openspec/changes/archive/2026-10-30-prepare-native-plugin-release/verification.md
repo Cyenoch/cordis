@@ -57,7 +57,7 @@ Tesla 审查发行脚本、workflow 和版本注入，发现发布前仅检查�
 
 ## Archive
 
-2026-10-30：7/7 项任务完成，主规格已同步并通过严格校验，按 release → dev → control → recovery 的依赖顺序归档。归档及证据通过后续文档提交交付；发行 tag 保持指向已验收的实现提交。
+2026-10-30：7/7 项任务完成，主规格已同步并通过严格校验，按 release → dev → control → recovery 的依赖顺序归档。首轮归档已通过 `abd85fb4df4237617b78a97b44d78cf3ede5ae60` 提交推送；发行 tag 各自保持指向已验收的实现提交。
 
 ## Linux lifecycle follow-up
 
@@ -67,7 +67,7 @@ Tesla 审查发行脚本、workflow 和版本注入，发现发布前仅检查�
 
 进一步的 Linux 全量检查还暴露构建取消后的后代端口未关闭。单独复跑取消测试 30 次通过，但新的受控场景证明原 Unix Tree.Close 在 leader 已退出、后台子进程仍运行时直接返回。Linux 现在等待本进程组无存活成员，等待期限沿用 Windows 已有的 30 秒；忽略资源已释放、仅待 init 回收的僵尸，同时检查剩余线程数，不将 leader 的退出等同于全部后代退出。
 
-Wegener 独立审查复制与 ForkLock 边界，未发现生产缺陷；发现测试复制 BusyBox 后改变 argv[0] 会误报失败，已修正为实际执行新文件但保留 applet 名 `true`。新增进程组完成检查和完整交付的后续证据继续补记；alpha.2 在跨平台验收完成后发布，不替换 alpha.1 的 tag 或资产。
+Wegener 独立审查复制与 ForkLock 边界，未发现生产缺陷；发现测试复制 BusyBox 后改变 argv[0] 会误报失败，已修正为实际执行新文件但保留 applet 名 `true`。进程组完成检查和后续交付结果见下方；alpha.1 的 tag 与资产不变。
 
 修复后的本机实际结果：Linux arm64 容器、Go 1.27.3 中，两项新回归在 race 下各运行 20 次，构建取消测试运行 30 次，随后完整 `bash conformance/run.sh` 全部通过；darwin/arm64 的 runtime/packagehost integration/race 与全量 vet 通过。严格 OpenSpec 和 diff 检查通过。容器结果不代替后续 Linux amd64 与其他平台的提交级 CI。
 
@@ -76,3 +76,29 @@ Wegener 独立审查复制与 ForkLock 边界，未发现生产缺陷；发现�
 Carver 独立审查进程组边界，复现受限 `/proc` 隐藏活成员时可能吞掉 EPERM，以及打开 stat 后进程消失导致读取 ESRCH。已保留 Linux 权限错误，将 EPERM 僵尸例外限于原有 Darwin 路径；非完整可见的 hidepid 挂载明确报告无法确认排空，ESRCH 与 ENOENT 一样继续检查其余成员。临时只读 Linux 容器在 hidepid=2、移除 CAP_KILL 后直接执行修正后的 Tree.Kill/Close，确认隐藏视图不假报成功、EPERM 被保留；这两项专门验证未开启 race。
 
 上述修正之后再次通过 Linux arm64 的两个 race 回归各 20 次、完整 conformance 和 vet；文档测试与构建通过。全程未替换 alpha.1 的发行资产。
+
+## Alpha.2 implementation acceptance
+
+修复提交 `1b9f444e0ddcbeab8fc41e10611fd5f66341e6ce` 的[五平台 Conformance](https://github.com/Cyenoch/cordis/actions/runs/41020299506) 全部通过，包括新的 Linux 并发复制/启动与进程组清理回归；[Documentation](https://github.com/Cyenoch/cordis/actions/runs/41020299637) 的示例、构建与 Pages 部署通过。
+
+| 平台 | CI job | 结果 |
+|---|---|---|
+| Linux amd64 | [123945847437](https://github.com/Cyenoch/cordis/actions/runs/41020299506/job/123945847437) | 通过 |
+| Linux arm64 | [123945847567](https://github.com/Cyenoch/cordis/actions/runs/41020299506/job/123945847567) | 通过 |
+| macOS amd64 | [123945847477](https://github.com/Cyenoch/cordis/actions/runs/41020299506/job/123945847477) | 通过 |
+| macOS arm64 | [123945847876](https://github.com/Cyenoch/cordis/actions/runs/41020299506/job/123945847876) | 通过 |
+| Windows amd64 | [123945847290](https://github.com/Cyenoch/cordis/actions/runs/41020299506/job/123945847290) | 通过 |
+
+## Alpha.2 published assets
+
+[v0.1.0-alpha.2](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.2) 已公开为 prerelease，固定提交 `1b9f444e0ddcbeab8fc41e10611fd5f66341e6ce`。[Release workflow](https://github.com/Cyenoch/cordis/actions/runs/41020930952) 的五平台真实验收、文档及全部 CLI 构建/归档内执行通过。
+
+再次从公开 Release 下载五份归档和 SHA256SUMS，全部 SHA-256、MIT 许可、版本、平台、来源提交和 POSIX 执行位核对通过。实际执行下载的 darwin/arm64 CLI version/help，输出正确 alpha.2 版本和提交且 `vcs.modified false`；其他四个平台的执行由各自 Release job 验证。alpha.1 资产保持原样，其说明已推荐升级 alpha.2。
+
+| 归档 | SHA-256 |
+|---|---|
+| `cordis_v0.1.0-alpha.2_linux_amd64.tar.gz` | `260bc0fc1a1b3c0e7677d67752abd058ddb60ea4c18559e7012d73afecb6a00c` |
+| `cordis_v0.1.0-alpha.2_linux_arm64.tar.gz` | `59a1cc52ace74ae7c09501b917295a737f2ce6869157e0dea6cb840248cf1b33` |
+| `cordis_v0.1.0-alpha.2_darwin_amd64.tar.gz` | `60863088e478bc9f78628bd1d3706dd477769820dcf84ff002be818545999db8` |
+| `cordis_v0.1.0-alpha.2_darwin_arm64.tar.gz` | `d9565c62073a56445fef0d72e012e3f059e145efafbfc7448a988cdc87fc2142` |
+| `cordis_v0.1.0-alpha.2_windows_amd64.zip` | `8a96afcb52586a46b9ac7219bb4ee81052d98116c31ca1b2b505c2c322668d08` |

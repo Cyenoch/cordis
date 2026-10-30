@@ -56,4 +56,8 @@ Socrates 独立审查通知顺序、engine 锁、请求取消、初始化与 cle
 
 ## Archive
 
-2026-10-30：6/6 项任务完成，主规格已同步并通过严格校验，按 release → dev → control → recovery 的依赖顺序归档。归档及证据通过后续文档提交交付；发行 tag 保持指向已验收的实现提交。
+2026-10-30：6/6 项任务完成，主规格已同步并通过严格校验，按 release → dev → control → recovery 的依赖顺序归档。首轮归档已通过 `abd85fb4df4237617b78a97b44d78cf3ede5ae60` 提交推送；发行 tag 各自保持指向已验收的实现提交。
+
+## Current prerelease
+
+当前交付版本为 [v0.1.0-alpha.2](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.2)，固定实现 `1b9f444e0ddcbeab8fc41e10611fd5f66341e6ce`；包含后续 Linux 启动和清理修复。[发布验收](https://github.com/Cyenoch/cordis/actions/runs/41020930952) 再次通过五平台真实运行，完整下载核验记录见[发布验证](../2026-10-30-prepare-native-plugin-release/verification.md#alpha2-published-assets)。

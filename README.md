@@ -6,7 +6,7 @@ Go 的插件组合框架，参考 cordiverse/cordis 的组合语义。module 为
 
 ## 使用
 
-预编译 CLI 见 [v0.1.0-alpha.1](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.1)，提供 Linux amd64/arm64、macOS amd64/arm64、Windows amd64 归档及校验和。
+预编译 CLI 见 [v0.1.0-alpha.2](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.2)，提供 Linux amd64/arm64、macOS amd64/arm64、Windows amd64 归档及校验和。
 
 Go 版本见 `go.mod`。也可从本地检出构建 CLI：
 

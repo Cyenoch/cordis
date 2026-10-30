@@ -9,7 +9,7 @@ description: 精确选择发行文件，构建多平台包并交给宿主安装�
 
 ## 准备工具
 
-可从 [v0.1.0-alpha.1](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.1) 下载对应平台 CLI 和 SHA256SUMS。预发布供试用，不表示稳定版兼容承诺。解压前用 SHA-256 工具核对归档，解压后执行 `cordis version` 查看 tag 和来源提交。
+可从 [v0.1.0-alpha.2](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.2) 下载对应平台 CLI 和 SHA256SUMS。预发布供试用，不表示稳定版兼容承诺。解压前用 SHA-256 工具核对归档，解压后执行 `cordis version` 查看 tag 和来源提交。
 
 本地检出也可以构建相同命令行工具：
 
@@ -84,7 +84,7 @@ inspect 的 `files` 是实际文件清单，逐项列出大小和摘要。未声
 维护者在干净检出中推送明确版本 tag 后，Release workflow 对同一提交运行文档检查和五平台 conformance，构建并执行各平台归档内的 CLI，再上传完整发行集。普通 main 推送不会创建 Release。
 
 ```sh
-go run ./scripts/release -version v0.1.0-alpha.1 -output ./dist
+go run ./scripts/release -version v0.1.0-alpha.2 -output ./dist
 ```
 
 这条本地命令只生成并检查本机平台归档，输出校验和，不上传或创建 tag。已有同名归档拒绝覆盖；CI 收齐五平台产物才公开预发布。公开后的资产不由重跑替换。
