@@ -43,7 +43,8 @@ func TestSessionSurvivesChurn(t *testing.T) {
 	// take longer than the default second; that is not what this is about.
 	host, guest := streamPair(t, Limits{Grace: 30 * time.Second}, contract.MaxFrameBytes, serve)
 
-	const workers, rounds = 48, 40
+	// More callers than the session admits at once: some are refused.
+	const workers, rounds = 96, 20
 	var completed, refused atomic.Int64
 	var group sync.WaitGroup
 	for worker := range workers {
@@ -107,7 +108,7 @@ func TestSessionSurvivesChurn(t *testing.T) {
 	settled := func() bool {
 		guest.mu.Lock()
 		defer guest.mu.Unlock()
-		return pendingCount(host) == 0 && guest.activeIncoming == 0 && live.Load() == 0
+		return pendingCount(host) == 0 && guest.activeIncoming == 0 && len(guest.incoming) == 0 && live.Load() == 0
 	}
 	for deadline := time.Now().Add(5 * time.Second); !settled(); time.Sleep(time.Millisecond) {
 		if time.Now().After(deadline) {
@@ -187,6 +188,23 @@ func FuzzPeer(f *testing.F) {
 		if err := <-initialized; err != nil {
 			t.Fatal(err)
 		}
+		// The call is h:2 and the stream h:3, each on the wire before the
+		// next step: the same input always meets the same session.
+		var callers sync.WaitGroup
+		callers.Go(func() { host.Call(context.Background(), "plain", nil) })
+		if line, err := reader.ReadString('\n'); err != nil || !strings.Contains(line, `"id":"h:2"`) {
+			t.Fatalf("the call's request: %q, %v", line, err)
+		}
+		callers.Go(func() {
+			for _, err := range host.Stream(context.Background(), "numbers", nil) {
+				if err != nil {
+					return
+				}
+			}
+		})
+		if line, err := reader.ReadString('\n'); err != nil || !strings.Contains(line, `"id":"h:3"`) {
+			t.Fatalf("the stream's request: %q, %v", line, err)
+		}
 		// Everything the host writes from here on is read and dropped.
 		go func() {
 			for {
@@ -195,15 +213,6 @@ func FuzzPeer(f *testing.F) {
 				}
 			}
 		}()
-		var callers sync.WaitGroup
-		callers.Go(func() { host.Call(context.Background(), "plain", nil) }) // h:2
-		callers.Go(func() {                                                  // h:3
-			for _, err := range host.Stream(context.Background(), "numbers", nil) {
-				if err != nil {
-					return
-				}
-			}
-		})
 		peer.SetWriteDeadline(time.Now().Add(2 * time.Second))
 		peer.Write([]byte(input))
 		// Stop the deadline's timer: left armed it fires during a later
