@@ -38,7 +38,8 @@ func TestUnansweredCancellationDoesNotKeepWaitingGoroutines(t *testing.T) {
 			<-done
 			synctest.Wait()
 		}
-		if growth := runtime.NumGoroutine() - before; growth != 0 {
+		// Process-wide count: only growth is a leak.
+		if growth := runtime.NumGoroutine() - before; growth > 0 {
 			t.Errorf("unanswered cancellations kept %d waiting goroutines", growth)
 		}
 		e.Close()

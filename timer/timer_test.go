@@ -142,7 +142,9 @@ func TestOneShotTimersLeaveNothingBehind(t *testing.T) {
 		if got := len(fired.get()); got != 500 {
 			t.Fatalf("fired %d", got)
 		}
-		if after := runtime.NumGoroutine(); after != before {
+		// The count is the whole process's: a goroutine of the runtime or of
+		// an earlier test may end meanwhile. Only growth is a leak.
+		if after := runtime.NumGoroutine(); after > before {
 			t.Fatalf("goroutines: %d before, %d after all timers fired", before, after)
 		}
 	})
