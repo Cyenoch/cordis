@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,7 +29,11 @@ func TestCallsAndStreamsWhileProvidersComeAndGo(t *testing.T) {
 	f.pack(countManifest("test.counter", true), sdk.Define(f.counter("main", &produced)))
 	// A starved machine may take longer than the default second to answer a
 	// cancellation; that is not what this test is about.
-	f.runtime.Limits.Grace = 30 * time.Second
+	// CORDIS_SOAK_GRACE=default keeps the default, to look for answers that
+	// are late for another reason than a busy machine.
+	if os.Getenv("CORDIS_SOAK_GRACE") != "default" {
+		f.runtime.Limits.Grace = 30 * time.Second
+	}
 	f.open()
 	entries := []contract.Entry{{ID: "provider", Package: "test.provider"}, {ID: "counter", Package: "test.counter"}}
 	for _, entry := range entries {
@@ -79,7 +85,11 @@ func TestCallsAndStreamsWhileProvidersComeAndGo(t *testing.T) {
 	}
 	for round := range 12 {
 		entry := entries[round%len(entries)]
-		must(t, f.host.Disable(ctx, entry.ID))
+		if err := f.host.Disable(ctx, entry.ID); err != nil {
+			// Where everything is at this moment says who did not answer.
+			stacks := make([]byte, 1<<20)
+			t.Fatalf("disable %s in round %d: %v\n%s", entry.ID, round, err, stacks[:runtime.Stack(stacks, true)])
+		}
 		instance, err := f.host.Enable(ctx, entry)
 		must(t, err)
 		must(t, instance.Wait(ctx))
