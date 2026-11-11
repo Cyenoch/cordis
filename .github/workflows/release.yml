@@ -123,16 +123,24 @@ jobs:
             END { print (peeled != "" ? peeled : direct) }
           ')"
           test "$remote_commit" = "$(git rev-parse HEAD)"
-          printf 'Cordis 预发布，用于试用与反馈，不表示稳定版兼容承诺。\n\n提交：%s\n验收：https://github.com/%s/actions/runs/%s\n\n下载对应平台归档，并使用 SHA256SUMS 检查完整性。native 插件拥有运行用户权限。\n' \
-            "$(git rev-parse HEAD)" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > release-notes.txt
+          # A tag with a suffix (-alpha.1, -rc.2) is a pre-release; the rest
+          # carry the compatibility commitment of docs/stability.md.
+          case "$RELEASE_TAG" in
+            *-*) prerelease=true; latest=false
+                 intro='Cordis 预发布，用于试用与反馈，不表示兼容承诺。' ;;
+            *)   prerelease=false; latest=true
+                 intro='兼容性承诺见 docs/stability.md，各版本的变化见 CHANGELOG.md。' ;;
+          esac
+          printf '%s\n\n提交：%s\n验收：https://github.com/%s/actions/runs/%s\n\n下载对应平台归档，并使用 SHA256SUMS 检查完整性。native 插件拥有运行用户权限。\n' \
+            "$intro" "$(git rev-parse HEAD)" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > release-notes.txt
           if draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null)"; then
             if [ "$draft" != true ]; then
               echo "Refusing to replace an already published release."
               exit 1
             fi
           else
-            gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --latest=false \
+            gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease="$prerelease" --latest=false \
               --title "Cordis $RELEASE_TAG" --notes-file release-notes.txt
           fi
           gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/SHA256SUMS --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false --notes-file release-notes.txt
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease="$prerelease" --latest="$latest" --notes-file release-notes.txt
