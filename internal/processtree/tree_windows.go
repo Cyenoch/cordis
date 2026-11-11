@@ -28,7 +28,7 @@ func Start(cmd *exec.Cmd) (*Tree, error) {
 	// belongs to the job. Fail closed if assignment or resume is unavailable.
 	// A process group of its own keeps Ctrl+C in the host's console from
 	// reaching the plugin directly: the host stops its plugins in order.
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED, HideWindow: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED | windows.CREATE_NEW_PROCESS_GROUP, HideWindow: true}
 	if err := cmd.Start(); err != nil {
 		return nil, errors.Join(err, windows.CloseHandle(job))
 	}
