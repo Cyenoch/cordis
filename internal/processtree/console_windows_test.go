@@ -56,6 +56,13 @@ func TestConsoleInterruptDoesNotReachTheTree(t *testing.T) {
 // in its console and reports what each child saw.
 func consoleHost() int {
 	signal.Ignore(os.Interrupt)
+	// Whether Ctrl+C is ignored is inherited, and whoever started the tests
+	// may have turned it off. Turn it back on here, so that the children
+	// start from what a process launched from a terminal has.
+	if result, _, err := windows.NewLazySystemDLL("kernel32.dll").NewProc("SetConsoleCtrlHandler").Call(0, 0); result == 0 {
+		fmt.Println("enable Ctrl+C:", err)
+		return 1
+	}
 	self, err := os.Executable()
 	if err != nil {
 		fmt.Println(err)
