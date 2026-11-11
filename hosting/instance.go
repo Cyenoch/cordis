@@ -29,6 +29,7 @@ type hostInstance struct {
 
 	mu       sync.Mutex
 	gate     *cordis.Instance[struct{}] // provides runKey; nil while temporarily stopped
+	closing  <-chan struct{}            // closed when the gate last taken down has gone
 	enabled  bool
 	desired  uint64
 	applied  uint64
@@ -359,6 +360,9 @@ func (i *hostInstance) halt(ctx context.Context) error {
 	i.mu.Lock()
 	gate := i.gate
 	i.gate = nil
+	if gate != nil {
+		i.closing = gate.Done()
+	}
 	i.mu.Unlock()
 	// A failed entry stops with the error it failed with.
 	var failure error
@@ -393,6 +397,9 @@ func (i *hostInstance) retire(ctx context.Context) error {
 	i.mu.Lock()
 	gate := i.gate
 	i.gate = nil
+	if gate != nil {
+		i.closing = gate.Done()
+	}
 	i.mu.Unlock()
 	if gate != nil {
 		// Also when the wait above was given up: the stop is submitted, and

@@ -507,12 +507,34 @@ func (h *Host) retireOne(ctx context.Context, id string, disable bool) error {
 	}
 	h.cancelRecoveryTree(id)
 	stopErr := h.waitOperation(func() error { return instance.retire(ctx) })
-	if !instance.gone() {
+	instance.mu.Lock()
+	closing := instance.closing
+	instance.mu.Unlock()
+	if closing != nil {
+		// A gate taken down by an earlier call may still be going; the entry
+		// is not out of the way before it has.
+		select {
+		case <-closing:
+		case <-ctx.Done():
+		}
+	}
+	finished := func(done <-chan struct{}) bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return done == nil
+		}
+	}
+	if !finished(instance.instance.Done()) || !finished(closing) {
 		// The caller gave up waiting, but the stop is submitted and final.
-		// The registration goes when the entry has cleaned up; until then
-		// nothing else can take its place.
+		// The registration goes when the entry and its run gate have
+		// cleaned up; until then nothing else can take its place.
 		go func() {
 			<-instance.instance.Done()
+			if closing != nil {
+				<-closing
+			}
 			h.forget(id, instance)
 		}()
 		return errors.Join(stopErr, persistErr)
