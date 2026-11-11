@@ -179,6 +179,33 @@ empty text rejected
 
 客户端在发送前校验请求，端点在分派前校验收到的数据，这是两个信任边界，都不补默认值。未知字段、未知方法、坏响应及失败的业务调用均明确返回错误。
 
+## 流式方法
+
+方法声明里加 `stream`，`response` 描述的就是序列里的一项：
+
+```toml
+[[services.methods]]
+name = "tail"
+stream = true
+request = { type = "object", properties = { count = { type = "integer", minimum = 0 } }, required = ["count"] }
+response = { type = "object", properties = { line = { type = "string" } }, required = ["line"] }
+```
+
+生成的接口方法返回 `iter.Seq2`：
+
+```go
+type ExampleFeed interface {
+    Tail(context.Context, ExampleFeedTailRequest) iter.Seq2[ExampleFeedTailResponse, error]
+}
+```
+
+- 提供方返回一个迭代器并在其中 `yield` 各项；`yield` 返回 false 表示调用方已停止，应当立即返回。
+- 调用方 `for item, err := range client.Tail(ctx, request)`；`err` 非空是最后一次迭代。请求在开始迭代时才发出。
+- 同一进程内客户端直接返回实现方的迭代器，输入照常校验，结果与跨进程时相同。
+- 声明了流式方法的包，manifest 会把 `streams` 列为必需的会话特性。
+
+完整的插件见 [`examples/plugins/feed`](https://github.com/Cyenoch/cordis/blob/main/examples/plugins/feed/main.go)；跨进程时的窗口、额度和期限见[流的规则](protocol.md#流)。
+
 ## 消费者范围
 
 `ClientSourceConsumer()` 的范围是声明里的 1.1–1.3，它进入 `ClientDefinitionSpec()` 的 `Requires`，也就是 `ClientPlugin` 的依赖：只有 minor 落在范围内的 provider 才会绑定，范围外的 provider 使消费者保持 Waiting。客户端不会把范围缩窄成生成时的 1.1，实际 provider 为 1.2 时仍可调用。代码里需要显式范围时用 `ExampleEchoRequirement(1, 3)`。
