@@ -55,7 +55,9 @@ func TestConsoleInterruptDoesNotReachTheTree(t *testing.T) {
 // consoleHost starts one child plainly and one through Start, presses Ctrl+C
 // in its console and reports what each child saw.
 func consoleHost() int {
-	signal.Ignore(os.Interrupt)
+	// The host takes its own Ctrl+C and carries on, as one that stops its
+	// plugins in order does.
+	signal.Notify(make(chan os.Signal, 1), os.Interrupt)
 	// Whether Ctrl+C is ignored is inherited, and whoever started the tests
 	// may have turned it off. Turn it back on here, so that the children
 	// start from what a process launched from a terminal has.
