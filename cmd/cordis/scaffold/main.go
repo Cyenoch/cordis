@@ -9,6 +9,11 @@ import (
 	"github.com/Cyenoch/cordis/sdk"
 )
 
+// go generate derives the contract and the bindings in cordis_gen.go from
+// the declarations below; cordis build and cordis dev do the same.
+//
+//go:generate go run github.com/Cyenoch/cordis/cmd/cordis generate
+
 // Config is the configuration of an entry. Its fields are the keys an entry
 // may set; a cordis tag constrains a value, as in `cordis:"minLength=1"`.
 type Config struct{}

@@ -183,7 +183,7 @@ printf '%s' '{"method":"execute","input":{"operation":"get","delta":0}}' | ./bin
 ./bin/cordis generate ./my-plugin
 ```
 
-分析目录里的 Go 包（缺省为当前目录），在源码旁写出 `cordis_gen.go`（绑定）和 `cordis_gen.json`（推导出的契约，随源码提交）。指令、类型映射和约束标签见[数据契约](contracts.md#用-go-类型写契约)。声明不合法时命令失败，错误指出源码位置，不写任何文件。`build` 与 `dev` 先重新生成，平时不必单独运行；要先看契约变化或让编辑器看到新绑定时运行它。
+分析目录里的 Go 包（缺省为当前目录），在源码旁写出 `cordis_gen.go`（绑定）和 `cordis_gen.json`（推导出的契约，随源码提交）。指令、类型映射和约束标签见[数据契约](contracts.md#用-go-类型写契约)。声明不合法时命令失败，错误指出源码位置，不写任何文件。`build` 与 `dev` 先重新生成，平时不必单独运行；要先看契约变化或让编辑器看到新绑定时运行它。`init` 的脚手架带 `//go:generate` 行，`go generate ./...` 用模块依赖里的 Cordis 版本做同一件事，不需要安装 CLI。
 
 ### 从声明式契约生成
 

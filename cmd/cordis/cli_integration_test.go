@@ -270,6 +270,13 @@ func TestCLIProcesses(t *testing.T) {
 			}
 		}
 		goCommand("mod", "tidy")
+		// The scaffold regenerates through go generate, without an installed CLI.
+		for _, name := range []string{"cordis_gen.go", "cordis_gen.json"} {
+			if err := os.Remove(filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		goCommand("generate", "./...")
 		code, out, stderr := run(t, "", "build", "-go-package", ".", "-goos", runtime.GOOS, "-goarch", runtime.GOARCH, dir)
 		if code != 0 || stderr != "" {
 			t.Fatalf("build: %d %s", code, stderr)
