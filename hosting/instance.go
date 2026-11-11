@@ -372,8 +372,16 @@ func (i *hostInstance) halt(ctx context.Context) error {
 	if gate == nil {
 		return errors.Join(i.instance.Wait(ctx), failure)
 	}
-	// Withdrawing the gate lets the entry clean up like any consumer.
-	return errors.Join(gate.Stop(ctx), failure)
+	// Withdrawing the gate lets the entry clean up like any consumer. The
+	// gate is gone as soon as the entry has let go of it; the entry reports
+	// the end of its own stop a moment later, and the caller is told when
+	// that has happened too.
+	stopErr := gate.Stop(ctx)
+	i.instance.Wait(ctx)
+	if stopErr == nil {
+		stopErr = ctx.Err()
+	}
+	return errors.Join(stopErr, failure)
 }
 
 // open lets a temporarily stopped entry run again.
