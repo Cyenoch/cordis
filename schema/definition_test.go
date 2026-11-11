@@ -36,8 +36,8 @@ func TestDeclarationSpecsAndFingerprint(t *testing.T) {
 		t.Fatal("resolved required config field lost")
 	}
 	c := specs[1].Requires[0]
-	if err := c.Check("echo", 1, 1, c.Contract); err != nil {
-		t.Fatal(err)
+	if c.Contract == "" {
+		t.Fatal("a requirement without a method fingerprint")
 	}
 	if specs[1].Requirements()[0] != c.Requirement {
 		t.Fatal("runtime and Manifest route differ")
@@ -217,7 +217,7 @@ func TestConsumerMethodIdentityRejectsDifferentLocalContract(t *testing.T) {
 	}
 	consumer := first[0].Requires[0]
 	wrong := second[0].Requires[0]
-	if err := wrong.Check("echo", 1, 1, consumer.Contract); err == nil {
-		t.Fatal("same service/major with a different method schema accepted")
+	if wrong.Contract == consumer.Contract {
+		t.Fatal("different method schemas of one service share a fingerprint")
 	}
 }

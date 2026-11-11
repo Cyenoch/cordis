@@ -207,7 +207,7 @@ func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 }
 
 func printHelp(out io.Writer) error {
-	_, err := fmt.Fprintln(out, "cordis: init | build | pack | sign | keygen | inspect | validate | generate | run | list | install | select | enable | disable | remove | uninstall | status | host | dev | version\nUsage: cordis help [COMMAND]")
+	_, err := fmt.Fprintln(out, "cordis: init | build | pack | sign | keygen | inspect | validate | generate | run | list | install | select | enable | disable | remove | uninstall | status | host | control | dev | version\nUsage: cordis help [COMMAND]")
 	return err
 }
 

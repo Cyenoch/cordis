@@ -72,9 +72,9 @@
 
 审查者实际运行并确认无问题的部分：停止、恢复、更新、重试与状态映射的各种组合；父子 entry 上 4 秒并发管理操作的压力测试；管理操作进行中的 `Close`；阻塞的 `Start` 期间的停止；运行记录；200 个以各种方式结束的流之后名额全部归还；在途上限为 1 时的 5000 次调用与流。未运行：真实进程运行时、Windows、恢复循环与 `Replace`/`Restore` 的竞争。
 
-### 已知的测试缺口
+### 边界行为的测试
 
-这些行为有实现但没有单独的测试：帧预算不一致时不发布端点、`Host.Done` 与关闭被取消时的细节、动态子实例经管理接口控制的细节、订阅投递的发送回执细节。
+`hosting/boundary_test.go`：登记结果与声明或帧预算不符时不发布端点（`TestRegistrationThatDoesNotMatchPublishesNothing`）；`Close` 被取消与 `Done` 的时序（`TestDoneFollowsACompletedClose`）；动态子实例只能经其句柄控制（`TestDynamicChildIsControlledThroughItsHandleOnly`）；once 监听的投递没有发出时的释放（`TestOnceListenerWhoseDeliveryIsNeverSent`）。
 
 ### 文档
 
