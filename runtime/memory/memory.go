@@ -17,6 +17,10 @@ import (
 
 // Runtime starts the definitions registered for the package of a launch.
 type Runtime struct {
+	// Limits are the host side's session limits; the zero value is the
+	// default. The in-flight limit always comes from the launch.
+	Limits wire.Limits
+
 	mu       sync.Mutex
 	packages map[string][]sdk.Definition
 }
@@ -45,11 +49,13 @@ func (r *Runtime) Start(ctx context.Context, launch contract.Launch) (contract.S
 	if err := contract.ValidateInflight(launch.Inflight); err != nil {
 		return nil, err
 	}
+	limits := r.Limits
+	limits.Inflight = launch.Inflight
 	guestIn, hostOut := io.Pipe()
 	hostIn, guestOut := io.Pipe()
 	guest := &wire.Transport{Reader: guestIn, Writer: guestOut, Closers: []io.Closer{guestIn, guestOut}}
 	host := &wire.Transport{Reader: hostIn, Writer: hostOut, Closers: []io.Closer{hostIn, hostOut}}
-	endpoint, err := wire.New(wire.Options{FrameBytes: launch.FrameBytes, Transport: host, Identity: launch.Identity, Handler: wire.Handler(launch.Handle), Stream: wire.StreamHandler(launch.Stream), Limits: wire.Limits{Inflight: launch.Inflight}})
+	endpoint, err := wire.New(wire.Options{FrameBytes: launch.FrameBytes, Transport: host, Identity: launch.Identity, Handler: wire.Handler(launch.Handle), Stream: wire.StreamHandler(launch.Stream), Limits: limits})
 	if err != nil {
 		return nil, errors.Join(err, guest.Close(), host.Close())
 	}

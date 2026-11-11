@@ -25,6 +25,9 @@ func TestCallsAndStreamsWhileProvidersComeAndGo(t *testing.T) {
 	var produced atomic.Int64
 	f.pack(echoManifest("test.provider", true), sdk.Define(f.echoPlugin("main", "> ")))
 	f.pack(countManifest("test.counter", true), sdk.Define(f.counter("main", &produced)))
+	// A starved machine may take longer than the default second to answer a
+	// cancellation; that is not what this test is about.
+	f.runtime.Limits.Grace = 30 * time.Second
 	f.open()
 	entries := []contract.Entry{{ID: "provider", Package: "test.provider"}, {ID: "counter", Package: "test.counter"}}
 	for _, entry := range entries {
