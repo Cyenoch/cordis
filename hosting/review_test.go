@@ -157,6 +157,7 @@ func TestDisableThatTimesOutLeavesTheEntryRemovable(t *testing.T) {
 	f.pack(plainManifest("test.slow"), sdk.Define(cordis.Plugin[struct{}]{Name: "main", Start: func(_ context.Context, s *cordis.Scope, _ struct{}) error {
 		f.log.add("start")
 		s.Defer(func(context.Context) error {
+			f.log.add("stopping")
 			time.Sleep(300 * time.Millisecond)
 			f.log.add("stop")
 			return nil
@@ -165,11 +166,18 @@ func TestDisableThatTimesOutLeavesTheEntryRemovable(t *testing.T) {
 	}}))
 	f.open()
 	must(t, f.enable(contract.Entry{ID: "slow", Package: "test.slow"}).Wait(f.ctx()))
-	short, cancel := context.WithTimeout(f.ctx(), 50*time.Millisecond)
-	if err := f.host.Disable(short, "slow"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("a disable that cannot finish in time = %v", err)
+	// The caller gives up while the cleanup runs, however long it took the
+	// host to get there.
+	impatient, cancel := context.WithCancel(f.ctx())
+	go func() {
+		for f.log.count("stopping") == 0 && impatient.Err() == nil {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	if err := f.host.Disable(impatient, "slow"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a disable its caller gave up on = %v", err)
 	}
-	cancel()
 	eventually(t, "the entry to finish stopping", func() bool { return f.log.count("stop") == 1 })
 	if err := f.host.Disable(f.ctx(), "slow"); err != nil && !errors.Is(err, contract.Fail(contract.NotReady, "")) {
 		t.Fatalf("the second disable = %v", err)
