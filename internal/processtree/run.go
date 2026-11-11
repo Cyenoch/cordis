@@ -19,7 +19,7 @@ func Run(ctx context.Context, cmd *exec.Cmd) error {
 		return err
 	}
 	finished := make(chan error, 1)
-	go func() { finished <- cmd.Wait() }()
+	go func() { finished <- tree.Wait(cmd) }()
 	select {
 	case err = <-finished:
 	case <-ctx.Done():

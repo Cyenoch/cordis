@@ -13,6 +13,7 @@ type Tree struct{}
 func Start(*exec.Cmd) (*Tree, error) {
 	return nil, errors.New("managed process trees are unsupported on this operating system")
 }
+func (*Tree) Wait(cmd *exec.Cmd) error           { return cmd.Wait() }
 func (*Tree) Terminate() error                   { return nil }
 func (*Tree) Kill() error                        { return nil }
 func (*Tree) Close() error                       { return nil }

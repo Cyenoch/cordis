@@ -44,4 +44,6 @@ macOS 15 arm64，Go 1.27.3：
 | 提供方协议失败以其分类到达无关调用方 | 一律 `not_ready` |
 | 事件投递绕过归类 | 已归类 |
 
-未处理，记录在案：领头进程回收后才向进程组发信号（需 pid 回绕才会误伤）；`noexec` 的临时目录下插件无法启动（需设置 `TMPDIR`）；请求的响应入队后，沿用该请求 context 的迟到调用会结束会话；`FuzzPeer` 的两个在途请求先后次序不确定；若干既有测试仍含固定时长等待（`wire/stream_test.go:302`、`hosting/chain_test.go:104`、`wire/session_test.go:162`、`hosting/management_test.go:205,228`、`hosting/boundary_test.go:190`）。
+领头进程回收后才向进程组发信号：已处理。Linux 与 macOS 上，进程树在领头进程退出但尚未回收时结束进程组（此时它的进程号仍被占用），回收之后不再发任何信号；`internal/processtree` `TestWaitEndsTheGroupBeforeReapingItsLeader`。其他 Unix 没有“不回收而得知退出”的途径，行为不变。
+
+未处理，记录在案：`noexec` 的临时目录下插件无法启动（需设置 `TMPDIR`）；请求的响应入队后，沿用该请求 context 的迟到调用会结束会话；`FuzzPeer` 的两个在途请求先后次序不确定；若干既有测试仍含固定时长等待（`wire/stream_test.go:302`、`hosting/chain_test.go:104`、`wire/session_test.go:162`、`hosting/management_test.go:205,228`、`hosting/boundary_test.go:190`）。

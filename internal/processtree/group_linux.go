@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 func groupHasNoLiveMembers(group int) (bool, error) {
@@ -78,4 +80,17 @@ func groupHasNoLiveMembers(group int) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// awaitExit blocks until the process has exited, leaving it unreaped.
+func awaitExit(pid int) bool {
+	for {
+		err := unix.Waitid(unix.P_PID, pid, nil, unix.WEXITED|unix.WNOWAIT, nil)
+		if err == nil {
+			return true
+		}
+		if !errors.Is(err, unix.EINTR) {
+			return false
+		}
+	}
 }

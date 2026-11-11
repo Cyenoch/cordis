@@ -53,6 +53,9 @@ func Start(cmd *exec.Cmd) (*Tree, error) {
 	return &Tree{job: job}, nil
 }
 
+// Wait reaps the leader. The job, not a process id, addresses the tree.
+func (p *Tree) Wait(cmd *exec.Cmd) error { return cmd.Wait() }
+
 // Windows has no general SIGTERM equivalent; pipe closure provides the grace
 // interval, after which the job is forcibly terminated.
 func (p *Tree) Terminate() error { return nil }

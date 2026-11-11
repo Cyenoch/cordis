@@ -243,7 +243,7 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	}
 	s := &Session{endpoint: endpoint, stop: make(chan struct{}), done: make(chan struct{})}
 	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
+	go func() { exited <- tree.Wait(cmd) }()
 	stderrDone := make(chan error, 1)
 	go func() {
 		remaining := stderrLimit
