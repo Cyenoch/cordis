@@ -374,6 +374,25 @@ func (e *Endpoint) sendResponse(ctx, deliveryCtx context.Context, response Frame
 	recoverable := e.incoming[response.ID].recoverable
 	limit := e.frameBytes
 	e.mu.Unlock()
+	// The request stops counting toward the limit once its response is
+	// queued for the writer, whatever the outcome of this call.
+	var request incoming
+	counted := false
+	release := func() {
+		e.mu.Lock()
+		if request, counted = e.incoming[response.ID]; counted {
+			if !request.canceled {
+				e.activeIncoming--
+			}
+			delete(e.incoming, response.ID)
+		}
+		e.mu.Unlock()
+	}
+	defer func() {
+		if !counted {
+			release()
+		}
+	}()
 	initializes := response.Method == "initialize" && response.Error == nil
 	data, err := encodeFrame(response, limit)
 	if _, oversized := errors.AsType[*frameSizeError](err); oversized && recoverable {
@@ -400,6 +419,29 @@ func (e *Endpoint) sendResponse(ctx, deliveryCtx context.Context, response Frame
 		close(committed)
 		e.mu.Unlock()
 		return nil
+	}
+	// When the writer can take the response at once, stop counting first:
+	// the peer may send its next request the moment it has the response,
+	// and that request must find the slot free. When the writer is behind,
+	// the request keeps counting until its response is queued, so that a
+	// peer that does not read its responses cannot have more admitted.
+	message := outbound{data: data, shutdown: e.guest && response.Method == "shutdown" && response.Error == nil}
+	if ctx.Err() == nil {
+		release()
+		select {
+		case e.out <- message:
+			return nil
+		default:
+		}
+		if counted {
+			e.mu.Lock()
+			e.incoming[response.ID] = request
+			if !request.canceled {
+				e.activeIncoming++
+			}
+			e.mu.Unlock()
+			counted = false
+		}
 	}
 	requestDone := ctx.Done()
 	for {
@@ -650,14 +692,6 @@ func (e *Endpoint) receive(frame Frame) error {
 
 func (e *Endpoint) handle(ctx context.Context, cancel context.CancelFunc, frame Frame, handler Handler, prepareErr error) {
 	defer cancel()
-	defer func() {
-		e.mu.Lock()
-		if !e.incoming[frame.ID].canceled {
-			e.activeIncoming--
-		}
-		delete(e.incoming, frame.ID)
-		e.mu.Unlock()
-	}()
 	var payload json.RawMessage
 	err := ctx.Err()
 	if err == nil {

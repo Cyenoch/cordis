@@ -4,20 +4,21 @@ import { Code, Icon } from '@astrojs/starlight/components'
 
 const isHome = Astro.locals.starlightRoute.entry.id === ''
 const base = import.meta.env.BASE_URL.replace(/\/$/, '')
-const plugin = `sdk.Run(ctx, contract.Definition{
-    ID: "counter",
-    Start: func(ctx context.Context,
-        scope contract.Scope) error {
-        value := 0
-        return sdk.Provide(scope,
-            counterService,
-            func(ctx context.Context,
-                in Request) (Response, error) {
-                value += in.Delta
-                return Response{Value: value}, nil
-            })
-    },
-})`
+const plugin = `func main() {
+    err := sdk.Run(context.Background(),
+        sdk.Define(CounterPlugin(start)))
+    if err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(1)
+    }
+}
+
+func start(ctx context.Context, s *cordis.Scope,
+    config CounterConfig) error {
+    c := &counter{}
+    return ExampleCounterEndpoint.Provide(s,
+        NewExampleCounterEndpoint(c))
+}`
 ---
 
 {isHome ? (
@@ -34,7 +35,7 @@ const plugin = `sdk.Run(ctx, contract.Definition{
       </div>
     </div>
     <div class="hero-code">
-      <Code code={plugin} lang="go" title="counter.go · 服务定义片段" />
+      <Code code={plugin} lang="go" title="main.go · native 插件入口" />
       <div class="package-route" aria-label="插件经宿主管理，运行于原生进程">
         <span>plugin.zip</span><Icon name="right-arrow" size="1rem" /><strong>Cordis Host</strong><Icon name="right-arrow" size="1rem" /><span>Native</span>
       </div>

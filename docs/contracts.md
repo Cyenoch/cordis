@@ -212,11 +212,11 @@ var (
 
 `Changed.On(ctx, s, fn)`、`Lookup.Handle(ctx, s, fn)`、`Render.Use(ctx, s, middleware)` 登记，`Emit`、`EmitParallel`、`Ask`、`Do` 触发，语义与进程内的 `Event`、`Query`、`Chain` 相同（见[进程内内核](kernel.md)），区别在于登记和触发是返回 error 的调用，进出数据要满足本页的数据规则，插件在另一个进程时它们经由 Host 路由。Host 应用在 `host.Scope()` 上直接使用同一批键。示例见 `examples/plugins/feed` 与 `examples/plugins/counter`。
 
-`schema/testdata/consumer_test.go.txt` 是独立消费者的真实实现与行为测试。`go test -tags=integration ./schema` 会生成文件到临时独立 module，使用 replace 指向当前框架，再编译并运行 typed client/server、nullable、可选字段、int64、base64、union 和严格 envelope 场景；普通 `go test ./schema` 运行 schema 与生成输入拒绝测试。已执行结果及对应源码修订以 [OpenSpec change 的集成证据](../openspec/changes/archive/2026-10-28-build-go-plugin-framework/tasks.md) 为准，不把本文的复现命令当作新的运行记录。
+`schema/testdata/consumer_test.go.txt` 是独立消费者的行为测试。`go test -tags=integration ./schema` 把生成的文件与它写入临时独立 module，用 replace 指向当前检出，再编译并运行：类型化往返、union 与严格服务端、客户端拒绝不匹配的端点。普通 `go test ./schema` 运行 schema 与生成输入的拒绝测试。
 
 ## 互操作向量
 
-`schema/{package,session,integrity,signature}.schema.json` 是独立 Draft 2020-12 envelope schema；受限契约生成器使用上文自己的数据方言。外部环境提供 Python `jsonschema` 后执行 `python3 conformance/validate-schemas.py`，验证四份 metaschema、58 个结构向量和固定签名字节/SHA-256。该脚本明确不执行 codeVectors 或 Ed25519；后者由 `go test ./packagehost -run '^TestIndependentSigningInteroperabilityVector$'` 校验固定 UTF-8 输入、公钥、签名、信任及篡改拒绝。协议方向、状态、比较式语义和 nullable/64 位 codec 由真实 Go 回归验证，不能由 envelope schema 通过推断。
+`schema/{package,session,integrity,signature}.schema.json` 是独立 Draft 2020-12 envelope schema；受限契约生成器使用上文自己的数据方言。外部环境提供 Python `jsonschema` 后执行 `python3 conformance/validate-schemas.py`，验证四份 metaschema、97 个结构向量和固定签名字节/SHA-256。该脚本明确不执行 codeVectors 或 Ed25519；后者由 `go test ./packagehost -run '^TestIndependentSigningInteroperabilityVector$'` 校验固定 UTF-8 输入、公钥、签名、信任及篡改拒绝。协议方向、状态、比较式语义和 nullable/64 位 codec 由真实 Go 回归验证，不能由 envelope schema 通过推断。
 
 ## 手写类型的数据规则
 

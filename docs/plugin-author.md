@@ -1,60 +1,133 @@
 ---
 title: 编写插件
-description: 单一 SDK 入口、生成契约与激活资源。
+description: 写一个 native 插件：入口、依赖、事件、子实例、并发与测试。
 ---
 
 # 编写插件
 
-先按[快速开始](getting-started.md)创建独立 Go module。作者只维护 `plugin.toml`、契约声明和业务代码；生成器提供配置类型、服务端接口及客户端。
+native 插件是独立 Go module 里的一个进程：它声明提供和依赖的服务，由 Host 以签名包的形式启动，并通过会话与 Host 及其他插件通信。本页写插件代码；创建项目和第一次运行见[快速开始](getting-started.md)。
 
-## 进程入口
+## 最小插件
+
+作者维护 `plugin.toml`、契约声明（[数据契约](contracts.md)）和业务代码。生成的 `<Def>Plugin(start)` 返回 `cordis.Plugin[<Def>Config]`，`sdk.Define` 把它变成可运行的定义：
 
 ```go
 func main() {
-    if err := sdk.Run(context.Background(), NewMainDefinition(start)); err != nil {
+    if err := sdk.Run(context.Background(), sdk.Define(CounterPlugin(start))); err != nil {
         fmt.Fprintln(os.Stderr, err)
         os.Exit(1)
     }
 }
+
+func start(ctx context.Context, s *cordis.Scope, config CounterConfig) error {
+    c := &counter{}
+    if _, err := changed.On(ctx, s, func(context.Context, struct{}) error {
+        c.events.Add(1)
+        return nil
+    }); err != nil {
+        return err
+    }
+    return ExampleCounterEndpoint.Provide(s, NewExampleCounterEndpoint(c))
+}
 ```
 
-`sdk.Run` 支持多个定义，Host 在初始化时选择其中一个。每次 activation 独占进程；stdout 只传协议，日志写 stderr。Run 返回清理或运行错误，由 main 决定退出方式。
+`start` 收到的 `*cordis.Scope` 与[进程内内核](kernel.md)里的是同一个类型：插件进程里运行着一个真正的内核，`Defer`、`Go`、`Load`、`Isolate` 等都可以使用。`sdk.Run` 接受多个定义，Host 在初始化时选择其中一个；每次激活独占一个进程。stdout 只传协议，日志写 stderr；`Run` 返回清理或运行错误，由 `main` 决定退出方式。
 
-## 依赖与清理
+## 依赖
 
-在契约中声明所需服务，在 Start 中取得类型化客户端并注册 provider。不要缓存跨 activation 的 Scope。初始化期间注册的资源，即使后续初始化失败也会清理。
+在契约里声明依赖，Host 在所有依赖就绪后才启动进程，并把绑定的服务交给 `start`：
+
+```go
+endpoint, err := ExampleMessageEndpoint.Get(s)
+if err != nil { return err }
+client, err := NewExampleMessageClient(endpoint)
+if err != nil { return err }
+```
+
+调用另一个进程里的服务与调用本进程的服务写法一致，经由 Host 路由，数据按契约校验。`Start` 内可以发出这类请求，也可以登记事件、查询和中间件；这些请求以初始化为父，在初始化成功后才对外生效。
+
+## 事件、查询与中间件
+
+跨进程的事件、查询和中间件链用 `contract` 里的键，键定义在提供方和使用方共享的包里：
+
+```go
+var (
+    changed = contract.NewEventKey[struct{}]("example.changed")
+    Render  = contract.NewChainKey[string, string]("example.render")
+)
+
+cancel, err := changed.On(ctx, s, handler)               // 监听；返回 cancel 可提前撤销
+err = changed.Emit(ctx, s, struct{}{})                   // 触发，按登记顺序，遇错停止
+_, err = Render.Use(ctx, s, func(ctx context.Context, in string, next func(context.Context, string) (string, error)) (string, error) {
+    return next(ctx, "<" + in + ">")
+})
+```
+
+`Once`、`Prepend` 登记选项、`Emit`/`EmitParallel`、`Ask`/`Handle` 与进程内键的语义相同，登记归属当前激活，退役时自动撤销并等待已准入的回调，通常不必再 `Defer`。事件的作用范围是整个 Host，包括进程内插件和所有 native 实例；每次激活最多 256 个活动登记。
+
+链的每个跨进程中间件需要两次往返，一次执行的耗时等于最慢的一步，且执行本身没有期限：给 `Do` 的 context 设置期限。链的每一跳占用会话的一个在途请求直到整次执行返回，没有空位时该跳以 `not_ready` 失败。
+
+## 清理
+
+用 `s.Defer` 登记清理，按登记逆序执行，初始化失败时已登记的也会执行；清理不是业务事务回滚。
 
 ```go
 resource, err := openResource()
 if err != nil { return err }
-_, err = contract.Own(scope, resource)
-return err
+s.Defer(func(context.Context) error { return resource.Close() })
 ```
 
-`Own` 用于接管已有的 `Close() error` 资源，登记失败会立即关闭；需要自定义 context 的清理使用 `scope.Defer`。清理不是业务事务回滚。
+停止 provider 时，Host 先让所有消费者完成清理，再结束 provider 的进程，所以消费者的清理仍然可以调用 provider。不要缓存跨激活的 `Scope`。
 
-## 可选子实例
+## 子实例
 
-通过 `contract.CreateChild(ctx, scope, contract.Child{ID: "optional", Definition: "feature"})` 创建同包定义。它先登记，父发布后才启动。不要在父 Start 内等待子启动；子依赖缺失不会阻塞父和兄弟实例。
+`sdk.CreateChild(ctx, s, contract.Child{ID: "optional", Definition: "feature"})` 向 Host 登记同包的另一个定义，作为本激活的子实例运行（独立进程）。它先登记，父发布后才启动；返回的句柄可 `Wait`、`Update`、`Stop`。不要在父 `Start` 内等待子实例启动；子实例缺依赖只让它自己等待，不阻塞父和兄弟。`Child.Isolate` 为子树建立服务边界，见[组合](composition.md#按服务隔离)。父重新启动后，旧的 `Scope` 不能再创建子实例。
 
-## 编辑与重启
+## 并发回调
 
-在单一本机 target 的作者目录完成 `go mod tidy` 后，运行：
+服务方法、事件监听、查询处理者和链中间件都可能并发调用：Host 对一个插件最多并行 56 个业务请求，更多的排队，之间没有顺序保证。实现要自己保护共享状态。
+
+- 需要随激活取消、退役时等待的后台工作，用 `s.Go(func(ctx context.Context) error)`：在 `Start` 内登记的工作等实例 Active 后才开始，返回非取消错误会使实例失败。`Start` 与 `Go` 收到的 `ctx` 都在实例停止时取消。
+- 退役先取消 context、等待已准入的回调和 `Go` 工作返回，再运行 `Defer` 清理；回调应当尊重 `ctx`。
+- 流方法在被调用方期限内必须有产出：调用方在被调方有额度却一个期限（默认 30 秒）内没有收到任何一项时，以 `timeout` 结束。长时间空闲的流应定期发送心跳项。
+- `Start` 内不要消费流：流在初始化完成后才开始，`Start` 等它会等到初始化超时。把消费放进 `s.Go`。
+
+## native 运行与进程内运行的差异
+
+同一个 `cordis.Plugin` 既可以 `sdk.Define` 成 native 包，也可以在 Host 应用里 `Load` 到 `host.Scope()` 上。差别来自进程边界：
+
+| | 进程内 | native |
+|---|---|---|
+| 服务、事件、查询、链 | `cordis.Service`、`Event`、`Query`、`Chain`，传递任意 Go 值 | `contract.EndpointKey`、`EventKey`、`QueryKey`、`ChainKey`，传递校验过的 JSON；`cordis` 的键只在插件进程内可见 |
+| 失败隔离 | 回调的 panic 被内核捕获并作为该实例的错误 | 进程崩溃或非请求退出使该 entry Failed，不影响其他进程 |
+| 调用期限 | 由调用方 context 决定 | 默认 30 秒，上限 120 秒；链不设限 |
+| 登记事件、查询、链 | 同步、不返回网络错误 | 往返 Host，返回 error，初始化期间由 Host 确认 |
+| 权限 | 应用进程的权限 | 启动用户的权限，不是沙箱 |
+
+## 开发循环
+
+在作者目录完成 `go mod tidy` 后：
 
 ```sh
 cordis dev -dev-unsigned -go-package . -config-file ../development.toml .
 ```
 
-保存 Go、契约、资源或配置文件会串行构建并重启；模块外依赖需显式 `-watch ../shared`。一次运行一个 definition，可用 `-definition` 选择；其动态同包 children 由父生命周期管理。
-
-需要同时开发 provider 和 consumer 等多个本地包时，使用 `dev -dev-unsigned -project FILE`；清单显式列出包、entry 和配置，任意包修改后整组重建重启。见[多插件联合开发](multi-package-dev.md)。
-
-无需每次改发行版本：每个候选使用作者目录外的独立临时 Store 和精确摘要许可，正式 Store 仍拒绝同版本不同摘要。编译、打包或配置校验失败保留旧 activation；新代码通过预检并关闭旧实例后，若初始化失败，只保留可诊断的 Failed，修复文件后再试。关闭历史错误与实际完成分开判断，未完成清理不会启动下一候选。
-
-Build 会更新作者目录中的生成代码、产物与 build.json，不承诺源码事务；Pack 只发布声明产物、显式 resources 和元数据。配置可在目录外单独监视，日志、密钥及运行状态也放在外部。显式资源会触发重建，即使名字类似编辑器临时文件；真实生成输出仍排除。临时根须位于监视目录之外，完成退出后临时候选自动清理。完整参数和边界见 [CLI](cli.md#编辑后自动重启)。
+保存 Go、契约、资源或配置文件会构建并重启；模块外的依赖用 `-watch` 显式加入。编译或配置失败时保留旧实例，修复后自动重建。同时开发 provider 和 consumer 等多个本地包时用 `-project FILE`，见[多插件联合开发](multi-package-dev.md)；参数与边界见 [CLI](cli.md#编辑后自动重启)。
 
 ## 测试
 
-用 `plugintest.New` 运行真实 SDK 初始化、生成 codecs 和清理；依赖通过 `plugintest.Options.Business` 提供普通服务测试替身。进程、信号和安装行为由真实 native 集成测试验证。
+`plugintest.Start` 用真实的 Host、真实的 SDK 初始化、生成的 codec 和清理运行一个定义，不需要进程：
 
-[配置和服务类型](contracts.md) · [发布插件](plugin-release.md) · [资源清理](resources.md) · [native 运行时](runtimes.md)
+```go
+h, err := plugintest.Start(t.Context(), CounterDefinitionSpec(), sdk.Define(CounterPlugin(start)),
+    plugintest.Options{Config: json.RawMessage(`{"initial":10}`)})
+if err != nil { t.Fatal(err) }
+defer h.Close(t.Context())
+
+endpoint, err := ExampleCounterEndpoint.Get(h.Scope())
+client, err := NewExampleCounterClient(endpoint)
+```
+
+`Options.Setup` 在插件启动前往根作用域加载提供依赖的进程内插件，`Options.Children` 提供同包的其他定义；`h.Scope()` 是 Host 的根作用域，在它上面触发事件、调用服务即可观察插件。进程、信号和安装行为由 native 集成测试验证。
+
+[数据契约](contracts.md) · [发布插件](plugin-release.md) · [资源清理](resources.md) · [native 运行时](runtimes.md)

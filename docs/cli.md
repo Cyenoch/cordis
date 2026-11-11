@@ -15,7 +15,7 @@ go build -o ./bin/cordis ./cmd/cordis
 
 也可在仓库根使用 `go run ./cmd/cordis`，Windows 输出文件改为 `.exe`。采用标准库 flags，标志放在路径等位置参数之前；`--` 可结束标志解析。所有命令支持 `-h`、`--help` 和 `-version`，也可使用 `cordis help COMMAND`、`cordis --version`。
 
-`version` 显示实际 Go build/module 信息，包括可用的 VCS revision、修改状态与 module replace。工作区构建可能显示 `(devel)`，不会伪装成已发布版本。
+`version` 显示实际的 Go build/module 信息，包括可用的 VCS revision、修改状态与 module replace；工作区构建可能显示 `(devel)`。
 
 ## 命令一览
 
@@ -28,7 +28,7 @@ go build -o ./bin/cordis ./cmd/cordis
 | `sign ARCHIVE.zip KEY_ID PRIVATE_KEY_FILE` | 为归档签名 |
 | `inspect ARCHIVE.zip` | 查看包引用和 Manifest，不授权执行 |
 | `validate ARCHIVE.zip` | 检查归档格式与完整性，不评估宿主信任 |
-| `generate -output FILE\|- [FLAGS] CONTRACT...` | 合并检查多个契约，生成已格式化的 Go 源码 |
+| `generate -output FILE\|- [-package NAME] [-format FORMAT] CONTRACT...` | 合并检查多个契约，生成已格式化的 Go 源码 |
 | `run -dev-unsigned [FLAGS] ARCHIVE.zip` | 在临时宿主内运行自己的本地开发产物 |
 | `list -store DIRECTORY` | 列出已安装包、选中版本和持久 entry |
 | `install -store DIRECTORY -trust FILE ARCHIVE.zip` | 验证并安装签名包 |
@@ -51,7 +51,7 @@ go build -o ./bin/cordis ./cmd/cordis
 
 工作区 CLI 没有可用的发布 module 版本时，须用 `-sdk-version` 指定实际要依赖的 Cordis 版本，不会回退到 `latest`。`-id` 默认 `example.plugin`，`-publisher` 默认 `example`；发行版本只写在 `plugin.toml`，不复制到业务 Go。
 
-默认创建 `plugin.toml`、`main.go`、`main_test.go` 和 `go.mod`。作者源是对象型 TOML，内联最小 `main` definition，未声明的配置是严格空对象。业务入口使用生成的 `NewMainDefinition` 与 SDK 的标准进程入口，测试使用 `plugintest`。不会生成另一套构建脚本，也不写入开发信任或 native 执行许可。
+默认创建 `plugin.toml`、`main.go`、`main_test.go` 和 `go.mod`。作者源是对象型 TOML，内联最小 `main` definition，未声明的配置是严格空对象。业务入口用 `sdk.Run(ctx, sdk.Define(MainPlugin(start)))`（`MainPlugin` 是生成的构造函数），测试使用 `plugintest`。不会生成另一套构建脚本，也不写入开发信任或 native 执行许可。
 
 默认声明当前系统的 native 目标。构建必须显式指定 `-goos` 和 `-goarch`，值须与作者源中的 artifact 一致。`build` 调用 `packagehost.Build`，不运行产物探测能力。
 
@@ -63,7 +63,7 @@ go build -o ./bin/cordis ./cmd/cordis
 | `-generated-package NAME` | 生成代码包名，默认 `main` |
 | `-generated-output PATH` | 相对作者目录的生成文件，默认 `cordis_gen.go` |
 
-`build.json` 记录声明指纹、生成摘要、实际选用的 SDK module 版本/能力、目标和产物 hash，并作为 JSON 结果输出。它由工具维护，不是第三份手写 Manifest。打包会检查声明漂移、旧生成代码及产物不一致；外部流水线使用 `packagehost.PrepareBuild` 和 `packagehost.WriteBuildDescriptor` 显式提供同样证据，不能用 CLI 版本代替实际 SDK 能力。描述能防止意外漂移，不证明恶意二进制行为。
+`build.json` 记录声明指纹、生成摘要、实际选用的 SDK module 版本/能力、目标和产物 hash，并作为 JSON 结果输出。它由工具维护，不是第三份手写 Manifest。打包会检查声明漂移、生成代码过期及产物不一致；外部流水线使用 `packagehost.PrepareBuild` 和 `packagehost.WriteBuildDescriptor` 显式提供同样证据，不能用 CLI 版本代替实际 SDK 能力。描述能防止意外漂移，不证明恶意二进制行为。
 
 ## 打包与签名
 
@@ -118,7 +118,7 @@ Pack 仅发布元数据、全部声明产物和顶层 `resources` 的精确文�
 
 已有 entry 的 `enable` 保留未指定的 package、definition、parent、config 和 isolate。`-parent ""` 清空父项，`-isolate ""` 清空隔离列表，`-config '{}'` 显式替换配置；新 entry 必须提供 `-package`。`-isolate db@1` 可重复使用，每项是完整服务 key。
 
-不兼容 schema 的升级顺序是：停止前台 Host，disable 受影响子树，从叶到根 remove 旧意图，select 新引用，再用新配置 enable。只 disable 不会删除配置，也不会绕过新版本校验。list/status/disable/remove/uninstall 不要求信任文件；install/select/enable/host 必须明确提供。
+配置 schema 改变后要换用新版本时：停止前台 Host，disable 受影响子树，从叶到根 remove 现有意图，select 新引用，再用新配置 enable。只 disable 不会删除配置，也不会绕过新版本的校验。list/status/disable/remove/uninstall 不要求信任文件；install/select/enable/host 必须明确提供。
 
 ## 编辑后自动重启
 
@@ -142,7 +142,7 @@ Pack 仅发布元数据、全部声明产物和顶层 `resources` 的精确文�
 
 每次候选在作者目录外的临时工作目录中拥有独立 ZIP 和 Store，只许可该候选摘要，因此可以保持发行版本不变连续编辑。Build 仍会更新源码目录中的生成文件、二进制和 build.json；整个源码构建不是事务。Pack 只包含声明产物、resources 和元数据；显式资源绕过编辑器临时文件名过滤，真实生成输出仍不触发重建。
 
-编译、Pack、配置预检失败时旧实例继续运行；输入改变后才重试。预检通过才关闭旧 Host，关闭完成后再核对输入 generation，仅启动最新候选。旧 Host 已排空但带历史错误时，输出错误并继续；未完成清理则停止切换、报告保留路径。新插件初始化失败后保持 Failed，等待下次编辑，不恢复旧进程、内存或业务请求。
+编译、Pack、配置预检失败时当前实例继续运行；输入改变后才重试。预检通过才关闭当前 Host，关闭完成后再核对输入 generation，仅启动最新候选。当前 Host 已排空但带历史错误时，输出错误并继续；未完成清理则停止切换、报告保留路径。新插件初始化失败后保持 Failed，等待下次编辑，不恢复上一个进程、内存或业务请求。
 
 stdout 输出带 generation 的 `build`、`build_failed`、`runtime` JSON；stderr 输出结构化诊断。退出取消监视与构建进程树，完成 Host 关闭后删除临时目录。
 
@@ -158,7 +158,7 @@ stdout 输出带 generation 的 `build`、`build_failed`、`runtime` JSON；stde
 | `-definition ID` | 包内定义；默认用 Manifest 的默认定义 |
 | `-service NAME` | 启动后调用的服务；省略则打印实例状态 |
 | `-major N` | 服务主版本；省略时必须能唯一匹配，不能猜测 |
-| `-min-minor N` / `-max-minor N` | 兼容 minor 闭区间 |
+| `-min-minor N` / `-max-minor N` | 接受的 minor 闭区间 |
 | `-startup-timeout DURATION` | 默认 `30s`；必须大于零；只约束启动，不缩短后续业务调用 deadline |
 | `-config JSON` / `-input JSON` | 内联 JSON，默认均为 `{}` |
 | `-config-file PATH` / `-input-file PATH` | 从文件加载；`-` 显式选择 stdin |
@@ -182,9 +182,9 @@ printf '%s' '{"method":"execute","input":{"operation":"get","delta":0}}' | ./bin
 ./bin/cordis generate -package pluginapi -output ./api.gen.go ./echo.schema.toml ./settings.schema.yaml
 ```
 
-输入使用 Cordis 的[受限数据契约](contracts.md)，不接受任意 JSON Schema。所有输入由 `schema.GenerateMany` 一次检查输出符号；通过完整解析、冲突检查、生成和 gofmt 后，才用同目录临时文件替换目标。生成或写入失败保留旧文件；不会先截断目标，也不要求再次运行 gofmt。
+输入使用 Cordis 的[受限数据契约](contracts.md)，不接受任意 JSON Schema。所有输入由 `schema.GenerateMany` 一次检查输出符号；通过完整解析、冲突检查、生成和 gofmt 后，才用同目录临时文件替换目标。生成或写入失败保留原文件；不会先截断目标，也不要求再次运行 gofmt。
 
-`-output` 必填；只有显式 `-output -` 才向 stdout 写代码。文件格式由扩展名确定，`-format toml|yaml|json` 可显式指定全部输入的格式。输出含配置、定义包装、客户端、服务端注册和严格 codec，未知 schema 特性报错。
+`-output` 必填；只有显式 `-output -` 才向 stdout 写代码。文件格式由扩展名确定，`-format toml|yaml|json` 可显式指定全部输入的格式。输出含配置类型、插件构造函数、服务端点与客户端和严格 codec，未知的 schema 特性报错。
 
 ```sh
 ./bin/cordis generate -package pluginapi -output - ./echo.schema.json

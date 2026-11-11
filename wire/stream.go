@@ -281,14 +281,6 @@ func (e *Endpoint) receiveCredit(frame Frame) error {
 // credit allows.
 func (e *Endpoint) serveStream(ctx context.Context, cancel context.CancelFunc, frame Frame, out *outflow) {
 	defer cancel()
-	defer func() {
-		e.mu.Lock()
-		if !e.incoming[frame.ID].canceled {
-			e.activeIncoming--
-		}
-		delete(e.incoming, frame.ID)
-		e.mu.Unlock()
-	}()
 	var err error
 	if e.stream == nil {
 		err = contract.Fail(contract.Incompatible, "this side does not serve streams")

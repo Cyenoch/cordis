@@ -255,6 +255,7 @@ func tempFile(t *testing.T) *os.File {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { f.Close() }) // before the directory is removed
 	return f
 }
 

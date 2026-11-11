@@ -38,7 +38,7 @@ export default defineConfig({
       },
       sidebar: [
         {
-          label: '开始使用',
+          label: '入门',
           items: [
             { label: '认识 Cordis', slug: 'index' },
             { label: '快速开始', slug: 'getting-started' },
@@ -46,44 +46,49 @@ export default defineConfig({
           ],
         },
         {
-          label: '动手开发',
+          label: '进程内内核',
           items: [
-            { label: '编写插件', slug: 'plugin-author' },
             { label: '进程内内核', slug: 'kernel' },
+            { label: '组合与生命周期', slug: 'composition' },
+            { label: '组合实操', slug: 'composition-tutorial' },
+            { label: '资源清理', slug: 'resources' },
+          ],
+        },
+        {
+          label: '配置、日志与定时',
+          items: [
             { label: '配置文件加载器', slug: 'loader' },
             { label: '日志服务', slug: 'logging' },
             { label: '定时辅助', slug: 'timers' },
-            { label: '接入宿主', slug: 'host-guide' },
+          ],
+        },
+        {
+          label: 'Native 插件作者',
+          items: [
+            { label: '编写插件', slug: 'plugin-author' },
+            { label: '数据契约与代码生成', slug: 'contracts' },
+            { label: '生成服务', slug: 'generated-service' },
+            { label: '外部插件包与签名', slug: 'packages' },
+            { label: '发布插件', slug: 'plugin-release' },
+            { label: 'Native 运行时', slug: 'runtimes' },
+            { label: '多插件联合开发', slug: 'multi-package-dev' },
             { label: 'CLI 命令', slug: 'cli' },
           ],
         },
         {
-          label: '实操教程',
+          label: '宿主接入',
           items: [
-            { label: '组合实操', slug: 'composition-tutorial' },
-            { label: '生成服务', slug: 'generated-service' },
-            { label: '发布插件', slug: 'plugin-release' },
-            { label: '多插件联合开发', slug: 'multi-package-dev' },
-          ],
-        },
-        {
-          label: '框架指南',
-          items: [
-            { label: '组合、实例与清理', slug: 'composition' },
-            { label: '数据契约与代码生成', slug: 'contracts' },
-            { label: '资源清理', slug: 'resources' },
-            { label: '外部插件包与签名', slug: 'packages' },
-            { label: 'Native 运行时', slug: 'runtimes' },
+            { label: '接入宿主', slug: 'host-guide' },
             { label: '中断恢复', slug: 'recovery' },
             { label: '本机在线控制', slug: 'local-control' },
+            { label: '上线与维护', slug: 'operations' },
+            { label: '故障排查', slug: 'troubleshooting' },
           ],
         },
         {
-          label: '参考与运维',
+          label: '协议与参考',
           items: [
             { label: 'Go API 导航', slug: 'api' },
-            { label: '故障排查', slug: 'troubleshooting' },
-            { label: '上线与维护', slug: 'operations' },
             { label: '会话协议', slug: 'protocol' },
             { label: '生命周期验收', slug: 'lifecycle-acceptance' },
             { label: '回归覆盖', slug: 'regressions' },

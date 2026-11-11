@@ -9,7 +9,7 @@ description: 精确选择发行文件，构建多平台包并交给宿主安装�
 
 ## 准备工具
 
-可从 [v0.1.0-alpha.2](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.2) 下载对应平台 CLI 和 SHA256SUMS。预发布供试用，不表示稳定版兼容承诺。解压前用 SHA-256 工具核对归档，解压后执行 `cordis version` 查看 tag 和来源提交。
+可从 [v0.1.0-alpha.2](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.2) 下载对应平台的 CLI 和 SHA256SUMS。这是预发布版本，供试用。解压前用 SHA-256 工具核对归档，解压后执行 `cordis version` 查看 tag 和来源提交。
 
 本地检出也可以构建相同命令行工具：
 
@@ -75,9 +75,9 @@ inspect 的 `files` 是实际文件清单，逐项列出大小和摘要。未声
 ./bin/cordis host -store ./state -trust ./trust.json
 ```
 
-前台 Host 运行后，应用可通过 Go Host 的 `Call` 调用 `example.resource@1`，请求为 `{"method":"read","input":{}}`，得到资源文本。CLI 在线管理不提供任意业务 RPC。
+前台 Host 运行后，Go 应用的 Host 可用 `Call` 调用 `example.resource@1` 的 `read` 方法（输入 `{}`）得到资源文本；`cordis run` 的 `-input` 则是 `{"method":"read","input":{}}`。在线管理不提供任意业务调用。
 
-示例读取 `CORDIS_PACKAGE_DIR` 指向的本次激活快照，不依赖源码目录或工作目录。自动验收实际构建所有目标、签名安装，再删除作者目录后在本机调用服务。交叉编译成功只证明目标能够构建，各平台运行结论以该提交的 conformance 为准。
+示例读取 `CORDIS_PACKAGE_DIR` 指向的本次激活快照，不依赖源码目录或工作目录。交叉编译成功只证明目标可以构建；各平台能否运行，以在该平台上实际执行的 [conformance](lifecycle-acceptance.md) 为准。
 
 ## 发布 Cordis CLI
 

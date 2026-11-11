@@ -7,7 +7,7 @@ description: 用类型化的键在一个进程里组合插件：服务依赖、�
 
 根包 `github.com/Cyenoch/cordis` 是一个只依赖标准库的组合内核。插件在同一个进程里组成一棵实例树，通过类型化的键交换普通的 Go 值，登记的东西随实例停止而撤销。
 
-本页对应可运行示例 [`examples/kernel`](https://github.com/Cyenoch/cordis/blob/main/examples/kernel/main.go)。native 插件与宿主见[接入宿主](host-guide.md)；两者目前是分开的两层，见[组合与生命周期](composition.md)的对照表。
+本页对应可运行示例 [`examples/kernel`](https://github.com/Cyenoch/cordis/blob/main/examples/kernel/main.go)。同一个 `cordis.Plugin` 也可以用 `sdk.Define` 作为 native 包运行（[编写插件](plugin-author.md)），Host 把进程内插件与 native 实例放在同一个内核里（[接入宿主](host-guide.md)）；跨进程的服务、事件和链用 `contract` 里的键，见[数据契约](contracts.md#类型化服务)。
 
 ## 键
 
