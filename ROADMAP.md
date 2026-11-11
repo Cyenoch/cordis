@@ -18,6 +18,7 @@
 | 日志服务与定时辅助 | [add-logging-and-timers](openspec/changes/archive/2026-11-11-add-logging-and-timers/) |
 | 用 Go 声明契约，推导 schema 与绑定 | [add-go-first-contracts](openspec/changes/archive/2026-11-11-add-go-first-contracts/) |
 | 任意对端输入与提供方启停下的加固 | [harden-for-production](openspec/changes/archive/2026-11-11-harden-for-production/) |
+| 宿主选择的在途上限与调用观测 | [add-session-limit-and-call-observer](openspec/changes/archive/2026-11-11-add-session-limit-and-call-observer/) |
 | 稳定版本发布 | 预发布验收完成后另行提案，不以公开源码或 alpha 版本等同稳定认证 |
 
 应用自行维护业务服务和产品验收，不列入 Cordis 的能力范围。

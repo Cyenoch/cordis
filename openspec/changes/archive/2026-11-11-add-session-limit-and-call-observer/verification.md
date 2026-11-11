@@ -30,7 +30,7 @@
 ## 实际运行
 
 - macOS 15 arm64，Go 1.27.3：`bash conformance/run.sh` 通过。
-- 五平台 CI：提交 `feat: host-chosen in-flight limit…` 全部通过，https://github.com/Cyenoch/cordis/actions/runs/43034898421 。
+- 五平台 CI（ubuntu-24.04、ubuntu-24.04-arm、macos-15、macos-15-intel、windows-2025，另有 contracts）：提交 `15013e7` 全部通过，https://github.com/Cyenoch/cordis/actions/runs/43045297366 。此前各轮的失败见下文。
 
 ## CI 在慢机上暴露的问题
 
@@ -40,3 +40,4 @@
 - `hosting`：放弃等待的停用之后立刻重新启用，旧实例的运行门尚未收尾，新实例启动时报“服务已被提供”（本机 `-cpu 1` 下出现）。实例和它的运行门都结束后才撤销登记，后一次调用会等门结束。`-race -cpu 1 -count=30` 通过。
 - `hosting`：临时停止在运行门撤下后即返回，实例自身的停止稍后才报告完成，调用方读到的状态仍是 `quiescing`（ubuntu-24.04 上出现）。现在等实例停完再返回。
 - `hosting` 的压力测试在 macos-15-intel 上有一次停用返回“取消在宽限内未被应答”；本机 11 个进程抢占、单核下 275 轮未复现，按调度饥饿处理，测试把取消宽限放到 30 秒。未能排除罕见竞态。
+- `timer`、`wire`：两处测试断言进程级 goroutine 数量前后相等，数量减少也判失败（ubuntu-24.04 上出现）。改为只在增长时失败。
