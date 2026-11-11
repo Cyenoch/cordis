@@ -145,9 +145,18 @@ func (e *Endpoint) Done() <-chan struct{}       { return e.done }
 // Ready is closed once initialize has succeeded and the session admits
 // business requests.
 func (e *Endpoint) Ready() <-chan struct{} { return e.readied }
-func (e *Endpoint) Err() error             { e.mu.Lock(); defer e.mu.Unlock(); return e.err }
-func (e *Endpoint) Close() error           { e.shutdown(io.EOF); return nil }
-func (e *Endpoint) Wait()                  { e.wg.Wait() }
+
+// SetInflight lowers the in-flight limit to what the peer announced. A guest
+// starts with the largest limit a host may choose and learns the real one
+// from initialize, before any request of its own.
+func (e *Endpoint) SetInflight(limit int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.limits.Inflight = min(e.limits.Inflight, limit)
+}
+func (e *Endpoint) Err() error   { e.mu.Lock(); defer e.mu.Unlock(); return e.err }
+func (e *Endpoint) Close() error { e.shutdown(io.EOF); return nil }
+func (e *Endpoint) Wait()        { e.wg.Wait() }
 
 func (e *Endpoint) shutdown(err error) {
 	e.closeOnce.Do(func() {

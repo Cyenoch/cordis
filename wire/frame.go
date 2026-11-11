@@ -72,7 +72,7 @@ type Limits struct {
 }
 
 func DefaultLimits() Limits {
-	return Limits{Inflight: 64, Deadline: 30 * time.Second, Grace: time.Second}
+	return Limits{Inflight: contract.DefaultInflight, Deadline: 30 * time.Second, Grace: time.Second}
 }
 
 func readFrame(reader *bufio.Reader, limit int) (Frame, error) {

@@ -31,7 +31,7 @@ if err != nil { return err }
 if err := instance.Wait(ctx); err != nil { return err }
 ```
 
-完整程序见 `examples/basic-host/main.go`。`Options` 的其余字段：`Runtime`（默认 native）、`FrameBytes`（默认 1 MiB）、`Grace`（退出宽限）、`Stderr`（原始 stderr）、`Logger` 与 `CapturePanic`（[诊断](operations.md#诊断)）、`Recovery`（[有限恢复](recovery.md)）。
+完整程序见 `examples/basic-host/main.go`。`Options` 的其余字段：`Runtime`（默认 native）、`FrameBytes`（默认 1 MiB）、`Inflight`（每个会话同时承载的请求数，流也占一个，16 到 1024，默认 64，其中 8 个留给会话自身；超出的调用方等待名额）、`OnCall`（[调用观测](operations.md#调用观测)）、`Grace`（退出宽限）、`Stderr`（原始 stderr）、`Logger` 与 `CapturePanic`（[诊断](operations.md#诊断)）、`Recovery`（[有限恢复](recovery.md)）。
 
 ## 进程内插件
 

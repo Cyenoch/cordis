@@ -255,7 +255,9 @@ type Invocation struct {
 // range; Services are the exact versions bound to the definition's
 // requirements; Features are what the host supports.
 type Initialize struct {
-	FrameBytes int             `json:"frameBytes"`
+	FrameBytes int `json:"frameBytes"`
+	// Inflight is the session's in-flight limit, for both directions.
+	Inflight   int             `json:"inflight"`
 	Identity   Identity        `json:"identity"`
 	Protocol   Protocol        `json:"protocol"`
 	Definition string          `json:"definition"`
@@ -303,6 +305,22 @@ const (
 	MaxFrameBytes = 1 << 20
 )
 
+// The in-flight limit is how many requests either side of a session may
+// have open at once, streams included. The host chooses it per session and
+// tells the guest in Initialize.
+const (
+	MinInflight     = 16
+	DefaultInflight = 64
+	MaxInflight     = 1024
+)
+
+func ValidateInflight(value int) error {
+	if value < MinInflight || value > MaxInflight {
+		return Fail(Invalid, "inflight must be between 16 and 1024")
+	}
+	return nil
+}
+
 func ValidateFrameBytes(value int) error {
 	if value < MinFrameBytes || value > MaxFrameBytes {
 		return Fail(Invalid, "frameBytes must be between 4096 and 1048576")
@@ -317,8 +335,10 @@ type Launch struct {
 	Handle     SessionHandler
 	Stream     SessionStreamHandler
 	FrameBytes int
-	Grace      time.Duration
-	Stderr     func(StderrRecord) error
+	// Inflight is the in-flight limit of the session; zero is DefaultInflight.
+	Inflight int
+	Grace    time.Duration
+	Stderr   func(StderrRecord) error
 }
 
 type Runtime interface {

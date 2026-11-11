@@ -337,6 +337,11 @@
           "minimum": 4096,
           "maximum": 1048576
         },
+        "inflight": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 1024
+        },
         "services": {
           "type": "array",
           "items": {
@@ -406,6 +411,7 @@
       },
       "required": [
         "frameBytes",
+        "inflight",
         "identity",
         "protocol",
         "definition",

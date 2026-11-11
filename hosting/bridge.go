@@ -9,11 +9,11 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/packagehost"
-	"github.com/Cyenoch/cordis/wire"
 )
 
 // hostFeatures are the session features this host implements.
@@ -45,11 +45,14 @@ func (i *hostInstance) start(ctx context.Context, s *cordis.Scope, config json.R
 	if err := contract.ValidateFrameBytes(h.options.FrameBytes); err != nil {
 		return err
 	}
+	if err := contract.ValidateInflight(h.options.Inflight); err != nil {
+		return err
+	}
 	owner := contract.Identity{Package: i.pkg.Ref.ID, Entry: i.id, Digest: i.pkg.Ref.Digest, Activation: contract.NewID()}
 	r := &run{host: h, instance: i, identity: owner, scope: s, listened: map[string]*listener{},
 		chains: chainCalls{stops: map[string]func(){}, nexts: map[string]*chainCall{}},
 		// Subscription control shares the session's limit with business requests.
-		slots: make(chan struct{}, wire.DefaultLimits().Inflight-8)}
+		slots: make(chan struct{}, h.options.Inflight-8)}
 	i.begin(r)
 	// Cleanups run in reverse: the session ends, the package snapshot is
 	// released, and the run is recorded last.
@@ -90,7 +93,7 @@ func (i *hostInstance) start(ctx context.Context, s *cordis.Scope, config json.R
 		bound = append(bound, provider.Service())
 	}
 	session, err := h.options.Runtime.Start(ctx, contract.Launch{Identity: owner, Directory: snapshot.Directory, Artifact: artifact,
-		Grace: h.options.Grace, FrameBytes: h.options.FrameBytes, Stderr: h.options.Stderr, Handle: r.handle, Stream: r.stream})
+		Grace: h.options.Grace, FrameBytes: h.options.FrameBytes, Inflight: h.options.Inflight, Stderr: h.options.Stderr, Handle: r.handle, Stream: r.stream})
 	if err != nil {
 		return err
 	}
@@ -99,7 +102,7 @@ func (i *hostInstance) start(ctx context.Context, s *cordis.Scope, config json.R
 	// Until initialize has succeeded there is nothing to shut down in the
 	// guest; the cleanup above then only closes the session.
 	registration, err := r.initialize(ctx, contract.Initialize{Identity: owner, Definition: i.spec.ID, Config: config,
-		FrameBytes: h.options.FrameBytes, Protocol: contract.Protocol{Major: contract.ProtocolMajor, MaxMinor: minor},
+		FrameBytes: h.options.FrameBytes, Inflight: h.options.Inflight, Protocol: contract.Protocol{Major: contract.ProtocolMajor, MaxMinor: minor},
 		Services: bound, Features: hostFeatures, Provides: append([]contract.Service{}, i.spec.Provides...)})
 	if err != nil {
 		return r.reported(err)
@@ -271,13 +274,21 @@ type guestEndpoint struct {
 
 func (e *guestEndpoint) Service() contract.Service { return e.service }
 
-func (e *guestEndpoint) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+// observe reports a finished call to the host's observer.
+func (e *guestEndpoint) observe(method string, stream bool, started time.Time, items int, err error) {
+	if report := e.run.host.options.OnCall; report != nil {
+		report(CallRecord{Entry: e.run.identity.Entry, Activation: e.run.identity.Activation, Service: e.service,
+			Method: method, Stream: stream, Items: items, Duration: time.Since(started), Err: err})
+	}
+}
+
+func (e *guestEndpoint) Call(ctx context.Context, method string, input json.RawMessage) (output json.RawMessage, err error) {
+	defer func(started time.Time) { e.observe(method, false, started, 0, err) }(time.Now())
 	release, err := e.run.acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	var output json.RawMessage
 	if err = e.run.call(ctx, "call", contract.Invocation{Service: e.service, Method: method, Input: input}, &output); err != nil {
 		// Tell a provider that went away from one that failed the call.
 		select {
@@ -292,14 +303,19 @@ func (e *guestEndpoint) Call(ctx context.Context, method string, input json.RawM
 // Stream forwards a streaming call to the guest.
 func (e *guestEndpoint) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	return func(yield func(json.RawMessage, error) bool) {
+		var failure error
+		items := 0
+		defer func(started time.Time) { e.observe(method, true, started, items, failure) }(time.Now())
 		data, err := json.Marshal(contract.Invocation{Service: e.service, Method: method, Input: input})
 		if err != nil {
+			failure = err
 			yield(nil, err)
 			return
 		}
 		// A stream holds one of the session's slots for as long as it runs.
 		release, err := e.run.acquire(ctx)
 		if err != nil {
+			failure = err
 			yield(nil, err)
 			return
 		}
@@ -312,9 +328,11 @@ func (e *guestEndpoint) Stream(ctx context.Context, method string, input json.Ra
 					err = e.run.gone(err)
 				default:
 				}
+				failure = err
 				yield(nil, err)
 				return
 			}
+			items++
 			if !yield(item, nil) {
 				return
 			}

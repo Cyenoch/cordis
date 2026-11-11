@@ -43,7 +43,7 @@ func session(t *testing.T, ctx context.Context, definitions ...sdk.Definition) (
 }
 
 func initialize(protocol uint32, definition, config string) json.RawMessage {
-	data, _ := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes,
+	data, _ := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Inflight: contract.DefaultInflight,
 		Identity: contract.Identity{Package: "test", Entry: "entry", Activation: "activation"},
 		Protocol: contract.Protocol{Major: protocol}, Definition: definition, Config: json.RawMessage(config),
 		Services: []contract.Service{}, Provides: []contract.Service{},

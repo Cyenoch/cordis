@@ -43,7 +43,7 @@ func (r *Runtime) Start(ctx context.Context, launch contract.Launch) (contract.S
 	hostIn, guestOut := io.Pipe()
 	guest := &wire.Transport{Reader: guestIn, Writer: guestOut, Closers: []io.Closer{guestIn, guestOut}}
 	host := &wire.Transport{Reader: hostIn, Writer: hostOut, Closers: []io.Closer{hostIn, hostOut}}
-	endpoint, err := wire.New(wire.Options{FrameBytes: launch.FrameBytes, Transport: host, Identity: launch.Identity, Handler: wire.Handler(launch.Handle), Stream: wire.StreamHandler(launch.Stream)})
+	endpoint, err := wire.New(wire.Options{FrameBytes: launch.FrameBytes, Transport: host, Identity: launch.Identity, Handler: wire.Handler(launch.Handle), Stream: wire.StreamHandler(launch.Stream), Limits: wire.Limits{Inflight: launch.Inflight}})
 	if err != nil {
 		return nil, errors.Join(err, guest.Close(), host.Close())
 	}

@@ -85,7 +85,7 @@ func main() {
 					t.Fatal(err)
 				}
 				t.Cleanup(func() { session.Close() })
-				input, _ := json.Marshal(contract.Initialize{FrameBytes: budget, Identity: identity, Protocol: contract.Protocol{Major: contract.ProtocolMajor},
+				input, _ := json.Marshal(contract.Initialize{FrameBytes: budget, Inflight: contract.DefaultInflight, Identity: identity, Protocol: contract.Protocol{Major: contract.ProtocolMajor},
 					Definition: "budget", Config: json.RawMessage(`{}`), Features: []string{"cancel", "parent", "events", "children", "subscriptions"},
 					Services: []contract.Service{{Name: "large", Major: 1}}, Provides: []contract.Service{service}})
 				if _, err := session.Call(t.Context(), "initialize", input); err != nil {

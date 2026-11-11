@@ -24,8 +24,17 @@ type Options struct {
 	Trust      packagehost.TrustPolicy
 	Runtime    contract.Runtime
 	FrameBytes int
-	Stderr     func(contract.StderrRecord) error
-	Grace      time.Duration
+	// Inflight is how many requests a session carries at once in each
+	// direction, streams included; eight are kept for the session's own
+	// control. Zero is contract.DefaultInflight. A caller beyond the limit is
+	// refused with not_ready rather than queued.
+	Inflight int
+	Stderr   func(contract.StderrRecord) error
+	Grace    time.Duration
+	// OnCall, when set, is told about every call and stream routed to a
+	// native entry once it has ended, for metrics and tracing. It runs on
+	// the caller's goroutine, outside state locks, and must return promptly.
+	OnCall func(CallRecord)
 	// Logger is optional and called synchronously outside state locks. Handlers
 	// must return promptly and must not reenter Host management methods.
 	Logger *slog.Logger
@@ -34,6 +43,23 @@ type Options struct {
 	CapturePanic bool
 	// Recovery is opt-in, keyed by an existing persistent native entry ID.
 	Recovery map[string]RecoveryPolicy
+}
+
+// CallRecord describes one finished call or stream to a native entry. It
+// carries no request or response data.
+type CallRecord struct {
+	Entry      string
+	Activation string
+	Service    contract.Service
+	Method     string
+	// Stream marks a streaming method; Items is how many items its consumer
+	// received.
+	Stream   bool
+	Items    int
+	Duration time.Duration
+	// Err is what the caller got; nil for a call that succeeded and for a
+	// stream that ended or that its consumer left.
+	Err error
 }
 
 type Host struct {
@@ -70,6 +96,9 @@ func Open(options Options) (*Host, error) {
 	}
 	if options.Runtime == nil {
 		options.Runtime = native.New()
+	}
+	if options.Inflight == 0 {
+		options.Inflight = contract.DefaultInflight
 	}
 	if options.FrameBytes == 0 {
 		options.FrameBytes = contract.MaxFrameBytes

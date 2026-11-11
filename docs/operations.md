@@ -27,6 +27,21 @@ description: 上线前的检查、版本替换、关闭与备份、诊断日志�
 
 原始 stderr 需显式配置 `Options.Stderr`，进程内插件的 panic 栈需显式开启 `CapturePanic` 并配置 Logger。错误文本、原始输出和栈可能含业务数据，配置及调用内容不会被框架自动写进诊断。native 进程被强制终止时可能没有栈。
 
+## 调用观测
+
+`Options.OnCall` 在每次路由到 native entry 的调用或流结束后被调用一次，用来接指标和追踪：
+
+```go
+hosting.Open(hosting.Options{
+	OnCall: func(call hosting.CallRecord) {
+		calls.WithLabelValues(call.Entry, call.Service.Name, call.Method, string(contract.ErrorCode(call.Err))).Inc()
+		latency.WithLabelValues(call.Entry, call.Method).Observe(call.Duration.Seconds())
+	},
+})
+```
+
+记录带 entry、activation、服务、方法、是否为流、流已交付的条目数、耗时和调用方得到的错误，不含请求与响应的内容。回调在调用方的 goroutine 上执行，应及时返回。实例状态的变化从内核的 `cordis.InstanceChanged` 事件得到。
+
 ## 验证
 
 改动后运行相关的行为测试，再执行 `bash conformance/run.sh`（Windows 用 `conformance/run.ps1`）。只有实际执行过的平台才算验证过，本地编译通过不代表其他平台已运行；步骤见[生命周期验收](lifecycle-acceptance.md)。

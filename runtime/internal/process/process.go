@@ -137,9 +137,14 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	if err := contract.ValidateFrameBytes(launch.FrameBytes); err != nil {
 		return nil, err
 	}
-	if options.Limits.Inflight != 0 && options.Limits.Inflight != wire.DefaultLimits().Inflight {
-		return nil, contract.Fail(contract.Invalid, "generic v1 sessions require 64 inflight requests")
+	// The host chooses the limit of each session and announces it to the guest.
+	if launch.Inflight == 0 {
+		launch.Inflight = contract.DefaultInflight
 	}
+	if err := contract.ValidateInflight(launch.Inflight); err != nil {
+		return nil, err
+	}
+	options.Limits.Inflight = launch.Inflight
 	path, err := Executable(executable)
 	if err != nil {
 		return nil, err

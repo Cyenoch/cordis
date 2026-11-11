@@ -69,7 +69,7 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 		t.Cleanup(func() { session.Close() })
 		ctx, done := context.WithTimeout(context.Background(), 40*time.Second)
 		defer done()
-		input, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Identity: identity, Protocol: contract.Protocol{Major: 1}, Definition: "fixture", Config: json.RawMessage(`{}`)})
+		input, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Inflight: contract.DefaultInflight, Identity: identity, Protocol: contract.Protocol{Major: 1}, Definition: "fixture", Config: json.RawMessage(`{}`)})
 		if err != nil {
 			t.Fatal(err)
 		}
