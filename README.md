@@ -7,13 +7,17 @@ Go 的插件组合框架，参考 cordiverse/cordis 的组合语义。module 为
 - **进程内内核**（根包 `cordis`）：只依赖标准库。插件在一个进程里组成实例树，用类型化的键交换普通的 Go 值，支持服务依赖与隔离、事件、查询、中间件链、清理和配置更新。见[进程内内核](docs/kernel.md)，以及建在它上面的[配置文件加载器](docs/loader.md)、[日志服务](docs/logging.md)和[定时辅助](docs/timers.md)。
 - **Host 与 native 插件**（`hosting` 包）：管理签名包和持久实例。同一个 `cordis.Plugin` 既可以在应用进程里加载，也可以作为 native 包独占一个进程，经 JSON 协议交换数据；两者在 Host 的内核里共享同一个服务空间。跨进程的服务、事件、查询、中间件链和流式结果用 `contract` 里的键。
 
-项目处于 alpha 阶段，API 和格式直接随设计收敛。
+项目处于 v0：会话协议、包格式和契约 schema 自 v0.1.0 起保持向后兼容，Go API 在次版本之间还会调整。见[稳定性](docs/stability.md)。
 
 ## 使用
 
-预编译 CLI 见 [v0.1.0-alpha.2](https://github.com/Cyenoch/cordis/releases/tag/v0.1.0-alpha.2)，提供 Linux amd64/arm64、macOS amd64/arm64、Windows amd64 归档及校验和。
+安装 CLI（Go 版本见 `go.mod`）：
 
-Go 版本见 `go.mod`。也可从本地检出构建 CLI：
+```sh
+go install github.com/Cyenoch/cordis/cmd/cordis@v0.1.0
+```
+
+预编译的归档与校验和见[发布页](https://github.com/Cyenoch/cordis/releases)，提供 Linux amd64/arm64、macOS amd64/arm64、Windows amd64。也可从本地检出构建：
 
 ```sh
 go build -o ./bin/cordis ./cmd/cordis
