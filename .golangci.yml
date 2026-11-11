@@ -1,0 +1,10 @@
+# Checks whose findings were all read once and are worth keeping at zero.
+# errcheck is left out: what it reports here is best-effort cleanup and
+# writes to in-memory hashes.
+version: "2"
+linters:
+  default: none
+  enable:
+    - govet
+    - ineffassign
+    - unused

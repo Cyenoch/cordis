@@ -40,7 +40,6 @@ type handler struct {
 	fn     any
 	once   bool
 	global bool
-	realm  *Realm // set for service-change listeners
 }
 
 // register adds a callback owned by the scope's activation.

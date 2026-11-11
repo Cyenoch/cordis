@@ -373,13 +373,6 @@ func (s *Store) cloneCatalog() catalog {
 	c.Signatures = maps.Clone(c.Signatures)
 	return c
 }
-func durableJSON(file string, value any) (err error) {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	return durableBytes(file, raw)
-}
 func durableBytes(file string, raw []byte) (err error) {
 	f, err := os.OpenFile(file, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	if err != nil {
@@ -763,17 +756,12 @@ func validateEntry(m contract.Manifest, e contract.Entry) error {
 	if !validName(e.ID) || e.Parent != "" && !validName(e.Parent) || e.Package != m.ID {
 		return fmt.Errorf("invalid entry identity")
 	}
-	found := false
 	for _, d := range m.Definitions {
 		if d.ID == e.Definition {
-			found = true
 			return validateConfig(d.ConfigSchema, e.Config)
 		}
 	}
-	if !found {
-		return fmt.Errorf("unknown definition %s", e.Definition)
-	}
-	return nil
+	return fmt.Errorf("unknown definition %s", e.Definition)
 }
 func (s *Store) Entries() ([]contract.Entry, error) {
 	entries := s.entries.Load()

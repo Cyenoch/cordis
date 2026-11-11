@@ -118,13 +118,6 @@ func (i *hostInstance) endRun(r *run) error {
 	return i.host.store.EndRun(context.Background(), r.identity, state, outcome)
 }
 
-// stopped reports whether the entry is temporarily stopped.
-func (i *hostInstance) stopped() bool {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	return i.owner == nil && i.gate == nil
-}
-
 func (i *hostInstance) Status() contract.Status {
 	kernel := i.instance.Status()
 	i.mu.Lock()
