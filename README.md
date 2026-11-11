@@ -71,6 +71,6 @@ Windows 使用 `conformance/run.ps1`。脚本运行 integration/race 测试，�
 
 [发布插件](docs/plugin-release.md) · [多包开发](docs/multi-package-dev.md) · [本机控制](docs/local-control.md) · [故障恢复](docs/recovery.md)
 
-[组合实操](docs/composition-tutorial.md) · [生成服务](docs/generated-service.md) · [包格式](docs/packages.md) · [协议](docs/protocol.md) · [排障](docs/troubleshooting.md)
+[组合实操](docs/composition-tutorial.md) · [生成服务](docs/generated-service.md) · [包格式](docs/packages.md) · [协议](docs/protocol.md) · [稳定性](docs/stability.md) · [排障](docs/troubleshooting.md)
 
 文档与当前源码一起验证。[主规格](openspec/specs/) 描述当前契约，[变更记录](openspec/changes/) 保存设计、任务与实际验证证据；归档的变更不代表当前能力或本轮平台结果。参与开发见[贡献指南](CONTRIBUTING.md)。

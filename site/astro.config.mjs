@@ -90,6 +90,7 @@ export default defineConfig({
           items: [
             { label: 'Go API 导航', slug: 'api' },
             { label: '会话协议', slug: 'protocol' },
+            { label: '稳定性', slug: 'stability' },
             { label: '生命周期验收', slug: 'lifecycle-acceptance' },
             { label: '回归覆盖', slug: 'regressions' },
             { label: '性能测量', slug: 'performance' },
