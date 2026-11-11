@@ -16,6 +16,8 @@
 | 跨进程的流式结果与中间件链 | [add-wire-streams-and-chains](openspec/changes/archive/2026-11-11-add-wire-streams-and-chains/) |
 | 配置文件驱动的插件树与写回 | [add-config-loader](openspec/changes/archive/2026-11-11-add-config-loader/) |
 | 日志服务与定时辅助 | [add-logging-and-timers](openspec/changes/archive/2026-11-11-add-logging-and-timers/) |
+| 用 Go 声明契约，推导 schema 与绑定 | [add-go-first-contracts](openspec/changes/archive/2026-11-11-add-go-first-contracts/) |
+| 任意对端输入与提供方启停下的加固 | [harden-for-production](openspec/changes/archive/2026-11-11-harden-for-production/) |
 | 稳定版本发布 | 预发布验收完成后另行提案，不以公开源码或 alpha 版本等同稳定认证 |
 
 应用自行维护业务服务和产品验收，不列入 Cordis 的能力范围。
