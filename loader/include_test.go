@@ -127,6 +127,9 @@ func TestEditsAreWrittenToWhereTheKeyComesFrom(t *testing.T) {
 	f.write("extra.yml", extra)
 	f.start()
 	must(t, f.loader.Update(f.ctx(), "extra:cache", raw(`{"name":"patched","inPlace":true,"port":7}`)))
+	// Edits made in quick succession are applied as one; the next one would
+	// stop the entry before it ever saw this configuration.
+	f.settle()
 	must(t, f.loader.Update(f.ctx(), "extra:cache", loader.EntryPatch{Requires: &[]string{"db"}}))
 	must(t, f.loader.Update(f.ctx(), "extra:added", raw(`{"name":"added","inPlace":true,"port":3}`)))
 	f.settle()
