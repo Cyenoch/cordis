@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
-	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -27,14 +26,9 @@ func TestCallsAndStreamsWhileProvidersComeAndGo(t *testing.T) {
 	var produced atomic.Int64
 	f.pack(echoManifest("test.provider", true), sdk.Define(f.echoPlugin("main", "> ")))
 	f.pack(countManifest("test.counter", true), sdk.Define(f.counter("main", &produced)))
-	// A starved machine may take longer than the default second to answer a
-	// cancellation; that is not what this test is about.
-	// CORDIS_SOAK_GRACE=default keeps the default, to look for answers that
-	// are late for another reason than a busy machine.
-	if os.Getenv("CORDIS_SOAK_GRACE") != "default" {
-		f.runtime.Limits.Grace = 30 * time.Second
-	}
-	f.open()
+	// On a machine busy with other tests an answer to a cancellation can
+	// take longer than the default second; that is not what this is about.
+	f.open(func(o *Options) { o.Grace = 30 * time.Second })
 	entries := []contract.Entry{{ID: "provider", Package: "test.provider"}, {ID: "counter", Package: "test.counter"}}
 	for _, entry := range entries {
 		must(t, f.enable(entry).Wait(f.ctx()))
@@ -416,5 +410,55 @@ func TestControlRequestsDoNotCrowdOutCalls(t *testing.T) {
 		if err := <-called; err != nil {
 			t.Errorf("a call failed: %v", err)
 		}
+	}
+}
+
+// Grace is how long a plugin may take to answer a cancellation before it is
+// treated as stuck. A host that expects slow answers gives more, and the
+// plugin stays.
+func TestGraceBoundsHowLateACancellationMayBeAnswered(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		grace time.Duration
+		stays bool
+	}{{"default", 0, false}, {"generous", time.Minute, true}} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			entered := make(chan struct{}, 1)
+			f.pack(echoManifest("test.provider", true), sdk.Define(cordis.Plugin[struct{}]{Name: "main", Start: func(_ context.Context, s *cordis.Scope, _ struct{}) error {
+				return echoKey.Provide(s, contract.Methods(echoService, map[string]contract.Handler{
+					"echo": contract.Typed(func(ctx context.Context, in echoRequest) (echoResponse, error) {
+						if in.Text != "slow" {
+							return echoResponse(in), nil
+						}
+						entered <- struct{}{}
+						<-ctx.Done()
+						time.Sleep(2 * time.Second) // well past the default grace
+						return echoResponse{}, ctx.Err()
+					}),
+				}))
+			}}))
+			f.open(func(o *Options) { o.Grace = tt.grace })
+			must(t, f.enable(contract.Entry{ID: "provider", Package: "test.provider"}).Wait(f.ctx()))
+			echo := contract.Requirement{Name: "test.echo", Major: 1, MaxMinor: 9}
+			ctx, cancel := context.WithCancel(f.ctx())
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				f.host.Call(ctx, echo, "echo", []byte(`{"text":"slow"}`))
+			}()
+			<-entered
+			cancel()
+			<-done
+			if tt.stays {
+				// The late answer arrives and the plugin goes on serving.
+				time.Sleep(2500 * time.Millisecond)
+				if out, err := f.host.Call(f.ctx(), echo, "echo", []byte(`{"text":"x"}`)); err != nil {
+					t.Fatalf("call after a late answer within the grace = %s, %v", out, err)
+				}
+				return
+			}
+			eventually(t, "the plugin to be treated as stuck", func() bool { return f.state("provider") == contract.Failed })
+		})
 	}
 }

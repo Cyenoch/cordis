@@ -30,7 +30,11 @@ type Options struct {
 	// waits for a place; a hop of a chain does not wait and gets not_ready.
 	Inflight int
 	Stderr   func(contract.StderrRecord) error
-	Grace    time.Duration
+	// Grace is how long a plugin has to answer a cancellation, to shut down
+	// when asked, and to exit after that; a plugin that takes longer is
+	// treated as stuck and its process ended. The default is one second.
+	// A host on a heavily loaded machine gives more.
+	Grace time.Duration
 	// OnCall, when set, is told about every call and stream routed to a
 	// native entry once it has ended, for metrics and tracing. It runs on
 	// the caller's goroutine, outside state locks, and must return promptly.

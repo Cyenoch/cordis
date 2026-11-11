@@ -39,5 +39,7 @@
 - `cmd/cordis` 的集成测试在 macos-15-intel 上超过整包 5 分钟的时限；堆栈显示它仍在运行而非卡死。时限放宽到 10 分钟。
 - `hosting`：放弃等待的停用之后立刻重新启用，旧实例的运行门尚未收尾，新实例启动时报“服务已被提供”（本机 `-cpu 1` 下出现）。实例和它的运行门都结束后才撤销登记，后一次调用会等门结束。`-race -cpu 1 -count=30` 通过。
 - `hosting`：临时停止在运行门撤下后即返回，实例自身的停止稍后才报告完成，调用方读到的状态仍是 `quiescing`（ubuntu-24.04 上出现）。现在等实例停完再返回。
-- `hosting` 的压力测试在 macos-15-intel 上有一次停用返回“取消在宽限内未被应答”；本机 11 个进程抢占、单核下 275 轮未复现，按调度饥饿处理，测试把取消宽限放到 30 秒。未能排除罕见竞态。
+- “取消在宽限内未被应答”：`hosting` 的压力测试在 macos-15-intel 上出现过一次。用手动触发的压力工作流在同型号机器上查：默认 1 秒宽限单独 300 轮通过；多个包并行时在会话层的 `TestSessionSurvivesChurn` 里复现。结论是负载很重时应答确实晚于 1 秒，不是取消丢失。取消应答的宽限原先宿主配不了，现在与 `Options.Grace` 是同一个值；`hosting` `TestGraceBoundsHowLateACancellationMayBeAnswered`。两个压力测试把宽限设为 30 秒。
+- `timer.Ticks` 在 context 结束后仍可能产出节拍（`select` 在两个就绪分支间随机选），由压力工作流在 macos-15-intel 上发现；结束后不再产出。
+- Windows 上 Ctrl+C 的隔离在 windows-2025 上验证：`internal/processtree` `TestConsoleInterruptDoesNotReachTheTree`；去掉进程组标志时该测试失败（插件进程被打断）。
 - `timer`、`wire`：两处测试断言进程级 goroutine 数量前后相等，数量减少也判失败（ubuntu-24.04 上出现）。改为只在增长时失败。

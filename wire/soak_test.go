@@ -39,7 +39,9 @@ func TestSessionSurvivesChurn(t *testing.T) {
 			}
 		}
 	}
-	host, guest := streamPair(t, Limits{}, contract.MaxFrameBytes, serve)
+	// On a machine busy with other tests an answer to a cancellation can
+	// take longer than the default second; that is not what this is about.
+	host, guest := streamPair(t, Limits{Grace: 30 * time.Second}, contract.MaxFrameBytes, serve)
 
 	const workers, rounds = 48, 40
 	var completed, refused atomic.Int64

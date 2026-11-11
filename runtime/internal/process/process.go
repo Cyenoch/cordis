@@ -155,6 +155,9 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	grace := options.Grace
 	if launch.Grace != 0 {
 		grace = launch.Grace
+		// One grace for the plugin to answer a cancellation, to shut down
+		// and to exit: the host that chose it knows how busy the machine is.
+		options.Limits.Grace = launch.Grace
 	}
 	if grace == 0 {
 		grace = time.Second
