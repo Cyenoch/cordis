@@ -23,7 +23,7 @@ Host 与 native 进程通过一条会话交换服务调用、事件和中间件�
 
 ## 初始化与关闭
 
-Host 先发 `initialize`，载荷含 `identity`、`protocol`、`definition`、`config`、`frameBytes`、已绑定的 `services`、Host 支持的 `features` 和该定义声明的 `provides`。SDK 在运行作者代码前校验协议并应用帧预算，随后返回 registration：原值确认 `frameBytes`，附上 `minor`、`features` 与已发布的 `services`。声明了却没有发布的服务、未声明的服务、预算不一致、缺少 Host 不支持的必需特性，都使初始化失败；失败的激活不会发布任何服务。
+Host 先发 `initialize`，载荷含 `identity`、`protocol`、`definition`、`config`、`frameBytes`、`inflight`、已绑定的 `services`、Host 支持的 `features` 和该定义声明的 `provides`。SDK 在运行作者代码前校验协议并应用帧预算与在途上限，随后返回 registration：原值确认 `frameBytes`，附上 `minor`、`features` 与已发布的 `services`。声明了却没有发布的服务、未声明的服务、预算不一致、缺少 Host 不支持的必需特性，都使初始化失败；失败的激活不会发布任何服务。
 
 初始化期间插件可以向 Host 发请求（`Start` 内的调用和订阅），它们以 `initialize` 为 `parent`。其余请求在初始化成功后才被接受。
 
@@ -69,7 +69,7 @@ Host 在 `initialize` 的 `features` 中列出所支持的特性，包的 `proto
 |---|---|
 | 帧大小 | 4096 到 1048576 字节，含完整编码帧；默认 1048576，由 `Options.FrameBytes` 设置 |
 | 请求期限 | `deadlineMs` 为 1 到 120000；调用方 context 没有期限时取 30 秒，有期限则按剩余时间 |
-| 在途请求 | 每个方向 64 个；其中 8 个留给订阅、链登记等控制请求，业务请求最多 56 个并行，更多的排队等待 |
+| 在途请求 | 每个方向的上限由 Host 在 `initialize` 的 `inflight` 中给出（16 到 1024，默认 64），两端都按它约束；其中 8 个留给订阅、链登记等控制请求，其余供业务请求并行，更多的排队等待 |
 | 取消宽限 | 1 秒内必须回应取消，否则会话以 `timeout` 结束 |
 | 活动订阅 | 每次激活最多 256 个（事件、查询与链登记合计），取消或 `once` 消费后释放名额 |
 

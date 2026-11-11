@@ -39,6 +39,12 @@ func (r *Runtime) Start(ctx context.Context, launch contract.Launch) (contract.S
 	if len(definitions) == 0 {
 		return nil, contract.Fail(contract.Invalid, "no in-memory definitions for package "+launch.Identity.Package)
 	}
+	if launch.Inflight == 0 {
+		launch.Inflight = contract.DefaultInflight
+	}
+	if err := contract.ValidateInflight(launch.Inflight); err != nil {
+		return nil, err
+	}
 	guestIn, hostOut := io.Pipe()
 	hostIn, guestOut := io.Pipe()
 	guest := &wire.Transport{Reader: guestIn, Writer: guestOut, Closers: []io.Closer{guestIn, guestOut}}

@@ -169,7 +169,7 @@ func FuzzPeer(f *testing.F) {
 		reader := bufio.NewReader(peer)
 		initialized := make(chan error, 1)
 		go func() {
-			input, _ := json.Marshal(contract.Initialize{FrameBytes: contract.MinFrameBytes, Identity: contract.Identity{Activation: "sample"},
+			input, _ := json.Marshal(contract.Initialize{FrameBytes: contract.MinFrameBytes, Inflight: contract.DefaultInflight, Identity: contract.Identity{Activation: "sample"},
 				Protocol: contract.Protocol{Major: 1}, Definition: "test", Config: json.RawMessage(`{}`),
 				Services: []contract.Service{}, Features: []string{}, Provides: []contract.Service{}})
 			_, err := host.Call(context.Background(), "initialize", input)

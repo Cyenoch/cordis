@@ -10,6 +10,23 @@
 
 会话 schema 的新字段：`schema/testdata/interoperability.json` 的 `inflight-*` 向量，`conformance/validate-schemas.py`（Python jsonschema 4.26）通过。
 
+## 独立审查
+
+非作者审查一轮：无阻断，4 项应修，5 项次要。
+
+| 意见 | 处理 |
+|---|---|
+| `Options.Inflight` 的注释与行为相反（写成“拒绝”，实际是等待） | 改正 |
+| 协议与排障文档仍写固定的 64，未列 `inflight` | 改正 |
+| 会话层不强制新字段，也不检查两端一致 | `wire` 要求该字段，Host 一侧拒绝与自身不同的值，插件一侧在收到 `initialize` 时接管；去掉公开的 `SetInflight`；`wire` `TestInitializeCarriesTheInflightLimit` |
+| `native.Options.Limits.Inflight` 被静默忽略；内存运行时不校验范围 | 与 `Launch` 不一致时拒绝；内存运行时同样校验 |
+| 没有测试覆盖插件到 Host 方向的非默认上限 | `hosting` `TestInflightLimitBindsThePluginsRequests` |
+| 观测测试断言耗时大于零，粗粒度时钟下可能为零 | 改为不小于零 |
+| `Duration` 的含义未写明 | 写入运维文档 |
+| 互操作向量缺“缺少 `inflight`”一例；帧级示例不完整 | 补上 |
+
+未处理：控制请求不占业务名额的预留，超过 8 个并发控制请求时会挤占业务名额，使本应等待的业务调用以 `not_ready` 失败。这是既有行为，各档上限下相同，不是本变更引入的。
+
 ## 实际运行
 
 - macOS 15 arm64，Go 1.27.3：`bash conformance/run.sh` 通过。

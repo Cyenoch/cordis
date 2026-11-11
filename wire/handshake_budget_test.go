@@ -69,7 +69,7 @@ func TestGuestUsesRawBootstrapLengthAndBoundNextFrame(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { guest.Close(); right.Close(); guest.Wait() })
-			input := json.RawMessage(`{"frameBytes":4096,"identity":{"activation":"a"},"protocol":{"major":1},"definition":"test","config":{},"services":[],"features":[],"provides":[]}`)
+			input := json.RawMessage(`{"frameBytes":4096,"inflight":64,"identity":{"activation":"a"},"protocol":{"major":1},"definition":"test","config":{},"services":[],"features":[],"provides":[]}`)
 			first, err := encodeFrame(Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "a", ID: "h:1", Method: "initialize", DeadlineMS: 1000, Payload: input}, contract.MaxFrameBytes)
 			if err != nil {
 				t.Fatal(err)
@@ -321,5 +321,34 @@ func TestLocalOversizedRequestDoesNotInvokePeer(t *testing.T) {
 	}
 	if _, err := host.Call(t.Context(), "ping", nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Both sides hold the in-flight limit the host announces: a host cannot
+// announce another one than its own, and a guest takes over what it is told.
+func TestInitializeCarriesTheInflightLimit(t *testing.T) {
+	left, right := net.Pipe()
+	host, err := New(Options{Transport: left, FrameBytes: contract.MaxFrameBytes, Identity: contract.Identity{Activation: "a"}, Handler: auditHandler, Limits: Limits{Inflight: 16}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guest, err := New(Options{Transport: right, Guest: true, Handler: func(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
+		return testRegistration(), nil
+	}, Limits: Limits{Inflight: contract.MaxInflight}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { host.Close(); guest.Close(); host.Wait(); guest.Wait() })
+	if _, err := host.Call(t.Context(), "initialize", testInitialize("a", 64)); !errors.Is(err, contract.Fail(contract.Invalid, "")) {
+		t.Fatalf("a host announcing a limit other than its own = %v", err)
+	}
+	if _, err := host.Call(t.Context(), "initialize", testInitialize("a", 16)); err != nil {
+		t.Fatal(err)
+	}
+	guest.mu.Lock()
+	bound := guest.limits.Inflight
+	guest.mu.Unlock()
+	if bound != 16 {
+		t.Fatalf("the guest holds a limit of %d, want the announced 16", bound)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -51,7 +52,7 @@ func TestUnreadResponsesBoundRequestWorkAndDoNotPoisonOtherEndpoints(t *testing.
 				write := func(sequence int, method string) error {
 					payload := json.RawMessage(`{}`)
 					if method == "initialize" {
-						payload = json.RawMessage(`{"frameBytes":1048576,"identity":{"activation":"blocked-reader"},"protocol":{"major":1},"definition":"test","config":{},"services":[],"features":[],"provides":[]}`)
+						payload = json.RawMessage(`{"frameBytes":1048576,"inflight":` + strconv.Itoa(inflight) + `,"identity":{"activation":"blocked-reader"},"protocol":{"major":1},"definition":"test","config":{},"services":[],"features":[],"provides":[]}`)
 					}
 					return json.NewEncoder(peer).Encode(wire.Frame{
 						Schema: contract.SessionSchema, Kind: "request", Activation: "blocked-reader",
@@ -154,7 +155,7 @@ func newBackpressureHealthyEndpoint(t *testing.T) *wire.Endpoint {
 		host.Wait()
 		guest.Wait()
 	})
-	if _, err := host.Call(t.Context(), "initialize", json.RawMessage(`{"frameBytes":1048576,"identity":{"activation":"healthy-neighbor"},"protocol":{"major":1},"definition":"test","config":{},"services":[],"features":[],"provides":[]}`)); err != nil {
+	if _, err := host.Call(t.Context(), "initialize", json.RawMessage(`{"frameBytes":1048576,"inflight":64,"identity":{"activation":"healthy-neighbor"},"protocol":{"major":1},"definition":"test","config":{},"services":[],"features":[],"provides":[]}`)); err != nil {
 		t.Fatal(err)
 	}
 	return host

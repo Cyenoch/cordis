@@ -145,16 +145,7 @@ func (e *Endpoint) Done() <-chan struct{}       { return e.done }
 // Ready is closed once initialize has succeeded and the session admits
 // business requests.
 func (e *Endpoint) Ready() <-chan struct{} { return e.readied }
-
-// SetInflight lowers the in-flight limit to what the peer announced. A guest
-// starts with the largest limit a host may choose and learns the real one
-// from initialize, before any request of its own.
-func (e *Endpoint) SetInflight(limit int) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.limits.Inflight = min(e.limits.Inflight, limit)
-}
-func (e *Endpoint) Err() error   { e.mu.Lock(); defer e.mu.Unlock(); return e.err }
+func (e *Endpoint) Err() error             { e.mu.Lock(); defer e.mu.Unlock(); return e.err }
 
 // ErrWrite marks a session that ended because the peer no longer took what
 // was written to it: the peer went away, it did not break the protocol.
@@ -162,8 +153,8 @@ var ErrWrite = errors.New("write session")
 
 // closed is what a request gets that the session ended under.
 func (e *Endpoint) closed() error { return &contract.ClosedError{Err: e.Err()} }
-func (e *Endpoint) Close() error { e.shutdown(io.EOF); return nil }
-func (e *Endpoint) Wait()        { e.wg.Wait() }
+func (e *Endpoint) Close() error  { e.shutdown(io.EOF); return nil }
+func (e *Endpoint) Wait()         { e.wg.Wait() }
 
 func (e *Endpoint) shutdown(err error) {
 	e.closeOnce.Do(func() {
@@ -234,7 +225,7 @@ func (e *Endpoint) CallWithReceipt(ctx context.Context, method string, input jso
 	}
 	if method == "initialize" {
 		initialization, err := decodeInitialize(input)
-		if err == nil && (e.guest || e.initializeIssued || initialization.FrameBytes != e.frameBytes || initialization.Identity.Activation != e.identity.Activation) {
+		if err == nil && (e.guest || e.initializeIssued || initialization.FrameBytes != e.frameBytes || initialization.Inflight != e.limits.Inflight || initialization.Identity.Activation != e.identity.Activation) {
 			err = contract.Fail(contract.Invalid, "invalid or repeated initialization")
 		}
 		if err != nil {
@@ -565,7 +556,13 @@ func (e *Endpoint) receive(frame Frame) error {
 			e.mu.Unlock()
 			return contract.Fail(contract.Invalid, "initialize exceeds budget or identity mismatch")
 		}
+		// The host chose both budgets; from here on they are this side's too.
+		if init.Inflight < 1 || init.Inflight > e.limits.Inflight {
+			e.mu.Unlock()
+			return contract.Fail(contract.Invalid, "initialize announces an in-flight limit this side cannot hold")
+		}
 		e.frameBytes = init.FrameBytes
+		e.limits.Inflight = init.Inflight
 		e.identity = init.Identity
 	} else if frame.Kind == "request" && frame.Method == "initialize" {
 		e.mu.Unlock()

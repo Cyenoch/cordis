@@ -26,8 +26,8 @@ type Options struct {
 	FrameBytes int
 	// Inflight is how many requests a session carries at once in each
 	// direction, streams included; eight are kept for the session's own
-	// control. Zero is contract.DefaultInflight. A caller beyond the limit is
-	// refused with not_ready rather than queued.
+	// control. Zero is contract.DefaultInflight. A caller beyond the limit
+	// waits for a place; a hop of a chain does not wait and gets not_ready.
 	Inflight int
 	Stderr   func(contract.StderrRecord) error
 	Grace    time.Duration

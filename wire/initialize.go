@@ -8,7 +8,7 @@ import (
 
 func decodeInitialize(data json.RawMessage) (contract.Initialize, error) {
 	var input contract.Initialize
-	if err := decodeRequired(data, &input, "frameBytes", "identity", "protocol", "definition", "config", "services", "features", "provides"); err != nil {
+	if err := decodeRequired(data, &input, "frameBytes", "inflight", "identity", "protocol", "definition", "config", "services", "features", "provides"); err != nil {
 		return input, err
 	}
 	return input, contract.ValidateFrameBytes(input.FrameBytes)

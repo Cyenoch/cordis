@@ -43,8 +43,14 @@ func pair(t *testing.T, host Handler, guest Handler) (*Endpoint, *Endpoint) {
 	return h, g
 }
 
-func testInitialize(activation string) json.RawMessage {
-	data, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Identity: contract.Identity{Activation: activation}, Protocol: contract.Protocol{Major: 1}, Definition: "test", Config: json.RawMessage(`{}`), Services: []contract.Service{}, Features: []string{}, Provides: []contract.Service{}})
+// testInitialize is the initialize payload of a session whose in-flight
+// limit is the default, or the one given.
+func testInitialize(activation string, inflight ...int) json.RawMessage {
+	limit := contract.DefaultInflight
+	if len(inflight) == 1 {
+		limit = inflight[0]
+	}
+	data, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Inflight: limit, Identity: contract.Identity{Activation: activation}, Protocol: contract.Protocol{Major: 1}, Definition: "test", Config: json.RawMessage(`{}`), Services: []contract.Service{}, Features: []string{}, Provides: []contract.Service{}})
 	if err != nil {
 		panic(err)
 	}

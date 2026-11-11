@@ -225,7 +225,7 @@ func TestCallsAreReportedToTheObserver(t *testing.T) {
 		t.Fatalf("records = %+v", records)
 	}
 	ok, failed, stream, broken := records[0], records[1], records[2], records[3]
-	if ok.Entry != "provider" || ok.Activation == "" || ok.Service.Name != "test.echo" || ok.Method != "echo" || ok.Stream || ok.Err != nil || ok.Duration <= 0 {
+	if ok.Entry != "provider" || ok.Activation == "" || ok.Service.Name != "test.echo" || ok.Method != "echo" || ok.Stream || ok.Err != nil || ok.Duration < 0 {
 		t.Errorf("successful call = %+v", ok)
 	}
 	if failed.Method != "missing" || !errors.Is(failed.Err, contract.Fail(contract.Invalid, "")) {
@@ -282,5 +282,57 @@ func TestReplaceGivenUpOnLeavesTheEntryRestorable(t *testing.T) {
 	})
 	if f.log.count("start") != 2 {
 		t.Fatalf("events = %q", f.log.get())
+	}
+}
+
+// The limit binds the plugin's own requests too: a plugin that calls the
+// host from many goroutines never has more of them open than the session
+// carries, and none of them fails.
+func TestInflightLimitBindsThePluginsRequests(t *testing.T) {
+	const limit, callers = contract.MinInflight, 3 * contract.MinInflight
+	f := newFixture(t)
+	var entered, most atomic.Int64
+	release := make(chan struct{})
+	results := make(chan error, callers)
+	f.pack(echoManifest("test.user", false, echoRequirement(0, 9)), sdk.Define(cordis.Plugin[struct{}]{Name: "main",
+		Requires: []cordis.Requirement{contract.Require(echoKey, 0, 9)},
+		Start: func(_ context.Context, s *cordis.Scope, _ struct{}) error {
+			provider, err := echoKey.Get(s)
+			if err != nil {
+				return err
+			}
+			for range callers {
+				s.Go(func(ctx context.Context) error {
+					_, err := contract.Invoke[echoRequest, echoResponse](ctx, provider, "echo", echoRequest{Text: "x"})
+					results <- err
+					return nil
+				})
+			}
+			return nil
+		}}))
+	f.open(func(o *Options) { o.Inflight = limit })
+	must(t, echoKey.Provide(f.host.Scope(), contract.Methods(echoService, map[string]contract.Handler{
+		"echo": contract.Typed(func(ctx context.Context, in echoRequest) (echoResponse, error) {
+			now := entered.Add(1)
+			defer entered.Add(-1)
+			for seen := most.Load(); now > seen && !most.CompareAndSwap(seen, now); seen = most.Load() {
+			}
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			return echoResponse(in), ctx.Err()
+		}),
+	})))
+	must(t, f.enable(contract.Entry{ID: "user", Package: "test.user"}).Wait(f.ctx()))
+	eventually(t, "the session to fill", func() bool { return entered.Load() == limit-8 })
+	close(release)
+	for range callers {
+		if err := <-results; err != nil {
+			t.Errorf("a request of the plugin beyond the limit failed instead of waiting: %v", err)
+		}
+	}
+	if got := most.Load(); got != limit-8 {
+		t.Fatalf("the host saw %d requests of the plugin at once, want %d", got, limit-8)
 	}
 }

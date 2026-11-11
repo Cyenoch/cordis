@@ -144,6 +144,9 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	if err := contract.ValidateInflight(launch.Inflight); err != nil {
 		return nil, err
 	}
+	if options.Limits.Inflight != 0 && options.Limits.Inflight != launch.Inflight {
+		return nil, contract.Fail(contract.Invalid, "the in-flight limit of a session is set by its launch, not by the runtime's limits")
+	}
 	options.Limits.Inflight = launch.Inflight
 	path, err := Executable(executable)
 	if err != nil {

@@ -42,7 +42,11 @@ func streamPair(t *testing.T, limits Limits, frameBytes int, serve StreamHandler
 		h.Wait()
 		g.Wait()
 	})
-	input, _ := json.Marshal(contract.Initialize{FrameBytes: frameBytes, Identity: contract.Identity{Activation: "sample"},
+	inflight := limits.Inflight
+	if inflight == 0 {
+		inflight = contract.DefaultInflight
+	}
+	input, _ := json.Marshal(contract.Initialize{FrameBytes: frameBytes, Inflight: inflight, Identity: contract.Identity{Activation: "sample"},
 		Protocol: contract.Protocol{Major: 1}, Definition: "test", Config: json.RawMessage(`{}`),
 		Services: []contract.Service{}, Features: []string{}, Provides: []contract.Service{}})
 	if _, err := h.Call(t.Context(), "initialize", input); err != nil {
@@ -452,7 +456,7 @@ func TestCancelIsQueuedBeforeTheSlotIsReused(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { host.Close(); guest.Close(); host.Wait(); guest.Wait() }()
-	if _, err := host.Call(t.Context(), "initialize", testInitialize("sample")); err != nil {
+	if _, err := host.Call(t.Context(), "initialize", testInitialize("sample", limits.Inflight)); err != nil {
 		t.Fatal(err)
 	}
 	for round := range 300 {

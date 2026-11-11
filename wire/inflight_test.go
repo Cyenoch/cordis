@@ -47,7 +47,7 @@ func TestTimeoutBurstReleasesIncomingAdmissionBeforeHandlersExit(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { close(release); host.Close(); guest.Close(); host.Wait(); guest.Wait() }()
-		if _, err := host.Call(t.Context(), "initialize", testInitialize("burst")); err != nil {
+		if _, err := host.Call(t.Context(), "initialize", testInitialize("burst", inflight)); err != nil {
 			t.Fatal(err)
 		}
 		results := make(chan error, inflight)

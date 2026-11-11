@@ -54,8 +54,9 @@ type subscription struct {
 }
 
 func serve(ctx context.Context, definitions map[string]Definition, transport io.ReadWriteCloser, limit time.Duration, overdue func()) error {
-	// The host announces the session's limit in initialize; until then the
-	// guest accepts whatever a host may choose.
+	// The host announces the session's limit in initialize, where the
+	// session takes it over; until then the guest can hold whatever a host
+	// may choose.
 	limits := wire.DefaultLimits()
 	limits.Inflight = contract.MaxInflight
 	g := &guest{definitions: definitions, ready: make(chan struct{}), events: map[string]*subscription{},
@@ -202,7 +203,6 @@ func (g *guest) initialize(ctx context.Context, input json.RawMessage) (json.Raw
 	g.identity, g.features = init.Identity, init.Features
 	// Before any plugin code runs: session control shares the limit with
 	// the plugin's requests and keeps eight of it.
-	g.endpoint.SetInflight(init.Inflight)
 	g.slots = make(chan struct{}, init.Inflight-8)
 	g.app = cordis.New(cordis.Options{})
 	g.starting = ctx

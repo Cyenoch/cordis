@@ -40,7 +40,7 @@ hosting.Open(hosting.Options{
 })
 ```
 
-记录带 entry、activation、服务、方法、是否为流、流已交付的条目数、耗时和调用方得到的错误，不含请求与响应的内容。回调在调用方的 goroutine 上执行，应及时返回。实例状态的变化从内核的 `cordis.InstanceChanged` 事件得到。
+记录带 entry、activation、服务、方法、是否为流、流已交付的条目数、耗时和调用方得到的错误，不含请求与响应的内容。`Duration` 从调用方发起算起，包含等待在途名额的时间；流还包含消费者处理各项之间的时间，所以会话饱和或消费者偏慢都会体现在它上面。进程内提供方、插件对 Host 的调用、事件投递和链的各跳不在其中。回调在调用方的 goroutine 上执行，应及时返回。实例状态的变化从内核的 `cordis.InstanceChanged` 事件得到。
 
 ## 验证
 
