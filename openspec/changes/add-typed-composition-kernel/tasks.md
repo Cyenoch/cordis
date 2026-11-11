@@ -28,7 +28,7 @@
 
 - [x] 3.1 核对 `verification.md` 的场景对照表：`framework-kernel` 的每个场景都对应一个已通过的测试名。验证：对照表没有空行，列出的测试在 `go test -race .` 的输出中存在。
 - [x] 3.2 由非作者独立审查内核导出 API 是否符合 Go 惯例、错误处理、停止顺序与并发边界。验证：审查结论及处理结果写入 `verification.md`，没有未处理的阻塞项。
-- [ ] 3.3 运行 `go vet -tags=integration ./...`、`bash conformance/run.sh`、`bun run docs:build`、`openspec validate add-typed-composition-kernel --strict`，并在 CI 的五个平台实际运行 conformance。验证：`verification.md` 记录精确提交、本机平台输出和 CI 链接；未执行的平台明确写出。
+- [x] 3.3 运行 `go vet -tags=integration ./...`、`bash conformance/run.sh`、`bun run docs:build`、`openspec validate add-typed-composition-kernel --strict`，并在 CI 的五个平台实际运行 conformance。验证：`verification.md` 记录精确提交、本机平台输出和 CI 链接；未执行的平台明确写出。
 
 ## Workflow follow-up
 

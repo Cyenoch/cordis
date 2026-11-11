@@ -1,6 +1,5 @@
 # Verification
 
-本机平台：darwin/arm64，Go 1.27.3。改动未提交，CI 五平台未执行。
 
 `bash conformance/run.sh` 在本机通过，包含 `stream-smoke`：真实的 native 插件 `examples/plugins/feed` 提供流式方法并登记跨进程中间件，宿主逐项消费 200 项、提前停止后会话仍可用，链经过插件与宿主两侧的中间件，插件停用后链不再经过它。`conformance/validate-schemas.py` 通过（临时 venv 里安装 `jsonschema` 后运行）。
 
@@ -28,7 +27,15 @@
 
 与 `rebase-native-on-kernel` 一起进行，结论与处理见该 change 的 `verification.md`“独立审查”一节；其中流的两项、链的一项和配额一项属于本 change。
 
-## 待办
+## 文档
 
-- 文档（任务 1.2、2.2、5.2）：`docs/protocol.md`、`docs/generated-service.md`、`docs/contracts.md`、`docs/plugin-author.md`、`docs/composition.md` 尚未说明流与链。
-- CI 五平台（任务 6.2）。
+流与链的说明在 `docs/protocol.md`、`docs/generated-service.md`、`docs/contracts.md`、`docs/plugin-author.md`、`docs/composition.md`；`bun run docs:examples` 与 `bun run docs:build` 在本机通过，CI 的 Documentation 作业通过。
+
+## CI 五平台
+
+提交 `5c1aeb1`（`main`）：
+
+- Conformance：https://github.com/Cyenoch/cordis/actions/runs/43013279520 。`go vet -tags=integration ./...`、`go mod verify` 与完整验收脚本（`conformance/run.sh`，Windows 为 `conformance/run.ps1`）在 ubuntu-24.04（x64）、ubuntu-24.04-arm、macos-15（arm64）、macos-15-intel、windows-2025 上全部通过；契约校验作业（`validate-schemas.py` 与 `spec:validate`）通过。
+- Documentation：https://github.com/Cyenoch/cordis/actions/runs/43013279400 ，通过。
+
+此前两轮（`1a42ce3`、`78c031f`）在 CI 上暴露并已修复的问题：应答发出后对端可在本端释放在途名额之前发来下一个请求，被判越限（`wire`，写出端空闲时先释放名额再交出应答）；`logging` 的测试在 Windows 上没有先关闭临时文件；两个测试依赖时序（链并发测试要求至少一次成功、流测试用固定时长等待）。

@@ -1,6 +1,5 @@
 # Verification
 
-平台：darwin/arm64，go1.27.3。改动未提交。两个包只依赖内核。
 
 `go test -race -count=3 ./timer ./logging` 通过；`go vet -tags=integration ./...` 通过；`bun run docs:build` 通过（28 页）。时序测试全部在 `testing/synctest` 里运行。
 
@@ -49,7 +48,6 @@
 ## 与任务清单的出入
 
 - 任务 3.1：两个包各自提供可运行的 `Example` 测试（`logging` 的 `Example`、`timer` 的 `ExampleEvery` 与 `ExampleDebounce`），文档与对照表已列出。内核示例的输出由测试逐行断言，不含带时间戳的日志和真实计时，所以不使用这两个包；加载器示例里用 `settings` 设置日志级别尚未完成。
-- 4.3 CI 五平台未执行：改动尚未提交和推送。
 
 ## 独立审查（任务 4.2）
 
@@ -67,3 +65,12 @@
 同时补充的文档：节流窗口与静默期从回调返回后起算；输出目标不得再经本服务写日志；日志器在日志插件停止后仍可用；`Output` 是配置的一部分。
 
 本机（darwin/arm64，Go 1.27.3）：`go vet ./timer ./logging` 无输出，`go test -race -count=3 ./timer ./logging` 通过。
+
+## CI 五平台
+
+提交 `5c1aeb1`（`main`）：
+
+- Conformance：https://github.com/Cyenoch/cordis/actions/runs/43013279520 。`go vet -tags=integration ./...`、`go mod verify` 与完整验收脚本（`conformance/run.sh`，Windows 为 `conformance/run.ps1`）在 ubuntu-24.04（x64）、ubuntu-24.04-arm、macos-15（arm64）、macos-15-intel、windows-2025 上全部通过；契约校验作业（`validate-schemas.py` 与 `spec:validate`）通过。
+- Documentation：https://github.com/Cyenoch/cordis/actions/runs/43013279400 ，通过。
+
+此前两轮（`1a42ce3`、`78c031f`）在 CI 上暴露并已修复的问题：应答发出后对端可在本端释放在途名额之前发来下一个请求，被判越限（`wire`，写出端空闲时先释放名额再交出应答）；`logging` 的测试在 Windows 上没有先关闭临时文件；两个测试依赖时序（链并发测试要求至少一次成功、流测试用固定时长等待）。

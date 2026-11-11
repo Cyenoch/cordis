@@ -59,7 +59,7 @@
 
 - [x] 9.1 核对 `verification.md`：`framework-loader` 的每个场景对应一个已通过的测试名，官方测试用例的归类没有遗漏。验证：对照表没有空行。
 - [x] 9.2 由非作者独立审查 `loader` 的导出 API、写回与冲突规则。验证：结论与处理结果写入 `verification.md`，没有未处理的阻塞项。
-- [ ] 9.3 运行 `go vet -tags=integration ./...`、`bash conformance/run.sh`、`bun run docs:build`、`openspec validate add-config-loader --strict`，并在 CI 的五个平台实际运行。验证：`verification.md` 记录精确提交、本机平台输出和 CI 链接；未执行的平台明确写出。
+- [x] 9.3 运行 `go vet -tags=integration ./...`、`bash conformance/run.sh`、`bun run docs:build`、`openspec validate add-config-loader --strict`，并在 CI 的五个平台实际运行。验证：`verification.md` 记录精确提交、本机平台输出和 CI 链接；未执行的平台明确写出。
 
 ## Workflow follow-up
 

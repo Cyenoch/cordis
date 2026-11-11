@@ -2,7 +2,6 @@
 
 ## 结果
 
-本机平台：darwin/arm64，Go 1.27.3。改动未提交，CI 五平台未执行。
 
 `bash conformance/run.sh` 在本机通过：`go test -tags=integration -race ./...` 全部通过，`basic-host` 与 `lifecycle-smoke` 用真实的 native 插件进程通过（依赖清理链、更新后重新绑定、取消、Restore、失败版本恢复、动态子实例）。`conformance/validate-schemas.py` 通过（在临时 venv 里安装 `jsonschema` 后运行）。
 
@@ -73,8 +72,19 @@
 
 审查者实际运行并确认无问题的部分：停止、恢复、更新、重试与状态映射的各种组合；父子 entry 上 4 秒并发管理操作的压力测试；管理操作进行中的 `Close`；阻塞的 `Start` 期间的停止；运行记录；200 个以各种方式结束的流之后名额全部归还；在途上限为 1 时的 5000 次调用与流。未运行：真实进程运行时、Windows、恢复循环与 `Replace`/`Restore` 的竞争。
 
-### 待办
+### 已知的测试缺口
 
-- 尚无测试的场景：帧预算不一致时不发布、`Host.Done` 与关闭取消的细节、动态子实例的管理控制细节、订阅的发送回执细节；`runtime/testdata/subscriptionplugin` 尚未覆盖订阅场景。
-- 文档：`docs/protocol.md`、`contracts.md`、`host-guide.md`、`api.md`、`plugin-author.md`、`generated-service.md`（代码块已更新，正文未改）、`cli.md`、`performance.md`、`regressions.md`、`CONTRIBUTING.md` 的正文尚未与当前 API 对齐。`getting-started.md` 与 `composition-tutorial.md` 已对齐并由测试执行。
-- CI 五平台（任务 6.2）。
+这些行为有实现但没有单独的测试：帧预算不一致时不发布端点、`Host.Done` 与关闭被取消时的细节、动态子实例经管理接口控制的细节、订阅投递的发送回执细节。
+
+### 文档
+
+协议、可跨进程的键、宿主接入、作者接口与并发回调的说明见 `docs/protocol.md`、`contracts.md`、`host-guide.md`、`api.md`、`plugin-author.md`、`generated-service.md`；`bun run docs:examples` 与 `bun run docs:build` 在本机通过，CI 的 Documentation 作业通过。
+
+## CI 五平台
+
+提交 `5c1aeb1`（`main`）：
+
+- Conformance：https://github.com/Cyenoch/cordis/actions/runs/43013279520 。`go vet -tags=integration ./...`、`go mod verify` 与完整验收脚本（`conformance/run.sh`，Windows 为 `conformance/run.ps1`）在 ubuntu-24.04（x64）、ubuntu-24.04-arm、macos-15（arm64）、macos-15-intel、windows-2025 上全部通过；契约校验作业（`validate-schemas.py` 与 `spec:validate`）通过。
+- Documentation：https://github.com/Cyenoch/cordis/actions/runs/43013279400 ，通过。
+
+此前两轮（`1a42ce3`、`78c031f`）在 CI 上暴露并已修复的问题：应答发出后对端可在本端释放在途名额之前发来下一个请求，被判越限（`wire`，写出端空闲时先释放名额再交出应答）；`logging` 的测试在 Windows 上没有先关闭临时文件；两个测试依赖时序（链并发测试要求至少一次成功、流测试用固定时长等待）。

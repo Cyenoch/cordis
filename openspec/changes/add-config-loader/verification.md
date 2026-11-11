@@ -1,6 +1,5 @@
 # Verification
 
-本机平台：darwin/arm64，Go 1.27.3。改动尚未提交，CI 五平台未执行。
 
 ## 场景与测试
 
@@ -132,4 +131,12 @@
 
 - 规格“状态查询与关闭”要求在停止完成前写出未写出的变更。条目是加载器的子实例，内核先停止它们，写出发生在加载器自己的清理里；两者先后不影响文件内容。
 - 任务 7.1 实现为方法 `(*hosting.Host).Resolver()`，条目写作 `package:<包标识>` 或 `package:<包标识>#<定义>`。这类条目在宿主的实例枚举里标识为 `loader/<条目标识>`、来源 `dynamic`。
-- 任务 9.3 的 CI 五平台未执行。
+
+## CI 五平台
+
+提交 `5c1aeb1`（`main`）：
+
+- Conformance：https://github.com/Cyenoch/cordis/actions/runs/43013279520 。`go vet -tags=integration ./...`、`go mod verify` 与完整验收脚本（`conformance/run.sh`，Windows 为 `conformance/run.ps1`）在 ubuntu-24.04（x64）、ubuntu-24.04-arm、macos-15（arm64）、macos-15-intel、windows-2025 上全部通过；契约校验作业（`validate-schemas.py` 与 `spec:validate`）通过。
+- Documentation：https://github.com/Cyenoch/cordis/actions/runs/43013279400 ，通过。
+
+此前两轮（`1a42ce3`、`78c031f`）在 CI 上暴露并已修复的问题：应答发出后对端可在本端释放在途名额之前发来下一个请求，被判越限（`wire`，写出端空闲时先释放名额再交出应答）；`logging` 的测试在 Windows 上没有先关闭临时文件；两个测试依赖时序（链并发测试要求至少一次成功、流测试用固定时长等待）。
