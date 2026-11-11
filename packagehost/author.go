@@ -68,11 +68,12 @@ func LoadAuthor(sourceDir string) (*Author, error) { return loadAuthor(sourceDir
 func OutlineAuthor(sourceDir string) (*Author, error) { return loadAuthor(sourceDir, nil, true) }
 
 // GenerateAuthor is LoadAuthor after deriving the contract and its bindings
-// from the Go source again. It is LoadAuthor for a declaration that writes
-// its contract itself.
-func GenerateAuthor(ctx context.Context, sourceDir string) (*Author, error) {
+// from the Go source again, as built for target. It is LoadAuthor for a
+// declaration that writes its contract itself. A package has one contract:
+// source that derives a different one on another target fails to pack.
+func GenerateAuthor(ctx context.Context, sourceDir string, target gocontract.Target) (*Author, error) {
 	return loadAuthor(sourceDir, func(dir string) error {
-		_, err := gocontract.Generate(ctx, dir)
+		_, err := gocontract.Generate(ctx, dir, target)
 		return err
 	}, false)
 }

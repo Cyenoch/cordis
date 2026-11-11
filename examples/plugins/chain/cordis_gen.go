@@ -41,35 +41,33 @@ func GetChainA(s *cordis.Scope) (ChainA, error) {
 	return NewChainAClient(endpoint)
 }
 
-var generatedChainAExecute = schema.NewOperation[Request, Response]("execute", "{\"additionalProperties\":false,\"properties\":{\"operation\":{\"type\":\"string\"},\"owner\":{\"type\":\"string\"}},\"required\":[\"operation\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"acquired\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"label\":{\"type\":\"string\"},\"live\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"released\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}},\"required\":[\"acquired\",\"label\",\"live\",\"released\"],\"type\":\"object\"}")
+var generatedOperation_ChainA_Execute = schema.NewOperation[Request, Response]("execute", "{\"additionalProperties\":false,\"properties\":{\"operation\":{\"type\":\"string\"},\"owner\":{\"type\":\"string\"}},\"required\":[\"operation\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"acquired\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"label\":{\"type\":\"string\"},\"live\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"released\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}},\"required\":[\"acquired\",\"label\",\"live\",\"released\"],\"type\":\"object\"}")
 
-type generatedChainAEndpoint struct{ implementation ChainA }
+type generatedEndpoint_ChainA struct{ implementation ChainA }
 
-// NewChainAEndpoint adapts an implementation to the endpoint other processes call.
+// NewChainAEndpoint adapts an implementation to the endpoint clients call, in this process or
+// from another one.
 func NewChainAEndpoint(implementation ChainA) contract.Endpoint {
-	return &generatedChainAEndpoint{implementation: implementation}
+	return &generatedEndpoint_ChainA{implementation: implementation}
 }
-func (e *generatedChainAEndpoint) Service() contract.Service { return ChainAService() }
-func (e *generatedChainAEndpoint) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+func (e *generatedEndpoint_ChainA) Service() contract.Service { return ChainAService() }
+func (e *generatedEndpoint_ChainA) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	case "execute":
-		return generatedChainAExecute.Serve(ctx, input, e.implementation.Execute)
+		return generatedOperation_ChainA_Execute.Serve(ctx, input, e.implementation.Execute)
 	}
 	return nil, contract.Fail(contract.Invalid, "service chain.a@1 has no method \""+method+"\"")
 }
-func (e *generatedChainAEndpoint) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
+func (e *generatedEndpoint_ChainA) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service chain.a@1 has no streaming method \""+method+"\""))
 }
 
-type generatedChainAClient struct {
-	endpoint contract.Endpoint
-	local    ChainA
-}
+type generatedClient_ChainA struct{ endpoint contract.Endpoint }
 
-// NewChainAClient returns a typed client for endpoint. An endpoint made by NewChainAEndpoint in
-// this process is called directly; requests and responses are validated either way.
+// NewChainAClient returns a typed client for endpoint. Requests and responses are
+// validated and cross as JSON, in this process as between processes.
 func NewChainAClient(endpoint contract.Endpoint) (ChainA, error) {
 	if endpoint == nil {
 		return nil, contract.Fail(contract.Invalid, "client for chain.a@1 needs an endpoint")
@@ -77,17 +75,10 @@ func NewChainAClient(endpoint contract.Endpoint) (ChainA, error) {
 	if provided := endpoint.Service(); provided.Name != "chain.a" || provided.Major != 1 {
 		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for chain.a@1")
 	}
-	client := &generatedChainAClient{endpoint: endpoint}
-	if local, ok := endpoint.(*generatedChainAEndpoint); ok {
-		client.local = local.implementation
-	}
-	return client, nil
+	return &generatedClient_ChainA{endpoint: endpoint}, nil
 }
-func (c *generatedChainAClient) Execute(ctx context.Context, request Request) (Response, error) {
-	if c.local != nil {
-		return generatedChainAExecute.Local(ctx, request, c.local.Execute)
-	}
-	return generatedChainAExecute.Call(ctx, c.endpoint, request)
+func (c *generatedClient_ChainA) Execute(ctx context.Context, request Request) (Response, error) {
+	return generatedOperation_ChainA_Execute.Call(ctx, c.endpoint, request)
 }
 
 // ChainBService identifies service chain.b and the minor this code was generated from.
@@ -120,35 +111,33 @@ func GetChainB(s *cordis.Scope) (ChainB, error) {
 	return NewChainBClient(endpoint)
 }
 
-var generatedChainBExecute = schema.NewOperation[Request, Response]("execute", "{\"additionalProperties\":false,\"properties\":{\"operation\":{\"type\":\"string\"},\"owner\":{\"type\":\"string\"}},\"required\":[\"operation\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"acquired\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"label\":{\"type\":\"string\"},\"live\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"released\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}},\"required\":[\"acquired\",\"label\",\"live\",\"released\"],\"type\":\"object\"}")
+var generatedOperation_ChainB_Execute = schema.NewOperation[Request, Response]("execute", "{\"additionalProperties\":false,\"properties\":{\"operation\":{\"type\":\"string\"},\"owner\":{\"type\":\"string\"}},\"required\":[\"operation\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"acquired\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"label\":{\"type\":\"string\"},\"live\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"released\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}},\"required\":[\"acquired\",\"label\",\"live\",\"released\"],\"type\":\"object\"}")
 
-type generatedChainBEndpoint struct{ implementation ChainB }
+type generatedEndpoint_ChainB struct{ implementation ChainB }
 
-// NewChainBEndpoint adapts an implementation to the endpoint other processes call.
+// NewChainBEndpoint adapts an implementation to the endpoint clients call, in this process or
+// from another one.
 func NewChainBEndpoint(implementation ChainB) contract.Endpoint {
-	return &generatedChainBEndpoint{implementation: implementation}
+	return &generatedEndpoint_ChainB{implementation: implementation}
 }
-func (e *generatedChainBEndpoint) Service() contract.Service { return ChainBService() }
-func (e *generatedChainBEndpoint) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+func (e *generatedEndpoint_ChainB) Service() contract.Service { return ChainBService() }
+func (e *generatedEndpoint_ChainB) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	case "execute":
-		return generatedChainBExecute.Serve(ctx, input, e.implementation.Execute)
+		return generatedOperation_ChainB_Execute.Serve(ctx, input, e.implementation.Execute)
 	}
 	return nil, contract.Fail(contract.Invalid, "service chain.b@1 has no method \""+method+"\"")
 }
-func (e *generatedChainBEndpoint) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
+func (e *generatedEndpoint_ChainB) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service chain.b@1 has no streaming method \""+method+"\""))
 }
 
-type generatedChainBClient struct {
-	endpoint contract.Endpoint
-	local    ChainB
-}
+type generatedClient_ChainB struct{ endpoint contract.Endpoint }
 
-// NewChainBClient returns a typed client for endpoint. An endpoint made by NewChainBEndpoint in
-// this process is called directly; requests and responses are validated either way.
+// NewChainBClient returns a typed client for endpoint. Requests and responses are
+// validated and cross as JSON, in this process as between processes.
 func NewChainBClient(endpoint contract.Endpoint) (ChainB, error) {
 	if endpoint == nil {
 		return nil, contract.Fail(contract.Invalid, "client for chain.b@1 needs an endpoint")
@@ -156,17 +145,10 @@ func NewChainBClient(endpoint contract.Endpoint) (ChainB, error) {
 	if provided := endpoint.Service(); provided.Name != "chain.b" || provided.Major != 1 {
 		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for chain.b@1")
 	}
-	client := &generatedChainBClient{endpoint: endpoint}
-	if local, ok := endpoint.(*generatedChainBEndpoint); ok {
-		client.local = local.implementation
-	}
-	return client, nil
+	return &generatedClient_ChainB{endpoint: endpoint}, nil
 }
-func (c *generatedChainBClient) Execute(ctx context.Context, request Request) (Response, error) {
-	if c.local != nil {
-		return generatedChainBExecute.Local(ctx, request, c.local.Execute)
-	}
-	return generatedChainBExecute.Call(ctx, c.endpoint, request)
+func (c *generatedClient_ChainB) Execute(ctx context.Context, request Request) (Response, error) {
+	return generatedOperation_ChainB_Execute.Call(ctx, c.endpoint, request)
 }
 
 // ChainCService identifies service chain.c and the minor this code was generated from.
@@ -199,35 +181,33 @@ func GetChainC(s *cordis.Scope) (ChainC, error) {
 	return NewChainCClient(endpoint)
 }
 
-var generatedChainCExecute = schema.NewOperation[Request, Response]("execute", "{\"additionalProperties\":false,\"properties\":{\"operation\":{\"type\":\"string\"},\"owner\":{\"type\":\"string\"}},\"required\":[\"operation\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"acquired\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"label\":{\"type\":\"string\"},\"live\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"released\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}},\"required\":[\"acquired\",\"label\",\"live\",\"released\"],\"type\":\"object\"}")
+var generatedOperation_ChainC_Execute = schema.NewOperation[Request, Response]("execute", "{\"additionalProperties\":false,\"properties\":{\"operation\":{\"type\":\"string\"},\"owner\":{\"type\":\"string\"}},\"required\":[\"operation\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"acquired\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"label\":{\"type\":\"string\"},\"live\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"released\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}},\"required\":[\"acquired\",\"label\",\"live\",\"released\"],\"type\":\"object\"}")
 
-type generatedChainCEndpoint struct{ implementation ChainC }
+type generatedEndpoint_ChainC struct{ implementation ChainC }
 
-// NewChainCEndpoint adapts an implementation to the endpoint other processes call.
+// NewChainCEndpoint adapts an implementation to the endpoint clients call, in this process or
+// from another one.
 func NewChainCEndpoint(implementation ChainC) contract.Endpoint {
-	return &generatedChainCEndpoint{implementation: implementation}
+	return &generatedEndpoint_ChainC{implementation: implementation}
 }
-func (e *generatedChainCEndpoint) Service() contract.Service { return ChainCService() }
-func (e *generatedChainCEndpoint) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+func (e *generatedEndpoint_ChainC) Service() contract.Service { return ChainCService() }
+func (e *generatedEndpoint_ChainC) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	case "execute":
-		return generatedChainCExecute.Serve(ctx, input, e.implementation.Execute)
+		return generatedOperation_ChainC_Execute.Serve(ctx, input, e.implementation.Execute)
 	}
 	return nil, contract.Fail(contract.Invalid, "service chain.c@1 has no method \""+method+"\"")
 }
-func (e *generatedChainCEndpoint) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
+func (e *generatedEndpoint_ChainC) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service chain.c@1 has no streaming method \""+method+"\""))
 }
 
-type generatedChainCClient struct {
-	endpoint contract.Endpoint
-	local    ChainC
-}
+type generatedClient_ChainC struct{ endpoint contract.Endpoint }
 
-// NewChainCClient returns a typed client for endpoint. An endpoint made by NewChainCEndpoint in
-// this process is called directly; requests and responses are validated either way.
+// NewChainCClient returns a typed client for endpoint. Requests and responses are
+// validated and cross as JSON, in this process as between processes.
 func NewChainCClient(endpoint contract.Endpoint) (ChainC, error) {
 	if endpoint == nil {
 		return nil, contract.Fail(contract.Invalid, "client for chain.c@1 needs an endpoint")
@@ -235,59 +215,52 @@ func NewChainCClient(endpoint contract.Endpoint) (ChainC, error) {
 	if provided := endpoint.Service(); provided.Name != "chain.c" || provided.Major != 1 {
 		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for chain.c@1")
 	}
-	client := &generatedChainCClient{endpoint: endpoint}
-	if local, ok := endpoint.(*generatedChainCEndpoint); ok {
-		client.local = local.implementation
-	}
-	return client, nil
+	return &generatedClient_ChainC{endpoint: endpoint}, nil
 }
-func (c *generatedChainCClient) Execute(ctx context.Context, request Request) (Response, error) {
-	if c.local != nil {
-		return generatedChainCExecute.Local(ctx, request, c.local.Execute)
-	}
-	return generatedChainCExecute.Call(ctx, c.endpoint, request)
+func (c *generatedClient_ChainC) Execute(ctx context.Context, request Request) (Response, error) {
+	return generatedOperation_ChainC_Execute.Call(ctx, c.endpoint, request)
 }
 
-var generatedConsumerConfig = schema.NewCodec[Settings]("{\"additionalProperties\":false,\"properties\":{\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")
+var generatedConfig_Consumer = schema.NewCodec[Settings]("{\"additionalProperties\":false,\"properties\":{\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")
 
 // ConsumerPlugin is plugin "consumer". It runs in process as it is, or as a native package
 // through sdk.Define.
-var ConsumerPlugin = cordis.Plugin[Settings]{Name: "consumer", Requires: []cordis.Requirement{ChainBRequirement(1, 3)}, Validate: generatedConsumerConfig.Check, Start: startConsumer}
+var ConsumerPlugin = cordis.Plugin[Settings]{Name: "consumer", Requires: []cordis.Requirement{ChainBRequirement(1, 3)}, Validate: generatedConfig_Consumer.Check, Start: startConsumer}
 
 // ConsumerDefinitionSpec describes the plugin to a host.
 func ConsumerDefinitionSpec() contract.DefinitionSpec {
-	return contract.DefinitionSpec{ID: "consumer", ConfigSchema: generatedConsumerConfig.Schema(), Requires: []contract.Consumer{ChainBConsumer(1, 3)}, Provides: []contract.Service{ChainCService()}}
+	return contract.DefinitionSpec{ID: "consumer", ConfigSchema: generatedConfig_Consumer.Schema(), Requires: []contract.Consumer{ChainBConsumer(1, 3)}, Provides: []contract.Service{ChainCService()}}
 }
 
-var generatedMiddleConfig = schema.NewCodec[Settings]("{\"additionalProperties\":false,\"properties\":{\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")
+var generatedConfig_Middle = schema.NewCodec[Settings]("{\"additionalProperties\":false,\"properties\":{\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")
 
 // MiddlePlugin is plugin "middle". It runs in process as it is, or as a native package
 // through sdk.Define.
-var MiddlePlugin = cordis.Plugin[Settings]{Name: "middle", Requires: []cordis.Requirement{ChainARequirement(1, 3)}, Validate: generatedMiddleConfig.Check, Start: startMiddle}
+var MiddlePlugin = cordis.Plugin[Settings]{Name: "middle", Requires: []cordis.Requirement{ChainARequirement(1, 3)}, Validate: generatedConfig_Middle.Check, Start: startMiddle}
 
 // MiddleDefinitionSpec describes the plugin to a host.
 func MiddleDefinitionSpec() contract.DefinitionSpec {
-	return contract.DefinitionSpec{ID: "middle", ConfigSchema: generatedMiddleConfig.Schema(), Requires: []contract.Consumer{ChainAConsumer(1, 3)}, Provides: []contract.Service{ChainBService()}}
+	return contract.DefinitionSpec{ID: "middle", ConfigSchema: generatedConfig_Middle.Schema(), Requires: []contract.Consumer{ChainAConsumer(1, 3)}, Provides: []contract.Service{ChainBService()}}
 }
 
-var generatedOptionalParentConfig = schema.NewCodec[ParentSettings]("{\"additionalProperties\":false,\"properties\":{\"childIsolate\":{\"items\":{\"type\":\"string\"},\"nullable\":true,\"type\":\"array\"},\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")
+var generatedConfig_OptionalParent = schema.NewCodec[ParentSettings]("{\"additionalProperties\":false,\"properties\":{\"childIsolate\":{\"items\":{\"type\":\"string\"},\"nullable\":true,\"type\":\"array\"},\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")
 
 // OptionalParentPlugin is plugin "optional-parent". It runs in process as it is, or as a native package
 // through sdk.Define.
-var OptionalParentPlugin = cordis.Plugin[ParentSettings]{Name: "optional-parent", Requires: []cordis.Requirement{}, Validate: generatedOptionalParentConfig.Check, Start: startOptionalParent}
+var OptionalParentPlugin = cordis.Plugin[ParentSettings]{Name: "optional-parent", Requires: []cordis.Requirement{}, Validate: generatedConfig_OptionalParent.Check, Start: startOptionalParent}
 
 // OptionalParentDefinitionSpec describes the plugin to a host.
 func OptionalParentDefinitionSpec() contract.DefinitionSpec {
-	return contract.DefinitionSpec{ID: "optional-parent", ConfigSchema: generatedOptionalParentConfig.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{}}
+	return contract.DefinitionSpec{ID: "optional-parent", ConfigSchema: generatedConfig_OptionalParent.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{}}
 }
 
-var generatedProviderConfig = schema.NewCodec[Settings]("{\"additionalProperties\":false,\"properties\":{\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")
+var generatedConfig_Provider = schema.NewCodec[Settings]("{\"additionalProperties\":false,\"properties\":{\"label\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")
 
 // ProviderPlugin is plugin "provider". It runs in process as it is, or as a native package
 // through sdk.Define.
-var ProviderPlugin = cordis.Plugin[Settings]{Name: "provider", Requires: []cordis.Requirement{}, Validate: generatedProviderConfig.Check, Start: startProvider}
+var ProviderPlugin = cordis.Plugin[Settings]{Name: "provider", Requires: []cordis.Requirement{}, Validate: generatedConfig_Provider.Check, Start: startProvider}
 
 // ProviderDefinitionSpec describes the plugin to a host.
 func ProviderDefinitionSpec() contract.DefinitionSpec {
-	return contract.DefinitionSpec{ID: "provider", ConfigSchema: generatedProviderConfig.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{ChainAService()}}
+	return contract.DefinitionSpec{ID: "provider", ConfigSchema: generatedConfig_Provider.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{ChainAService()}}
 }

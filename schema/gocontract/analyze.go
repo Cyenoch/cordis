@@ -7,6 +7,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode"
@@ -72,8 +74,8 @@ type directive struct {
 // Load analyzes the Go package in dir. It needs the go command and a
 // package whose dependencies compile; the package itself may still refer to
 // names that have not been generated yet.
-func Load(ctx context.Context, dir string) (*Package, error) {
-	src, err := load(ctx, dir)
+func Load(ctx context.Context, dir string, target Target) (*Package, error) {
+	src, err := load(ctx, dir, target)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +109,47 @@ func Load(ctx context.Context, dir string) (*Package, error) {
 	if p.Definition, err = definition.Normalized(); err != nil {
 		return nil, fmt.Errorf("%s: %w", dir, err)
 	}
+	if err := p.current(); err != nil {
+		return nil, err
+	}
 	return p, nil
+}
+
+// current checks that the bindings of services declared in other packages
+// were generated from the source this analysis read. Those bindings carry
+// the schemas the binary validates with; this contract goes to the host.
+func (p *Package) current() error {
+	for _, declared := range p.Definition.Services {
+		var s *service
+		for _, candidate := range p.services {
+			if candidate.name == declared.Name {
+				s = candidate
+			}
+		}
+		if s.local {
+			continue
+		}
+		dir := p.source.packages[s.object.Pkg().Path()].Dir
+		stale := fmt.Errorf("%s: the bindings of %s in %s are not current; run cordis generate there first", p.source.root.Dir, s.object.Name(), dir)
+		data, err := os.ReadFile(filepath.Join(dir, ContractFile))
+		if err != nil {
+			return stale
+		}
+		generated, err := schema.Parse(data)
+		if err != nil {
+			return fmt.Errorf("%s: %w", filepath.Join(dir, ContractFile), err)
+		}
+		found := false
+		for _, other := range generated.Services {
+			if other.Name == declared.Name {
+				found = other.Major == declared.Major && other.Minor == declared.Minor && other.Consumer(0, 0) == declared.Consumer(0, 0)
+			}
+		}
+		if !found {
+			return stale
+		}
+	}
+	return nil
 }
 
 type analysis struct {
@@ -181,6 +223,11 @@ func directives(doc *ast.CommentGroup) []directive {
 	var found []directive
 	for _, comment := range doc.List {
 		text, ok := strings.CutPrefix(comment.Text, prefix)
+		if spaced, isSpaced := strings.CutPrefix(comment.Text, "// cordis:"); isSpaced {
+			// Go directives have no space after the slashes; one written
+			// with it would otherwise be skipped without a word.
+			text, ok = "misspelled "+spaced, true
+		}
 		if !ok {
 			continue
 		}
@@ -197,6 +244,9 @@ func directives(doc *ast.CommentGroup) []directive {
 // the analyzed package, whose bindings are generated here.
 func (a *analysis) service(object *types.TypeName, found []directive, local bool) (*service, error) {
 	d := found[0]
+	if d.verb == "misspelled" {
+		return nil, a.source.errorf(d.position, "write %s%s without a space after the slashes", prefix, strings.Join(d.args, " "))
+	}
 	if len(found) != 1 || d.verb != "service" {
 		return nil, a.source.errorf(d.position, "a type takes exactly one %sservice directive", prefix)
 	}
@@ -297,7 +347,7 @@ func (a *analysis) method(function *types.Func) (method, error) {
 		}
 		derived, err := a.source.derive(t)
 		if err != nil {
-			return fail("%s %s: %v", []string{"request", "response"}[index], types.TypeString(t, nil), err)
+			return m, a.source.within(function.Pos(), fmt.Sprintf("method %s: %s %s", function.Name(), []string{"request", "response"}[index], types.TypeString(t, nil)), err)
 		}
 		m.schemas[index] = derived
 	}
@@ -346,14 +396,22 @@ func (a *analysis) plugin(file *ast.File, decl *ast.FuncDecl, found []directive)
 					return nil, a.source.errorf(d.position, "minor range %q must be <min>-<max>", d.args[1])
 				}
 				r.min, r.max = uint32(first), uint32(last)
+				if r.min > s.minor || s.minor > r.max {
+					return nil, a.source.errorf(d.position, "minor range %s does not contain %d, the minor %s declares", d.args[1], s.minor, d.args[0])
+				}
 			}
 			p.requires = append(p.requires, r)
+		case "misspelled":
+			return nil, a.source.errorf(d.position, "write %s%s without a space after the slashes", prefix, strings.Join(d.args, " "))
 		default:
 			return nil, a.source.errorf(d.position, "unknown directive %s%s", prefix, d.verb)
 		}
 	}
 	if p.id == "" {
 		return nil, a.source.errorf(found[0].position, "%s%s needs a %splugin directive on the same function", prefix, found[0].verb, prefix)
+	}
+	if name := exported(p.id); !token.IsIdentifier(name) {
+		return nil, a.source.errorf(found[0].position, "plugin id %q does not form a Go name", p.id)
 	}
 	p.function, _ = a.source.info.Defs[decl.Name].(*types.Func)
 	if decl.Recv != nil || p.function == nil {
@@ -376,7 +434,7 @@ func (a *analysis) plugin(file *ast.File, decl *ast.FuncDecl, found []directive)
 		err = fmt.Errorf("a configuration is a struct")
 	}
 	if err != nil {
-		return nil, a.source.errorf(decl.Pos(), "plugin %s: configuration %s: %v", p.id, types.TypeString(p.config, nil), err)
+		return nil, a.source.within(decl.Pos(), fmt.Sprintf("plugin %s: configuration %s", p.id, types.TypeString(p.config, nil)), err)
 	}
 	p.schema = derived
 	return p, nil

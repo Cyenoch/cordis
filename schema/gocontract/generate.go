@@ -20,8 +20,8 @@ import (
 
 // Generate analyzes the Go package in dir and writes GoFile and ContractFile
 // there. Files whose content would not change are left alone.
-func Generate(ctx context.Context, dir string) (*Package, error) {
-	p, err := Load(ctx, dir)
+func Generate(ctx context.Context, dir string, target Target) (*Package, error) {
+	p, err := Load(ctx, dir, target)
 	if err != nil {
 		return nil, err
 	}
@@ -33,8 +33,11 @@ func Generate(ctx context.Context, dir string) (*Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	for name, data := range map[string][]byte{GoFile: code, ContractFile: declared} {
-		if err := replace(filepath.Join(dir, name), data); err != nil {
+	for _, file := range []struct {
+		name string
+		data []byte
+	}{{ContractFile, declared}, {GoFile, code}} {
+		if err := replace(filepath.Join(dir, file.name), file.data); err != nil {
 			return nil, err
 		}
 	}
@@ -127,7 +130,7 @@ func (g *generator) use(path, name string) string {
 		return known.local
 	}
 	taken := func(candidate string) bool {
-		if g.source.pkg.Scope().Lookup(candidate) != nil {
+		if g.source.pkg.Scope().Lookup(candidate) != nil || slices.Contains(locals, candidate) {
 			return true
 		}
 		for _, known := range g.imports {
@@ -146,6 +149,19 @@ func (g *generator) use(path, name string) string {
 		g.imports[path] = imported{local: local, alias: local}
 	}
 	return local
+}
+
+// locals are the parameter names of generated functions in whose bodies the
+// author's types are spelled.
+var locals = []string{"ctx", "request", "method", "input", "e", "c"}
+
+// local returns a parameter name that does not hide a declaration of the
+// package, such as a type named request.
+func (g *generator) local(name string) string {
+	for g.source.pkg.Scope().Lookup(name) != nil {
+		name += "_"
+	}
+	return name
 }
 
 func (g *generator) std(path string) string {
@@ -192,9 +208,10 @@ func (g *generator) qualify(s *service, name string) string {
 func (g *generator) service(s *service, declared schema.Service) {
 	name := s.object.Name()
 	key := contract.Service{Name: s.name, Major: s.major}.Key()
-	ctx := g.std("context") + ".Context"
+	context := g.std("context") + ".Context"
 	raw := g.std("encoding/json") + ".RawMessage"
-	endpointType, clientType := g.declare("generated"+name+"Endpoint"), g.declare("generated"+name+"Client")
+	ctx, method, input, e := g.local("ctx"), g.local("method"), g.local("input"), g.local("e")
+	endpointType, clientType := g.declare("generatedEndpoint_"+name), g.declare("generatedClient_"+name)
 
 	g.line("// %s identifies service %s and the minor this code was generated from.", g.declare(name+"Service"), s.name)
 	g.line("func %sService() %s.Service { return %s.Service{Name: %q, Major: %d, Minor: %d} }", name, g.contract(), g.contract(), s.name, s.major, s.minor)
@@ -216,39 +233,40 @@ func (g *generator) service(s *service, declared schema.Service) {
 		wires[m.Name] = m
 	}
 	for _, m := range s.methods {
-		operation := g.declare("generated" + name + m.name)
+		operation := g.declare("generatedOperation_" + name + "_" + m.name)
 		operations[m.name] = operation
 		g.line("var %s = %s.NewOperation[%s, %s](%q, %s, %s)", operation, g.schema(), g.typeName(m.request), g.typeName(m.response), m.wire,
 			strconv.Quote(string(wires[m.wire].Request)), strconv.Quote(string(wires[m.wire].Response)))
 	}
 
 	g.line("type %s struct{ implementation %s }", endpointType, name)
-	g.line("// %s adapts an implementation to the endpoint other processes call.", g.declare("New"+name+"Endpoint"))
+	g.line("// %s adapts an implementation to the endpoint clients call, in this process or", g.declare("New"+name+"Endpoint"))
+	g.line("// from another one.")
 	g.line("func New%sEndpoint(implementation %s) %s.Endpoint { return &%s{implementation: implementation} }", name, name, g.contract(), endpointType)
-	g.line("func (e *%s) Service() %s.Service { return %sService() }", endpointType, g.contract(), name)
-	g.line("func (e *%s) Call(ctx %s, method string, input %s) (%s, error) {\nswitch method {", endpointType, ctx, raw, raw)
+	g.line("func (%s *%s) Service() %s.Service { return %sService() }", e, endpointType, g.contract(), name)
+	g.line("func (%s *%s) Call(%s %s, %s string, %s %s) (%s, error) {\nswitch %s {", e, endpointType, ctx, context, method, input, raw, raw, method)
 	for _, m := range s.methods {
 		if !m.stream {
-			g.line("case %q:\nreturn %s.Serve(ctx, input, %s)", m.wire, operations[m.name], g.adapt("e.implementation", m))
+			g.line("case %q:\nreturn %s.Serve(%s, %s, %s)", m.wire, operations[m.name], ctx, input, g.adapt(e+".implementation", m))
 		}
 	}
-	g.line("}\nreturn nil, %s.Fail(%s.Invalid, %q + method + %q)\n}", g.contract(), g.contract(), "service "+key+" has no method \"", "\"")
-	g.line("func (e *%s) Stream(ctx %s, method string, input %s) %s.Seq2[%s, error] {\nswitch method {", endpointType, ctx, raw, g.std("iter"), raw)
+	g.line("}\nreturn nil, %s.Fail(%s.Invalid, %q + %s + %q)\n}", g.contract(), g.contract(), "service "+key+" has no method \"", method, "\"")
+	g.line("func (%s *%s) Stream(%s %s, %s string, %s %s) %s.Seq2[%s, error] {\nswitch %s {", e, endpointType, ctx, context, method, input, raw, g.std("iter"), raw, method)
 	for _, m := range s.methods {
 		if m.stream {
-			g.line("case %q:\nreturn %s.ServeStream(ctx, input, %s)", m.wire, operations[m.name], g.adapt("e.implementation", m))
+			g.line("case %q:\nreturn %s.ServeStream(%s, %s, %s)", m.wire, operations[m.name], ctx, input, g.adapt(e+".implementation", m))
 		}
 	}
-	g.line("}\nreturn %s.FailedStream(%s.Fail(%s.Invalid, %q + method + %q))\n}", g.contract(), g.contract(), g.contract(), "service "+key+" has no streaming method \"", "\"")
+	g.line("}\nreturn %s.FailedStream(%s.Fail(%s.Invalid, %q + %s + %q))\n}", g.contract(), g.contract(), g.contract(), "service "+key+" has no streaming method \"", method, "\"")
 
-	g.line("type %s struct { endpoint %s.Endpoint; local %s }", clientType, g.contract(), name)
-	g.line("// %s returns a typed client for endpoint. An endpoint made by New%sEndpoint in", g.declare("New"+name+"Client"), name)
-	g.line("// this process is called directly; requests and responses are validated either way.")
+	g.line("type %s struct { endpoint %s.Endpoint }", clientType, g.contract())
+	g.line("// %s returns a typed client for endpoint. Requests and responses are", g.declare("New"+name+"Client"))
+	g.line("// validated and cross as JSON, in this process as between processes.")
 	g.line("func New%sClient(endpoint %s.Endpoint) (%s, error) {", name, g.contract(), name)
 	g.line("if endpoint == nil { return nil, %s.Fail(%s.Invalid, %q) }", g.contract(), g.contract(), "client for "+key+" needs an endpoint")
 	g.line("if provided := endpoint.Service(); provided.Name != %q || provided.Major != %d { return nil, %s.Fail(%s.Incompatible, \"endpoint provides \" + provided.Key() + %q) }",
 		s.name, s.major, g.contract(), g.contract(), ", client is for "+key)
-	g.line("client := &%s{endpoint: endpoint}; if local, ok := endpoint.(*%s); ok { client.local = local.implementation }; return client, nil\n}", clientType, endpointType)
+	g.line("return &%s{endpoint: endpoint}, nil\n}", clientType)
 	for _, m := range s.methods {
 		g.client(clientType, operations[m.name], m)
 	}
@@ -260,51 +278,43 @@ func (g *generator) adapt(target string, m method) string {
 	if m.request != nil && (m.response != nil || m.stream) {
 		return target + "." + m.name
 	}
-	ctx := g.std("context") + ".Context"
+	context := g.std("context") + ".Context"
+	ctx, request := g.local("ctx"), g.local("request")
 	parameter, argument := "_ struct{}", ""
 	if m.request != nil {
-		parameter, argument = "request "+g.typeName(m.request), ", request"
+		parameter, argument = request+" "+g.typeName(m.request), ", "+request
 	}
-	call := fmt.Sprintf("%s.%s(ctx%s)", target, m.name, argument)
+	call := fmt.Sprintf("%s.%s(%s%s)", target, m.name, ctx, argument)
 	switch {
 	case m.stream:
-		return fmt.Sprintf("func(ctx %s, %s) %s.Seq2[%s, error] { return %s }", ctx, parameter, g.std("iter"), g.typeName(m.response), call)
+		return fmt.Sprintf("func(%s %s, %s) %s.Seq2[%s, error] { return %s }", ctx, context, parameter, g.std("iter"), g.typeName(m.response), call)
 	case m.response != nil:
-		return fmt.Sprintf("func(ctx %s, %s) (%s, error) { return %s }", ctx, parameter, g.typeName(m.response), call)
+		return fmt.Sprintf("func(%s %s, %s) (%s, error) { return %s }", ctx, context, parameter, g.typeName(m.response), call)
 	}
-	return fmt.Sprintf("func(ctx %s, %s) (struct{}, error) { return struct{}{}, %s }", ctx, parameter, call)
+	return fmt.Sprintf("func(%s %s, %s) (struct{}, error) { return struct{}{}, %s }", ctx, context, parameter, call)
 }
 
 func (g *generator) client(receiver, operation string, m method) {
-	ctx := g.std("context") + ".Context"
+	context := g.std("context") + ".Context"
+	ctx, request, c := g.local("ctx"), g.local("request"), g.local("c")
 	parameter, input := "", "struct{}{}"
 	if m.request != nil {
-		parameter, input = ", request "+g.typeName(m.request), "request"
+		parameter, input = ", "+request+" "+g.typeName(m.request), request
 	}
-	local := fmt.Sprintf("(ctx, %s, %s)", input, g.adapt("c.local", m))
-	remote := fmt.Sprintf("(ctx, c.endpoint, %s)", input)
+	call := fmt.Sprintf("(%s, %s.endpoint, %s)", ctx, c, input)
 	switch {
 	case m.stream:
-		g.line("func (c *%s) %s(ctx %s%s) %s.Seq2[%s, error] {", receiver, m.name, ctx, parameter, g.std("iter"), g.typeName(m.response))
-		g.line("if c.local != nil { return %s.LocalStream%s }\nreturn %s.CallStream%s\n}", operation, local, operation, remote)
+		g.line("func (%s *%s) %s(%s %s%s) %s.Seq2[%s, error] { return %s.CallStream%s }", c, receiver, m.name, ctx, context, parameter, g.std("iter"), g.typeName(m.response), operation, call)
 	case m.response != nil:
-		g.line("func (c *%s) %s(ctx %s%s) (%s, error) {", receiver, m.name, ctx, parameter, g.typeName(m.response))
-		g.line("if c.local != nil { return %s.Local%s }\nreturn %s.Call%s\n}", operation, local, operation, remote)
+		g.line("func (%s *%s) %s(%s %s%s) (%s, error) { return %s.Call%s }", c, receiver, m.name, ctx, context, parameter, g.typeName(m.response), operation, call)
 	default:
-		g.line("func (c *%s) %s(ctx %s%s) error {", receiver, m.name, ctx, parameter)
-		g.line("if c.local != nil { _, err := %s.Local%s; return err }\n_, err := %s.Call%s; return err\n}", operation, local, operation, remote)
+		g.line("func (%s *%s) %s(%s %s%s) error { _, err := %s.Call%s; return err }", c, receiver, m.name, ctx, context, parameter, operation, call)
 	}
 }
 
 func (g *generator) plugin(p *plugin, declared schema.PluginDefinition, spec contract.DefinitionSpec, services map[string]*service) {
 	name := exported(p.id)
-	if name == "" {
-		if g.err == nil {
-			g.err = g.source.errorf(p.position, "plugin id %q does not form a Go name", p.id)
-		}
-		return
-	}
-	codec := g.declare("generated" + name + "Config")
+	codec := g.declare("generatedConfig_" + name)
 	config := g.typeName(p.config)
 	g.line("var %s = %s.NewCodec[%s](%s)", codec, g.schema(), config, strconv.Quote(string(declared.Config)))
 	var requirements, consumers, provided []string

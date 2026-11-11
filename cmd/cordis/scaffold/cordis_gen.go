@@ -8,13 +8,13 @@ import (
 	"github.com/Cyenoch/cordis/schema"
 )
 
-var generatedMainConfig = schema.NewCodec[Config]("{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")
+var generatedConfig_Main = schema.NewCodec[Config]("{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")
 
 // MainPlugin is plugin "main". It runs in process as it is, or as a native package
 // through sdk.Define.
-var MainPlugin = cordis.Plugin[Config]{Name: "main", Requires: []cordis.Requirement{}, Validate: generatedMainConfig.Check, Start: start}
+var MainPlugin = cordis.Plugin[Config]{Name: "main", Requires: []cordis.Requirement{}, Validate: generatedConfig_Main.Check, Start: start}
 
 // MainDefinitionSpec describes the plugin to a host.
 func MainDefinitionSpec() contract.DefinitionSpec {
-	return contract.DefinitionSpec{ID: "main", ConfigSchema: generatedMainConfig.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{}}
+	return contract.DefinitionSpec{ID: "main", ConfigSchema: generatedConfig_Main.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{}}
 }

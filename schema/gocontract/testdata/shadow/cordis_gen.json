@@ -1,0 +1,142 @@
+{
+  "schema": "cordis-go.contract/v1",
+  "services": [
+    {
+      "name": "example.shadow",
+      "version": "1.0",
+      "methods": [
+        {
+          "name": "client",
+          "request": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "a",
+                  "b",
+                  null
+                ],
+                "nullable": true,
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode",
+              "name"
+            ],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          }
+        },
+        {
+          "name": "config",
+          "request": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          }
+        },
+        {
+          "name": "endpoint",
+          "request": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "a",
+                  "b",
+                  null
+                ],
+                "nullable": true,
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode",
+              "name"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "name": "operation",
+          "request": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "stream": true
+        },
+        {
+          "name": "service",
+          "request": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "stream": true
+        }
+      ]
+    }
+  ],
+  "definitions": [
+    {
+      "id": "shadow",
+      "config": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "provides": [
+        "example.shadow"
+      ]
+    }
+  ]
+}

@@ -81,7 +81,7 @@ func PrepareBuild(ctx context.Context, sourceDir string, options BuildOptions) (
 			return nil, BuildDescriptor{}, fmt.Errorf("automatic SDK proof does not support Go -overlay; external builds require an explicit descriptor")
 		}
 	}
-	a, err := GenerateAuthor(ctx, sourceDir)
+	a, err := GenerateAuthor(ctx, sourceDir, gocontract.Target{GOOS: options.GOOS, GOARCH: options.GOARCH})
 	if err != nil {
 		return nil, BuildDescriptor{}, err
 	}

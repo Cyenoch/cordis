@@ -115,22 +115,6 @@ func (m Operation[In, Out]) Call(ctx context.Context, endpoint contract.Endpoint
 	return m.Out.Decode(output)
 }
 
-// Local calls fn in this process. Request and response are still validated,
-// so a caller sees the same failures as across a process boundary.
-func (m Operation[In, Out]) Local(ctx context.Context, in In, fn func(context.Context, In) (Out, error)) (out Out, err error) {
-	if err := m.In.Check(in); err != nil {
-		return out, err
-	}
-	result, err := fn(ctx, in)
-	if err != nil {
-		return out, err
-	}
-	if err := m.Out.Check(result); err != nil {
-		return out, err
-	}
-	return result, nil
-}
-
 // ServeStream answers one streaming call with fn.
 func (m Operation[In, Out]) ServeStream(ctx context.Context, input json.RawMessage, fn func(context.Context, In) iter.Seq2[Out, error]) iter.Seq2[json.RawMessage, error] {
 	return func(yield func(json.RawMessage, error) bool) {
@@ -169,30 +153,6 @@ func (m Operation[In, Out]) CallStream(ctx context.Context, endpoint contract.En
 			var out Out
 			if err == nil {
 				out, err = m.Out.Decode(item)
-			}
-			if err != nil {
-				yield(zero, err)
-				return
-			}
-			if !yield(out, nil) {
-				return
-			}
-		}
-	}
-}
-
-// LocalStream calls a streaming fn in this process, validating the request
-// and every item.
-func (m Operation[In, Out]) LocalStream(ctx context.Context, in In, fn func(context.Context, In) iter.Seq2[Out, error]) iter.Seq2[Out, error] {
-	return func(yield func(Out, error) bool) {
-		var zero Out
-		if err := m.In.Check(in); err != nil {
-			yield(zero, err)
-			return
-		}
-		for out, err := range fn(ctx, in) {
-			if err == nil {
-				err = m.Out.Check(out)
 			}
 			if err != nil {
 				yield(zero, err)

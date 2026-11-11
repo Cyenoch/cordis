@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/Cyenoch/cordis/packagehost"
+	"github.com/Cyenoch/cordis/schema/gocontract"
 )
 
 func main() {
@@ -29,7 +30,7 @@ func generate() error {
 	for _, name := range []string{"counter", "chain", "resource", "provider", "consumer", "feed"} {
 		dir := filepath.Join("..", "plugins", name)
 		// Derives the contract and the bindings from the plugin's Go source.
-		author, err := packagehost.GenerateAuthor(context.Background(), dir)
+		author, err := packagehost.GenerateAuthor(context.Background(), dir, gocontract.Target{})
 		if err != nil {
 			return err
 		}

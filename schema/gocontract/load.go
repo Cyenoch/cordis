@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Cyenoch/cordis/internal/processtree"
@@ -60,10 +61,22 @@ type source struct {
 	typeErrors []error
 }
 
-func load(ctx context.Context, dir string) (*source, error) {
+// Target is the platform a package is analyzed for; build constraints decide
+// which files, and so which declarations, belong to it. The zero value is
+// the platform of the go command.
+type Target struct{ GOOS, GOARCH string }
+
+func load(ctx context.Context, dir string, target Target) (*source, error) {
 	command := exec.Command("go", "list", "-e", "-deps", "-export",
 		"-json=ImportPath,Name,Dir,Export,GoFiles,DepOnly,ImportMap,Error", ".")
 	command.Dir = dir
+	command.Env = os.Environ()
+	if target.GOOS != "" {
+		command.Env = append(command.Env, "GOOS="+target.GOOS)
+	}
+	if target.GOARCH != "" {
+		command.Env = append(command.Env, "GOARCH="+target.GOARCH)
+	}
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	// go list compiles dependencies in child processes; canceling must end
@@ -112,9 +125,57 @@ func load(ctx context.Context, dir string) (*source, error) {
 		Importer: &exports{source: s, gc: importer.ForCompiler(s.fset, "gc", s.export)},
 		Error:    func(err error) { s.typeErrors = append(s.typeErrors, err) },
 	}
-	// Errors are collected above; what matters is which types came out valid.
 	s.pkg, _ = config.Check(s.root.ImportPath, s.fset, s.files, s.info)
+	if err := s.declarationErrors(); err != nil {
+		return nil, err
+	}
 	return s, nil
+}
+
+// declarationErrors reports type errors outside function bodies and
+// variable initializers. Code may use names that are only generated later;
+// the declarations a contract is read from have to be right as they stand.
+func (s *source) declarationErrors() error {
+	var bodies [][2]token.Pos
+	for _, file := range s.files {
+		for _, decl := range file.Decls {
+			switch decl := decl.(type) {
+			case *ast.FuncDecl:
+				if decl.Body != nil {
+					bodies = append(bodies, [2]token.Pos{decl.Body.Pos(), decl.Body.End()})
+				}
+			case *ast.GenDecl:
+				if decl.Tok == token.VAR || decl.Tok == token.CONST {
+					bodies = append(bodies, [2]token.Pos{decl.Pos(), decl.End()})
+				}
+			}
+		}
+	}
+	var failed []error
+	for _, err := range s.typeErrors {
+		typeError, ok := err.(types.Error)
+		tolerated := ok && slices.ContainsFunc(bodies, func(body [2]token.Pos) bool {
+			return body[0] <= typeError.Pos && typeError.Pos < body[1]
+		})
+		if !tolerated && len(failed) < 5 {
+			failed = append(failed, s.errorf(typeErrorPos(err), "%s", typeErrorText(err)))
+		}
+	}
+	return errors.Join(failed...)
+}
+
+func typeErrorPos(err error) token.Pos {
+	if typeError, ok := err.(types.Error); ok {
+		return typeError.Pos
+	}
+	return token.NoPos
+}
+
+func typeErrorText(err error) string {
+	if typeError, ok := err.(types.Error); ok {
+		return typeError.Msg
+	}
+	return err.Error()
 }
 
 // exports imports dependencies from the export data `go list` built.
@@ -145,20 +206,42 @@ func (s *source) export(path string) (io.ReadCloser, error) {
 	return os.Open(item.Export)
 }
 
-// position renders pos relative to the analyzed directory.
-func (s *source) position(pos token.Pos) string {
-	position := s.fset.Position(pos)
-	if !position.IsValid() {
-		return s.root.Dir
+// Error is a problem in the analyzed source, at the place it has to be fixed.
+// Tools reach the position with errors.As.
+type Error struct {
+	Position token.Position // Filename is relative to the analyzed directory
+	Message  string
+}
+
+func (e *Error) Error() string {
+	if !e.Position.IsValid() {
+		return e.Message
 	}
+	return e.Position.String() + ": " + e.Message
+}
+
+// position resolves pos, with the file name relative to the analyzed
+// directory.
+func (s *source) position(pos token.Pos) token.Position {
+	position := s.fset.Position(pos)
 	if relative, err := filepath.Rel(s.root.Dir, position.Filename); err == nil && !strings.HasPrefix(relative, "..") {
 		position.Filename = relative
 	}
-	return position.String()
+	return position
 }
 
 func (s *source) errorf(pos token.Pos, format string, args ...any) error {
-	return fmt.Errorf("%s: %s", s.position(pos), fmt.Sprintf(format, args...))
+	return &Error{Position: s.position(pos), Message: fmt.Sprintf(format, args...)}
+}
+
+// within adds what was being read to err. The most specific position wins:
+// a field that cannot be described is reported where the field is, not at
+// the method that uses its type.
+func (s *source) within(pos token.Pos, what string, err error) error {
+	if located, ok := errors.AsType[*Error](err); ok {
+		return &Error{Position: located.Position, Message: what + ": " + located.Message}
+	}
+	return s.errorf(pos, "%s: %v", what, err)
 }
 
 // invalid explains a type that did not type-check with the first errors of

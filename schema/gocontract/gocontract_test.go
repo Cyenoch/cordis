@@ -16,13 +16,14 @@ import (
 	"github.com/Cyenoch/cordis/schema/gocontract"
 	"github.com/Cyenoch/cordis/schema/gocontract/testdata/clock"
 	"github.com/Cyenoch/cordis/schema/gocontract/testdata/echo"
+	"github.com/Cyenoch/cordis/schema/gocontract/testdata/shadow"
 )
 
 // The committed bindings of the test packages are what the generator writes
 // today, and writing them twice gives the same bytes.
 func TestGeneratedFilesAreCurrent(t *testing.T) {
-	for _, dir := range []string{"testdata/clock", "testdata/echo"} {
-		p, err := gocontract.Load(t.Context(), dir)
+	for _, dir := range []string{"testdata/clock", "testdata/echo", "testdata/shadow"} {
+		p, err := gocontract.Load(t.Context(), dir, gocontract.Target{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +48,7 @@ func TestGeneratedFilesAreCurrent(t *testing.T) {
 }
 
 func TestDerivedContract(t *testing.T) {
-	p, err := gocontract.Load(t.Context(), "testdata/echo")
+	p, err := gocontract.Load(t.Context(), "testdata/echo", gocontract.Target{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,10 +275,19 @@ func TestRejectedSources(t *testing.T) {
 		"scalar configuration": {"//cordis:plugin bad\nfunc start(context.Context, *cordis.Scope, string) error { return nil }\n", "a configuration is a struct"},
 		"undeclared service":   {"//cordis:plugin bad\n//cordis:provides Missing\nfunc start(context.Context, *cordis.Scope, struct{}) error { return nil }\n", "Missing is not a declared type"},
 		"plain interface":      {"type Plain interface{}\n//cordis:plugin bad\n//cordis:provides Plain\nfunc start(context.Context, *cordis.Scope, struct{}) error { return nil }\n", "Plain has no //cordis:service directive"},
-		"range excludes minor": {service("\tDo(ctx context.Context) error") + "//cordis:plugin bad\n//cordis:requires Bad 1-2\nfunc start(context.Context, *cordis.Scope, struct{}) error { return nil }\n", "range must contain declared client minor"},
+		"range excludes minor": {service("\tDo(ctx context.Context) error") + "//cordis:plugin bad\n//cordis:requires Bad 1-2\nfunc start(context.Context, *cordis.Scope, struct{}) error { return nil }\n", "minor range 1-2 does not contain 0"},
 		"generated name taken": {service("\tDo(ctx context.Context) error") + "func GetBad() {}\n", "GetBad is declared here and is also a generated name"},
 		"nothing declared":     {"type Plain struct{}\n", "no //cordis:service or //cordis:plugin directive"},
-		"does not compile":     {request("\tA Missing `json:\"a\"`"), "type does not compile"},
+		"does not compile":     {request("\tA Missing `json:\"a\"`"), "undefined: Missing"},
+		"misspelled embedding": {"type Extra interface{ More(ctx context.Context) error }\n" + service("\tExtraa\n\tDo(ctx context.Context) error"), "undefined: Extraa"},
+		"spaced directive":     {"// cordis:service example.bad 1\ntype Bad interface{ Do(ctx context.Context) error }\n", "without a space"},
+		"encoded bytes":        {request("\tA []Octet `json:\"a\"`") + "type Octet uint8\nfunc (Octet) MarshalJSON() ([]byte, error) { return nil, nil }\n", "has its own JSON encoding"},
+		"encoded embedding":    {request("\tA struct{ time.Time; X int } `json:\"a\"`"), "has its own JSON encoding through an embedded field"},
+		"enum of numbers":      {request("\tA int `json:\"a\" cordis:\"enum=x|y\"`"), `enum: "x" is not a number`},
+		"minimum not a number": {request("\tA int `json:\"a\" cordis:\"minimum=abc\"`"), `minimum: "abc" is not a number`},
+		"quoted JSON name":     {request("\tA string `json:\"it's\"`"), `JSON name "it's"`},
+		"plugin id":            {"//cordis:plugin 9lives\nfunc start(context.Context, *cordis.Scope, struct{}) error { return nil }\n", `plugin id "9lives" does not form a Go name`},
+		"twice promoted":       {request("\tLeft\n\tRight") + "type Left struct{ X int `json:\"x\"` }\ntype Right struct{ X int `json:\"x\"` }\n", `JSON name "x" is promoted from two embedded structs`},
 	}
 	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -290,9 +300,13 @@ func TestRejectedSources(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "bad.go"), []byte(header+tt.source), 0644); err != nil {
 				t.Fatal(err)
 			}
-			_, err = gocontract.Generate(t.Context(), dir)
+			_, err = gocontract.Generate(t.Context(), dir, gocontract.Target{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Generate = %v, want an error containing %q", err, tt.want)
+			}
+			// Problems in the source say where: a tool can take it from there.
+			if located, ok := errors.AsType[*gocontract.Error](err); tt.want != "no //cordis:service or //cordis:plugin directive" && (!ok || located.Position.Filename != "bad.go" || located.Position.Line == 0) {
+				t.Errorf("no source position in %v", err)
 			}
 			// A rejected source leaves no partial output behind.
 			for _, name := range []string{gocontract.GoFile, gocontract.ContractFile} {
@@ -301,6 +315,92 @@ func TestRejectedSources(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Names and shapes generated code could trip over still give bindings that
+// compile and carry values as encoding/json does.
+func TestAwkwardDeclarations(t *testing.T) {
+	a := "a"
+	mode, name, err := shadow.RoundTrip(t.Context(), &a, "outer")
+	if err != nil || mode == nil || *mode != "a" || name != "outer" {
+		t.Fatalf("RoundTrip = %v, %q, %v", mode, name, err)
+	}
+	// A nil pointer is null on the wire, which a constrained field allows.
+	if mode, _, err := shadow.RoundTrip(t.Context(), nil, "outer"); err != nil || mode != nil {
+		t.Fatalf("RoundTrip with a nil pointer = %v, %v", mode, err)
+	}
+	b := "other"
+	if _, _, err := shadow.RoundTrip(t.Context(), &b, "outer"); err == nil || !strings.Contains(err.Error(), "enum") {
+		t.Fatalf("a value outside the enum: %v", err)
+	}
+	// The constraint of the field that hides a promoted one applies.
+	if _, _, err := shadow.RoundTrip(t.Context(), nil, ""); err == nil || !strings.Contains(err.Error(), "minLength") {
+		t.Fatalf("an empty name: %v", err)
+	}
+}
+
+// A service of another package is used through that package's bindings, so
+// those have to match its source.
+func TestStaleBindingsOfAnImportedService(t *testing.T) {
+	root, err := os.MkdirTemp("testdata", "stale-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	api, plug := filepath.Join(root, "api"), filepath.Join(root, "plug")
+	write := func(path, source string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const service = "package api\n\nimport \"context\"\n\n//cordis:service example.stale 1\ntype Clock interface {\n\tNow(ctx context.Context, request Request) error\n}\n\n"
+	write(filepath.Join(api, "api.go"), service+"type Request struct{}\n")
+	write(filepath.Join(plug, "plug.go"), "package plug\n\nimport (\n\t\"context\"\n\n\t\"github.com/Cyenoch/cordis\"\n\tclk \"github.com/Cyenoch/cordis/schema/gocontract/"+filepath.ToSlash(api)+"\"\n)\n\nvar _ clk.Clock\n\n//cordis:plugin plug\n//cordis:requires clk.Clock\nfunc start(context.Context, *cordis.Scope, struct{}) error { return nil }\n")
+	if _, err := gocontract.Generate(t.Context(), plug, gocontract.Target{}); err == nil || !strings.Contains(err.Error(), "run cordis generate there first") {
+		t.Fatalf("before the service was generated: %v", err)
+	}
+	if _, err := gocontract.Generate(t.Context(), api, gocontract.Target{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gocontract.Generate(t.Context(), plug, gocontract.Target{}); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(api, "api.go"), service+"type Request struct{ Zone string `json:\"zone\"` }\n")
+	if _, err := gocontract.Generate(t.Context(), plug, gocontract.Target{}); err == nil || !strings.Contains(err.Error(), "are not current") {
+		t.Fatalf("after the service changed without being generated again: %v", err)
+	}
+}
+
+// Build constraints decide which declarations a target has.
+func TestContractOfTheBuildTarget(t *testing.T) {
+	dir, err := os.MkdirTemp("testdata", "target-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	files := map[string]string{
+		"plugin.go":         "package target\n\nimport (\n\t\"context\"\n\n\t\"github.com/Cyenoch/cordis\"\n)\n\n//cordis:plugin target\nfunc start(context.Context, *cordis.Scope, Config) error { return nil }\n",
+		"config_windows.go": "package target\n\ntype Config struct{ Pipe string `json:\"pipe\"` }\n",
+		"config_other.go":   "//go:build !windows\n\npackage target\n\ntype Config struct{ Socket string `json:\"socket\"` }\n",
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for goos, field := range map[string]string{"windows": "pipe", "linux": "socket"} {
+		p, err := gocontract.Load(t.Context(), dir, gocontract.Target{GOOS: goos, GOARCH: "amd64"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config := string(p.Definition.Definitions[0].Config); !strings.Contains(config, `"`+field+`"`) {
+			t.Errorf("%s: configuration schema %s lacks %q", goos, config, field)
+		}
 	}
 }
 
@@ -340,7 +440,7 @@ var Plugin = FirstPlugin
 	if err := os.WriteFile(filepath.Join(dir, "first.go"), []byte(source), 0644); err != nil {
 		t.Fatal(err)
 	}
-	p, err := gocontract.Generate(t.Context(), dir)
+	p, err := gocontract.Generate(t.Context(), dir, gocontract.Target{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +452,7 @@ var Plugin = FirstPlugin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gocontract.Generate(t.Context(), dir); err != nil {
+	if _, err := gocontract.Generate(t.Context(), dir, gocontract.Target{}); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.ReadFile(filepath.Join(dir, gocontract.GoFile))

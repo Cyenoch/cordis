@@ -34,7 +34,7 @@ func TestGeneratedDeclarationsMatchAuthor(t *testing.T) {
 			if !bytes.Equal(got, want) {
 				t.Fatal("host metadata is stale; run go generate ./examples/pluginmeta")
 			}
-			derived, err := gocontract.Load(t.Context(), dir)
+			derived, err := gocontract.Load(t.Context(), dir, gocontract.Target{})
 			if err != nil {
 				t.Fatal(err)
 			}

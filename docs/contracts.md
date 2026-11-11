@@ -58,7 +58,7 @@ func start(ctx context.Context, s *cordis.Scope, config Config) error {
 - `//cordis:provides <Interface>...`：插件提供的服务。
 - `//cordis:requires <Interface> [<min>-<max>]`：插件需要的服务和可接受的 minor 闭区间；省略区间时只接受该服务声明的 minor。
 
-接口可以来自导入的包（`//cordis:requires api.Clock 0-2`），该包须先运行过 `cordis generate`。签名不符、类型无法表达和未知的 `//cordis:` 指令都使生成失败，错误带源码位置。
+接口可以来自导入的包（`//cordis:requires api.Clock 0-2`），该包须先运行过 `cordis generate`，且生成物与它的源码一致。契约按构建目标的平台推导；一个包只有一份契约，带构建约束的文件在各平台上应推导出相同的结果。签名不符、类型无法表达和未知的 `//cordis:` 指令都使生成失败，错误带源码位置。
 
 ### 类型映射
 
@@ -67,21 +67,25 @@ func start(ctx context.Context, s *cordis.Scope, config Config) error {
 | Go | Schema |
 | --- | --- |
 | `bool`、`string` | `boolean`、`string` |
-| `float32`、`float64`、`json.Number` | `number` |
+| `float32`、`float64` | `number` |
 | 整数 | `integer`，范围取类型范围与 ±(2^53-1) 的交集 |
 | `int64`、`uint64`，带 `json:",string"` | `string`，`format` 为 `int64`、`uint64`，完整范围 |
 | `[]T` | `array`，可为 null |
 | `[N]T` | `array`，长度恰为 N |
 | `[]byte` | base64 `string`，可为 null |
 | `*T` | `T`，可为 null |
+| `map[string]T` | 键任意、每个值为 `T` 的 `object`，可为 null |
 | 结构体 | 封闭 `object`，未知字段拒绝；匿名嵌入的结构体展开为外层字段 |
 | `time.Time` | `string` |
 
 - 没有 `omitempty`、`omitzero` 的字段必填；`json:"-"` 与未导出字段不在契约里。
-- 切片和指针可为 null：`encoding/json` 把 nil 切片编码为 null，写窄会让合法的 Go 值在边界上失败。
+- 切片、映射和指针可为 null：`encoding/json` 把 nil 切片编码为 null，写窄会让合法的 Go 值在边界上失败。
+- 字段自己的同名字段遮住嵌入结构体提升上来的那个；两个嵌入结构体提升出同名字段时生成失败。
+- JSON 字段名限于字母、数字和 `_`、`-`、`.`、`$`。
+- 数值是整数且绝对值超过 2^53-1 的 `float64`（如 `1e16`）同样在边界上校验失败。
 - `int64` 与 `uint64` 是限于 JSON 安全整数范围（±(2^53-1)）的 `integer`，因为 JSON 数字常被对端按 float64 解析，更大的值会悄悄丢精度；超出范围的值在边界上校验失败，而不是被截断。需要完整范围时加 `json:",string"`，值以十进制字符串传输。
 
-以下类型无法表达，生成失败并指出源码位置：`map`、`any` 与其他接口、自带 `MarshalJSON` / `MarshalText` 的类型（`time.Time` 除外）、递归类型、嵌入的指针。标记联合同样不能由 Go 类型推导，改用[声明式契约文件](#声明式契约文件)。
+以下类型无法表达，生成失败并指出源码位置：键不是字符串的 `map`、`any` 与其他接口、`json.Number`、自带 `MarshalJSON` / `MarshalText` 的类型（`time.Time` 除外）、递归类型、嵌入的指针。标记联合同样不能由 Go 类型推导，改用[声明式契约文件](#声明式契约文件)。
 
 ### 约束标签
 
@@ -201,6 +205,7 @@ if err := schema.Generate(destinationWriter, "echo", definition); err != nil { r
 | 数据 | 必需字段 | 可选约束 |
 | --- | --- | --- |
 | 对象 | `"type":"object"` | `properties`、`required`、`additionalProperties:false` |
+| 映射 | `"type":"object"` | `additionalProperties` 为值的 schema，不能同时有 `properties`、`required` |
 | 数组 | `"type":"array"`、`items` | `minItems`、`maxItems` |
 | 字符串 | `"type":"string"` | `minLength`、`maxLength`、Go RE2 `pattern`、`format`、`contentEncoding` |
 | 布尔 | `"type":"boolean"` | 通用约束 |
@@ -209,7 +214,7 @@ if err := schema.Generate(destinationWriter, "echo", definition); err != nil { r
 
 通用字段为 `nullable`（布尔值）、`enum`（非空数组）、`const`、`title`、`description`。后两项只作作者注释；其余参与校验。`const`/`enum` 中的每个值也必须满足本 schema。schema 自身重复 key、非法范围、无效 pattern、未声明 required、重复 enum 值等在编译时拒绝。
 
-对象始终封闭：即使未写 `additionalProperties`，未知属性仍拒绝。字段缺失与 `null` 不等价；允许 null 必须显式写 `nullable:true`，不能使用 `type:["string","null"]` 或隐式指针。`required` 只控制字段是否必须出现。字符串长度按 Unicode 码点计算；pattern 不会自动加 `^` 或 `$`。
+对象始终封闭：即使未写 `additionalProperties`，未知属性仍拒绝。`additionalProperties` 是 schema 时对象是映射：键任意，每个值满足该 schema，生成的 Go 类型是 `map[string]T`。字段缺失与 `null` 不等价；允许 null 必须显式写 `nullable:true`，不能使用 `type:["string","null"]` 或隐式指针。`required` 只控制字段是否必须出现。字符串长度按 Unicode 码点计算；pattern 不会自动加 `^` 或 `$`。
 
 数值必须可表示为有限 float64，溢出和非零下溢拒绝。整数的绝对值不得超过 `9007199254740991`，包括以指数或小数形式书写的数学整数。声明式契约生成的 number 使用 `json.Number` 保留词法值，避免成功解码的 const/minimum 在重编码时因舍入失败；Go 类型的 `float64` 遵循 float64 语义；如需十进制定点精度，应自行用受约束的字符串表达，而非 number。minimum/maximum 比较使用输入数字的精确有理数，避免校验阶段先舍入。
 
@@ -308,7 +313,7 @@ if err != nil { return err }
 result, err := client.Echo(ctx, request)
 ```
 
-端点是跨进程能力的统一形状：方法按名称寻址，进出都是校验过的 JSON。提供方在同一进程时，客户端直接调用实现，数据仍在进出两侧校验；提供方在另一个进程时，Host 把调用转给那个进程，对调用方没有区别。`NewEchoClient` 检查端点的服务名和 major，不匹配返回 `incompatible`。
+端点是跨进程能力的统一形状：方法按名称寻址，进出都是校验过的 JSON。提供方在同一进程时，数据同样编码为 JSON 并在两侧校验，所以调用方拿到的是副本，行为与跨进程一致；提供方在另一个进程时，Host 把调用转给那个进程。`NewEchoClient` 检查端点的服务名和 major，不匹配返回 `incompatible`。
 
 返回 `iter.Seq2[R, error]` 的方法是流式方法：提供方返回序列，调用方遍历；提前停止遍历会取消提供方，迭代以最后一个非 nil 错误结束（[流的规则](protocol.md#流)）。
 

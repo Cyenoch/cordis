@@ -44,35 +44,33 @@ func GetClock(s *cordis.Scope) (Clock, error) {
 	return NewClockClient(endpoint)
 }
 
-var generatedClockNow = schema.NewOperation[struct{}, time.Time]("now", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}", "{\"type\":\"string\"}")
+var generatedOperation_Clock_Now = schema.NewOperation[struct{}, time.Time]("now", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}", "{\"type\":\"string\"}")
 
-type generatedClockEndpoint struct{ implementation Clock }
+type generatedEndpoint_Clock struct{ implementation Clock }
 
-// NewClockEndpoint adapts an implementation to the endpoint other processes call.
+// NewClockEndpoint adapts an implementation to the endpoint clients call, in this process or
+// from another one.
 func NewClockEndpoint(implementation Clock) contract.Endpoint {
-	return &generatedClockEndpoint{implementation: implementation}
+	return &generatedEndpoint_Clock{implementation: implementation}
 }
-func (e *generatedClockEndpoint) Service() contract.Service { return ClockService() }
-func (e *generatedClockEndpoint) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+func (e *generatedEndpoint_Clock) Service() contract.Service { return ClockService() }
+func (e *generatedEndpoint_Clock) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	case "now":
-		return generatedClockNow.Serve(ctx, input, func(ctx context.Context, _ struct{}) (time.Time, error) { return e.implementation.Now(ctx) })
+		return generatedOperation_Clock_Now.Serve(ctx, input, func(ctx context.Context, _ struct{}) (time.Time, error) { return e.implementation.Now(ctx) })
 	}
 	return nil, contract.Fail(contract.Invalid, "service example.clock@1 has no method \""+method+"\"")
 }
-func (e *generatedClockEndpoint) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
+func (e *generatedEndpoint_Clock) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.clock@1 has no streaming method \""+method+"\""))
 }
 
-type generatedClockClient struct {
-	endpoint contract.Endpoint
-	local    Clock
-}
+type generatedClient_Clock struct{ endpoint contract.Endpoint }
 
-// NewClockClient returns a typed client for endpoint. An endpoint made by NewClockEndpoint in
-// this process is called directly; requests and responses are validated either way.
+// NewClockClient returns a typed client for endpoint. Requests and responses are
+// validated and cross as JSON, in this process as between processes.
 func NewClockClient(endpoint contract.Endpoint) (Clock, error) {
 	if endpoint == nil {
 		return nil, contract.Fail(contract.Invalid, "client for example.clock@1 needs an endpoint")
@@ -80,15 +78,8 @@ func NewClockClient(endpoint contract.Endpoint) (Clock, error) {
 	if provided := endpoint.Service(); provided.Name != "example.clock" || provided.Major != 1 {
 		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for example.clock@1")
 	}
-	client := &generatedClockClient{endpoint: endpoint}
-	if local, ok := endpoint.(*generatedClockEndpoint); ok {
-		client.local = local.implementation
-	}
-	return client, nil
+	return &generatedClient_Clock{endpoint: endpoint}, nil
 }
-func (c *generatedClockClient) Now(ctx context.Context) (time.Time, error) {
-	if c.local != nil {
-		return generatedClockNow.Local(ctx, struct{}{}, func(ctx context.Context, _ struct{}) (time.Time, error) { return c.local.Now(ctx) })
-	}
-	return generatedClockNow.Call(ctx, c.endpoint, struct{}{})
+func (c *generatedClient_Clock) Now(ctx context.Context) (time.Time, error) {
+	return generatedOperation_Clock_Now.Call(ctx, c.endpoint, struct{}{})
 }

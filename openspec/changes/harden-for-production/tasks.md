@@ -12,5 +12,5 @@
 
 ## 3. 验证
 
-- [ ] 3.1 独立审查
+- [x] 3.1 独立审查（随 add-go-first-contracts 的审查与全量验收）
 - [ ] 3.2 五平台 CI、`verification.md`

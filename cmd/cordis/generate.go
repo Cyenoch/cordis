@@ -32,7 +32,7 @@ func generateCommand(ctx context.Context, flags *flag.FlagSet, parse func() (boo
 		if flags.NArg() == 1 {
 			dir = flags.Arg(0)
 		}
-		_, err := gocontract.Generate(ctx, dir)
+		_, err := gocontract.Generate(ctx, dir, gocontract.Target{})
 		return err
 	}
 	if flags.NArg() == 0 {

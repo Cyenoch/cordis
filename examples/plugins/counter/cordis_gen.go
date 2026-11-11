@@ -43,35 +43,33 @@ func GetCounter(s *cordis.Scope) (Counter, error) {
 	return NewCounterClient(endpoint)
 }
 
-var generatedCounterExecute = schema.NewOperation[Request, Response]("execute", "{\"additionalProperties\":false,\"properties\":{\"delta\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"operation\":{\"type\":\"string\"}},\"required\":[\"delta\",\"operation\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"events\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"value\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}},\"required\":[\"events\",\"value\"],\"type\":\"object\"}")
+var generatedOperation_Counter_Execute = schema.NewOperation[Request, Response]("execute", "{\"additionalProperties\":false,\"properties\":{\"delta\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"operation\":{\"type\":\"string\"}},\"required\":[\"delta\",\"operation\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"events\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"value\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}},\"required\":[\"events\",\"value\"],\"type\":\"object\"}")
 
-type generatedCounterEndpoint struct{ implementation Counter }
+type generatedEndpoint_Counter struct{ implementation Counter }
 
-// NewCounterEndpoint adapts an implementation to the endpoint other processes call.
+// NewCounterEndpoint adapts an implementation to the endpoint clients call, in this process or
+// from another one.
 func NewCounterEndpoint(implementation Counter) contract.Endpoint {
-	return &generatedCounterEndpoint{implementation: implementation}
+	return &generatedEndpoint_Counter{implementation: implementation}
 }
-func (e *generatedCounterEndpoint) Service() contract.Service { return CounterService() }
-func (e *generatedCounterEndpoint) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+func (e *generatedEndpoint_Counter) Service() contract.Service { return CounterService() }
+func (e *generatedEndpoint_Counter) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	case "execute":
-		return generatedCounterExecute.Serve(ctx, input, e.implementation.Execute)
+		return generatedOperation_Counter_Execute.Serve(ctx, input, e.implementation.Execute)
 	}
 	return nil, contract.Fail(contract.Invalid, "service example.counter@1 has no method \""+method+"\"")
 }
-func (e *generatedCounterEndpoint) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
+func (e *generatedEndpoint_Counter) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.counter@1 has no streaming method \""+method+"\""))
 }
 
-type generatedCounterClient struct {
-	endpoint contract.Endpoint
-	local    Counter
-}
+type generatedClient_Counter struct{ endpoint contract.Endpoint }
 
-// NewCounterClient returns a typed client for endpoint. An endpoint made by NewCounterEndpoint in
-// this process is called directly; requests and responses are validated either way.
+// NewCounterClient returns a typed client for endpoint. Requests and responses are
+// validated and cross as JSON, in this process as between processes.
 func NewCounterClient(endpoint contract.Endpoint) (Counter, error) {
 	if endpoint == nil {
 		return nil, contract.Fail(contract.Invalid, "client for example.counter@1 needs an endpoint")
@@ -79,26 +77,19 @@ func NewCounterClient(endpoint contract.Endpoint) (Counter, error) {
 	if provided := endpoint.Service(); provided.Name != "example.counter" || provided.Major != 1 {
 		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for example.counter@1")
 	}
-	client := &generatedCounterClient{endpoint: endpoint}
-	if local, ok := endpoint.(*generatedCounterEndpoint); ok {
-		client.local = local.implementation
-	}
-	return client, nil
+	return &generatedClient_Counter{endpoint: endpoint}, nil
 }
-func (c *generatedCounterClient) Execute(ctx context.Context, request Request) (Response, error) {
-	if c.local != nil {
-		return generatedCounterExecute.Local(ctx, request, c.local.Execute)
-	}
-	return generatedCounterExecute.Call(ctx, c.endpoint, request)
+func (c *generatedClient_Counter) Execute(ctx context.Context, request Request) (Response, error) {
+	return generatedOperation_Counter_Execute.Call(ctx, c.endpoint, request)
 }
 
-var generatedCounterConfig = schema.NewCodec[Config]("{\"additionalProperties\":false,\"properties\":{\"initial\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}},\"required\":[],\"type\":\"object\"}")
+var generatedConfig_Counter = schema.NewCodec[Config]("{\"additionalProperties\":false,\"properties\":{\"initial\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}},\"required\":[],\"type\":\"object\"}")
 
 // CounterPlugin is plugin "counter". It runs in process as it is, or as a native package
 // through sdk.Define.
-var CounterPlugin = cordis.Plugin[Config]{Name: "counter", Requires: []cordis.Requirement{}, Validate: generatedCounterConfig.Check, Start: start}
+var CounterPlugin = cordis.Plugin[Config]{Name: "counter", Requires: []cordis.Requirement{}, Validate: generatedConfig_Counter.Check, Start: start}
 
 // CounterDefinitionSpec describes the plugin to a host.
 func CounterDefinitionSpec() contract.DefinitionSpec {
-	return contract.DefinitionSpec{ID: "counter", ConfigSchema: generatedCounterConfig.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{CounterService()}}
+	return contract.DefinitionSpec{ID: "counter", ConfigSchema: generatedConfig_Counter.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{CounterService()}}
 }

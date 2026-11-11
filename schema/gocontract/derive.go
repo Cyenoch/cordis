@@ -8,6 +8,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+
+	"github.com/Cyenoch/cordis/schema"
 )
 
 // safeInteger is the largest integer a JSON number carries exactly.
@@ -36,7 +39,8 @@ func (s *source) schemaOf(t types.Type, visiting []*types.Named) (shape, error) 
 		case "time.Time":
 			return shape{"type": "string"}, nil
 		case "encoding/json.Number":
-			return shape{"type": "number"}, nil
+			// An empty Number encodes as 0: the value would change on the way.
+			return nil, fmt.Errorf("json.Number cannot be described by a contract; use a numeric type")
 		}
 		if method := ownEncoding(t); method != "" {
 			return nil, fmt.Errorf("%s has its own JSON encoding (%s), which a contract cannot describe", t, method)
@@ -55,6 +59,9 @@ func (s *source) schemaOf(t types.Type, visiting []*types.Named) (shape, error) 
 	case *types.Slice:
 		// A nil slice encodes as null.
 		if basic, ok := t.Elem().Underlying().(*types.Basic); ok && basic.Kind() == types.Uint8 {
+			if method := keyEncoding(t.Elem()); method != "" {
+				return nil, fmt.Errorf("%s has its own JSON encoding (%s), which a contract cannot describe", t.Elem(), method)
+			}
 			return shape{"type": "string", "contentEncoding": "base64", "nullable": true}, nil
 		}
 		items, err := s.schemaOf(t.Elem(), visiting)
@@ -69,6 +76,10 @@ func (s *source) schemaOf(t types.Type, visiting []*types.Named) (shape, error) 
 		}
 		return shape{"type": "array", "items": items, "minItems": t.Len(), "maxItems": t.Len()}, nil
 	case *types.Struct:
+		// An embedded type can give an unnamed struct an encoding of its own.
+		if methods := types.NewMethodSet(types.NewPointer(t)); methods.Lookup(nil, "MarshalJSON") != nil || methods.Lookup(nil, "MarshalText") != nil {
+			return nil, fmt.Errorf("%s has its own JSON encoding through an embedded field, which a contract cannot describe", t)
+		}
 		object := shape{"type": "object"}
 		properties, required := map[string]any{}, []string{}
 		if err := s.fields(t, visiting, properties, &required); err != nil {
@@ -131,8 +142,15 @@ func (s *source) basic(t *types.Basic) (shape, error) {
 }
 
 // fields adds the JSON fields of a struct, promoting those of embedded
-// structs as encoding/json does.
+// structs as encoding/json does: a field of the struct itself hides a
+// promoted one of the same name.
 func (s *source) fields(t *types.Struct, visiting []*types.Named, properties map[string]any, required *[]string) error {
+	type promotion struct {
+		field *types.Var
+		named *types.Named
+		inner *types.Struct
+	}
+	var promoted []promotion
 	for index := range t.NumFields() {
 		field := t.Field(index)
 		tag := reflect.StructTag(t.Tag(index))
@@ -141,7 +159,11 @@ func (s *source) fields(t *types.Struct, visiting []*types.Named, properties map
 			continue
 		}
 		fail := func(err error) error {
-			return fmt.Errorf("%s: field %s: %w", s.position(field.Pos()), field.Name(), err)
+			return s.within(field.Pos(), "field "+field.Name(), err)
+		}
+		// What encoding/json makes of other characters depends on its version.
+		if !validTagName(name) {
+			return fail(fmt.Errorf("JSON name %q: use letters, digits, '_', '-', '.' and '$'", name))
 		}
 		if field.Embedded() && name == "" {
 			embedded, ok := types.Unalias(field.Type()).(*types.Named)
@@ -152,9 +174,7 @@ func (s *source) fields(t *types.Struct, visiting []*types.Named, properties map
 				if slices.Contains(visiting, embedded) {
 					return fail(fmt.Errorf("%s is recursive", embedded))
 				}
-				if err := s.fields(inner, append(visiting, embedded), properties, required); err != nil {
-					return err
-				}
+				promoted = append(promoted, promotion{field, embedded, inner})
 				continue
 			}
 		}
@@ -186,6 +206,11 @@ func (s *source) fields(t *types.Struct, visiting []*types.Named, properties map
 		if err == nil {
 			err = constrain(property, tag.Get("cordis"))
 		}
+		if err == nil && tag.Get("cordis") != "" {
+			// Constraints can contradict each other or the type; say so here,
+			// at the field, not when the whole contract is put together.
+			err = schema.Check(property.raw())
+		}
 		if err != nil {
 			return fail(err)
 		}
@@ -194,7 +219,39 @@ func (s *source) fields(t *types.Struct, visiting []*types.Named, properties map
 			*required = append(*required, name)
 		}
 	}
+	fromEmbedded := map[string]bool{}
+	for _, p := range promoted {
+		inner, innerRequired := map[string]any{}, []string{}
+		if err := s.fields(p.inner, append(visiting, p.named), inner, &innerRequired); err != nil {
+			return err
+		}
+		for name, property := range inner {
+			if fromEmbedded[name] {
+				// encoding/json drops both silently; say so instead.
+				return s.errorf(p.field.Pos(), "field %s: JSON name %q is promoted from two embedded structs", p.field.Name(), name)
+			}
+			if _, hidden := properties[name]; hidden {
+				continue
+			}
+			fromEmbedded[name] = true
+			properties[name] = property
+			if slices.Contains(innerRequired, name) {
+				*required = append(*required, name)
+			}
+		}
+	}
 	return nil
+}
+
+// validTagName reports whether name is a JSON field name every version of
+// encoding/json reads the same way.
+func validTagName(name string) bool {
+	for _, r := range name {
+		if !strings.ContainsRune("_-.$", r) && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // quotedInteger is the schema of a 64-bit integer with the "string" option,
@@ -234,7 +291,11 @@ func constrain(property shape, tag string) error {
 		}
 		switch key {
 		case "minLength", "maxLength", "minItems", "maxItems":
-			if err := accepts(map[bool][]string{true: {"string"}, false: {"array"}}[strings.HasSuffix(key, "Length")]...); err != nil {
+			applies := "array"
+			if strings.HasSuffix(key, "Length") {
+				applies = "string"
+			}
+			if err := accepts(applies); err != nil {
 				return err
 			}
 			count, err := strconv.Atoi(value)
@@ -245,6 +306,9 @@ func constrain(property shape, tag string) error {
 		case "minimum", "maximum":
 			if err := accepts("integer", "number"); err != nil {
 				return err
+			}
+			if !validNumber(value) {
+				return fmt.Errorf("cordis tag: %s: %q is not a number", key, value)
 			}
 			property[key] = json.Number(value)
 		case "pattern":
@@ -260,9 +324,15 @@ func constrain(property shape, tag string) error {
 			for option := range strings.SplitSeq(value, "|") {
 				if kind == "string" {
 					values = append(values, option)
-				} else {
+				} else if validNumber(option) {
 					values = append(values, json.Number(option))
+				} else {
+					return fmt.Errorf("cordis tag: enum: %q is not a number", option)
 				}
+			}
+			// A nil pointer encodes as null, which the enum has to allow.
+			if property["nullable"] == true {
+				values = append(values, nil)
 			}
 			property[key] = values
 		default:
@@ -278,6 +348,10 @@ func keyEncoding(t types.Type) string {
 		return ownEncoding(named)
 	}
 	return ""
+}
+
+func validNumber(text string) bool {
+	return text != "" && (text[0] == '-' || text[0] >= '0' && text[0] <= '9') && json.Valid([]byte(text))
 }
 
 func qualified(t *types.Named) string {

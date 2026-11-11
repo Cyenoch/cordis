@@ -43,35 +43,33 @@ func GetFeed(s *cordis.Scope) (Feed, error) {
 	return NewFeedClient(endpoint)
 }
 
-var generatedFeedTail = schema.NewOperation[TailRequest, Line]("tail", "{\"additionalProperties\":false,\"properties\":{\"count\":{\"maximum\":9007199254740991,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"count\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"line\":{\"type\":\"string\"}},\"required\":[\"line\"],\"type\":\"object\"}")
+var generatedOperation_Feed_Tail = schema.NewOperation[TailRequest, Line]("tail", "{\"additionalProperties\":false,\"properties\":{\"count\":{\"maximum\":9007199254740991,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"count\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"line\":{\"type\":\"string\"}},\"required\":[\"line\"],\"type\":\"object\"}")
 
-type generatedFeedEndpoint struct{ implementation Feed }
+type generatedEndpoint_Feed struct{ implementation Feed }
 
-// NewFeedEndpoint adapts an implementation to the endpoint other processes call.
+// NewFeedEndpoint adapts an implementation to the endpoint clients call, in this process or
+// from another one.
 func NewFeedEndpoint(implementation Feed) contract.Endpoint {
-	return &generatedFeedEndpoint{implementation: implementation}
+	return &generatedEndpoint_Feed{implementation: implementation}
 }
-func (e *generatedFeedEndpoint) Service() contract.Service { return FeedService() }
-func (e *generatedFeedEndpoint) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+func (e *generatedEndpoint_Feed) Service() contract.Service { return FeedService() }
+func (e *generatedEndpoint_Feed) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	}
 	return nil, contract.Fail(contract.Invalid, "service example.feed@1 has no method \""+method+"\"")
 }
-func (e *generatedFeedEndpoint) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
+func (e *generatedEndpoint_Feed) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
 	case "tail":
-		return generatedFeedTail.ServeStream(ctx, input, e.implementation.Tail)
+		return generatedOperation_Feed_Tail.ServeStream(ctx, input, e.implementation.Tail)
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.feed@1 has no streaming method \""+method+"\""))
 }
 
-type generatedFeedClient struct {
-	endpoint contract.Endpoint
-	local    Feed
-}
+type generatedClient_Feed struct{ endpoint contract.Endpoint }
 
-// NewFeedClient returns a typed client for endpoint. An endpoint made by NewFeedEndpoint in
-// this process is called directly; requests and responses are validated either way.
+// NewFeedClient returns a typed client for endpoint. Requests and responses are
+// validated and cross as JSON, in this process as between processes.
 func NewFeedClient(endpoint contract.Endpoint) (Feed, error) {
 	if endpoint == nil {
 		return nil, contract.Fail(contract.Invalid, "client for example.feed@1 needs an endpoint")
@@ -79,26 +77,19 @@ func NewFeedClient(endpoint contract.Endpoint) (Feed, error) {
 	if provided := endpoint.Service(); provided.Name != "example.feed" || provided.Major != 1 {
 		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for example.feed@1")
 	}
-	client := &generatedFeedClient{endpoint: endpoint}
-	if local, ok := endpoint.(*generatedFeedEndpoint); ok {
-		client.local = local.implementation
-	}
-	return client, nil
+	return &generatedClient_Feed{endpoint: endpoint}, nil
 }
-func (c *generatedFeedClient) Tail(ctx context.Context, request TailRequest) iter.Seq2[Line, error] {
-	if c.local != nil {
-		return generatedFeedTail.LocalStream(ctx, request, c.local.Tail)
-	}
-	return generatedFeedTail.CallStream(ctx, c.endpoint, request)
+func (c *generatedClient_Feed) Tail(ctx context.Context, request TailRequest) iter.Seq2[Line, error] {
+	return generatedOperation_Feed_Tail.CallStream(ctx, c.endpoint, request)
 }
 
-var generatedFeedConfig = schema.NewCodec[struct{}]("{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")
+var generatedConfig_Feed = schema.NewCodec[struct{}]("{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")
 
 // FeedPlugin is plugin "feed". It runs in process as it is, or as a native package
 // through sdk.Define.
-var FeedPlugin = cordis.Plugin[struct{}]{Name: "feed", Requires: []cordis.Requirement{}, Validate: generatedFeedConfig.Check, Start: start}
+var FeedPlugin = cordis.Plugin[struct{}]{Name: "feed", Requires: []cordis.Requirement{}, Validate: generatedConfig_Feed.Check, Start: start}
 
 // FeedDefinitionSpec describes the plugin to a host.
 func FeedDefinitionSpec() contract.DefinitionSpec {
-	return contract.DefinitionSpec{ID: "feed", ConfigSchema: generatedFeedConfig.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{FeedService()}}
+	return contract.DefinitionSpec{ID: "feed", ConfigSchema: generatedConfig_Feed.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{FeedService()}}
 }

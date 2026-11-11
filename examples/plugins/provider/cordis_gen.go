@@ -43,35 +43,33 @@ func GetMessage(s *cordis.Scope) (Message, error) {
 	return NewMessageClient(endpoint)
 }
 
-var generatedMessageRead = schema.NewOperation[struct{}, string]("read", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}", "{\"type\":\"string\"}")
+var generatedOperation_Message_Read = schema.NewOperation[struct{}, string]("read", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}", "{\"type\":\"string\"}")
 
-type generatedMessageEndpoint struct{ implementation Message }
+type generatedEndpoint_Message struct{ implementation Message }
 
-// NewMessageEndpoint adapts an implementation to the endpoint other processes call.
+// NewMessageEndpoint adapts an implementation to the endpoint clients call, in this process or
+// from another one.
 func NewMessageEndpoint(implementation Message) contract.Endpoint {
-	return &generatedMessageEndpoint{implementation: implementation}
+	return &generatedEndpoint_Message{implementation: implementation}
 }
-func (e *generatedMessageEndpoint) Service() contract.Service { return MessageService() }
-func (e *generatedMessageEndpoint) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+func (e *generatedEndpoint_Message) Service() contract.Service { return MessageService() }
+func (e *generatedEndpoint_Message) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	case "read":
-		return generatedMessageRead.Serve(ctx, input, func(ctx context.Context, _ struct{}) (string, error) { return e.implementation.Read(ctx) })
+		return generatedOperation_Message_Read.Serve(ctx, input, func(ctx context.Context, _ struct{}) (string, error) { return e.implementation.Read(ctx) })
 	}
 	return nil, contract.Fail(contract.Invalid, "service example.message@1 has no method \""+method+"\"")
 }
-func (e *generatedMessageEndpoint) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
+func (e *generatedEndpoint_Message) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.message@1 has no streaming method \""+method+"\""))
 }
 
-type generatedMessageClient struct {
-	endpoint contract.Endpoint
-	local    Message
-}
+type generatedClient_Message struct{ endpoint contract.Endpoint }
 
-// NewMessageClient returns a typed client for endpoint. An endpoint made by NewMessageEndpoint in
-// this process is called directly; requests and responses are validated either way.
+// NewMessageClient returns a typed client for endpoint. Requests and responses are
+// validated and cross as JSON, in this process as between processes.
 func NewMessageClient(endpoint contract.Endpoint) (Message, error) {
 	if endpoint == nil {
 		return nil, contract.Fail(contract.Invalid, "client for example.message@1 needs an endpoint")
@@ -79,26 +77,19 @@ func NewMessageClient(endpoint contract.Endpoint) (Message, error) {
 	if provided := endpoint.Service(); provided.Name != "example.message" || provided.Major != 1 {
 		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for example.message@1")
 	}
-	client := &generatedMessageClient{endpoint: endpoint}
-	if local, ok := endpoint.(*generatedMessageEndpoint); ok {
-		client.local = local.implementation
-	}
-	return client, nil
+	return &generatedClient_Message{endpoint: endpoint}, nil
 }
-func (c *generatedMessageClient) Read(ctx context.Context) (string, error) {
-	if c.local != nil {
-		return generatedMessageRead.Local(ctx, struct{}{}, func(ctx context.Context, _ struct{}) (string, error) { return c.local.Read(ctx) })
-	}
-	return generatedMessageRead.Call(ctx, c.endpoint, struct{}{})
+func (c *generatedClient_Message) Read(ctx context.Context) (string, error) {
+	return generatedOperation_Message_Read.Call(ctx, c.endpoint, struct{}{})
 }
 
-var generatedMainConfig = schema.NewCodec[struct{}]("{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")
+var generatedConfig_Main = schema.NewCodec[struct{}]("{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")
 
 // MainPlugin is plugin "main". It runs in process as it is, or as a native package
 // through sdk.Define.
-var MainPlugin = cordis.Plugin[struct{}]{Name: "main", Requires: []cordis.Requirement{}, Validate: generatedMainConfig.Check, Start: start}
+var MainPlugin = cordis.Plugin[struct{}]{Name: "main", Requires: []cordis.Requirement{}, Validate: generatedConfig_Main.Check, Start: start}
 
 // MainDefinitionSpec describes the plugin to a host.
 func MainDefinitionSpec() contract.DefinitionSpec {
-	return contract.DefinitionSpec{ID: "main", ConfigSchema: generatedMainConfig.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{MessageService()}}
+	return contract.DefinitionSpec{ID: "main", ConfigSchema: generatedConfig_Main.Schema(), Requires: []contract.Consumer{}, Provides: []contract.Service{MessageService()}}
 }

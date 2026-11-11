@@ -55,7 +55,7 @@ description: 依赖激活、隔离、配置更新、父子所有权与清理顺�
 | `emit`、`parallel` | `Emit`、`EmitParallel` | `EventKey` 的 `Emit`、`EmitParallel` |
 | `serial`、`bail` | `Query[In, Out]` 的 `Ask`，显式 ok | `QueryKey` 的 `Ask`、`Handle`，显式 handled |
 | `waterfall` | `Chain[In, Out]` 的 `Use`、`Do` | `ChainKey` 的 `Use`、`Do`，每个跨进程中间件两次往返 |
-| 流式结果（官方没有） | 服务方法返回 `iter.Seq2[T, error]` | 契约里 `"stream": true` 的方法，生成 `iter.Seq2`，有窗口与额度 |
+| 流式结果（官方没有） | 服务方法返回 `iter.Seq2[T, error]` | 同样的方法签名，有窗口与额度 |
 | 事件过滤、global | `Scope.Filter`、`Global` | 无，事件在 Host 内广播 |
 | `ctx.effect` 与撤销函数 | `Scope.Defer`、`Scope.Sub` | `Scope.Defer` |
 | `fiber.update`、`internal/update` | `Instance.Update`、`OnUpdate` | `Instance.Update`，总是重建激活 |

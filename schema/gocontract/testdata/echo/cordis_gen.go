@@ -44,54 +44,52 @@ func GetEcho(s *cordis.Scope) (Echo, error) {
 	return NewEchoClient(endpoint)
 }
 
-var generatedEchoCount = schema.NewOperation[struct{}, int64]("count", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}", "{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}")
-var generatedEchoPut = schema.NewOperation[Line, struct{}]("put", "{\"additionalProperties\":false,\"properties\":{\"line\":{\"type\":\"string\"}},\"required\":[\"line\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")
-var generatedEchoReset = schema.NewOperation[struct{}, struct{}]("reset", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")
-var generatedEchoSay = schema.NewOperation[SayRequest, SayResponse]("say", "{\"additionalProperties\":false,\"properties\":{\"big\":{\"format\":\"int64\",\"type\":\"string\"},\"code\":{\"pattern\":\"^[a-z]{1,3}$\",\"type\":\"string\"},\"labels\":{\"additionalProperties\":{\"type\":\"string\"},\"nullable\":true,\"type\":\"object\"},\"mode\":{\"enum\":[\"loud\",\"quiet\"],\"type\":\"string\"},\"tags\":{\"items\":{\"type\":\"string\"},\"maxItems\":2,\"nullable\":true,\"type\":\"array\"},\"text\":{\"maxLength\":16,\"minLength\":1,\"type\":\"string\"},\"times\":{\"maximum\":3,\"minimum\":1,\"nullable\":true,\"type\":\"integer\"}},\"required\":[\"text\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"length\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"text\":{\"type\":\"string\"}},\"required\":[\"length\",\"text\"],\"type\":\"object\"}")
-var generatedEchoTail = schema.NewOperation[TailRequest, Line]("tail", "{\"additionalProperties\":false,\"properties\":{\"count\":{\"maximum\":9007199254740991,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"count\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"line\":{\"type\":\"string\"}},\"required\":[\"line\"],\"type\":\"object\"}")
-var generatedEchoTicks = schema.NewOperation[struct{}, int]("ticks", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}", "{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}")
+var generatedOperation_Echo_Count = schema.NewOperation[struct{}, int64]("count", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}", "{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}")
+var generatedOperation_Echo_Put = schema.NewOperation[Line, struct{}]("put", "{\"additionalProperties\":false,\"properties\":{\"line\":{\"type\":\"string\"}},\"required\":[\"line\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")
+var generatedOperation_Echo_Reset = schema.NewOperation[struct{}, struct{}]("reset", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")
+var generatedOperation_Echo_Say = schema.NewOperation[SayRequest, SayResponse]("say", "{\"additionalProperties\":false,\"properties\":{\"big\":{\"format\":\"int64\",\"type\":\"string\"},\"code\":{\"pattern\":\"^[a-z]{1,3}$\",\"type\":\"string\"},\"labels\":{\"additionalProperties\":{\"type\":\"string\"},\"nullable\":true,\"type\":\"object\"},\"mode\":{\"enum\":[\"loud\",\"quiet\"],\"type\":\"string\"},\"tags\":{\"items\":{\"type\":\"string\"},\"maxItems\":2,\"nullable\":true,\"type\":\"array\"},\"text\":{\"maxLength\":16,\"minLength\":1,\"type\":\"string\"},\"times\":{\"maximum\":3,\"minimum\":1,\"nullable\":true,\"type\":\"integer\"}},\"required\":[\"text\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"length\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"},\"text\":{\"type\":\"string\"}},\"required\":[\"length\",\"text\"],\"type\":\"object\"}")
+var generatedOperation_Echo_Tail = schema.NewOperation[TailRequest, Line]("tail", "{\"additionalProperties\":false,\"properties\":{\"count\":{\"maximum\":9007199254740991,\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"count\"],\"type\":\"object\"}", "{\"additionalProperties\":false,\"properties\":{\"line\":{\"type\":\"string\"}},\"required\":[\"line\"],\"type\":\"object\"}")
+var generatedOperation_Echo_Ticks = schema.NewOperation[struct{}, int]("ticks", "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}", "{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}")
 
-type generatedEchoEndpoint struct{ implementation Echo }
+type generatedEndpoint_Echo struct{ implementation Echo }
 
-// NewEchoEndpoint adapts an implementation to the endpoint other processes call.
+// NewEchoEndpoint adapts an implementation to the endpoint clients call, in this process or
+// from another one.
 func NewEchoEndpoint(implementation Echo) contract.Endpoint {
-	return &generatedEchoEndpoint{implementation: implementation}
+	return &generatedEndpoint_Echo{implementation: implementation}
 }
-func (e *generatedEchoEndpoint) Service() contract.Service { return EchoService() }
-func (e *generatedEchoEndpoint) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+func (e *generatedEndpoint_Echo) Service() contract.Service { return EchoService() }
+func (e *generatedEndpoint_Echo) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	case "count":
-		return generatedEchoCount.Serve(ctx, input, func(ctx context.Context, _ struct{}) (int64, error) { return e.implementation.Count(ctx) })
+		return generatedOperation_Echo_Count.Serve(ctx, input, func(ctx context.Context, _ struct{}) (int64, error) { return e.implementation.Count(ctx) })
 	case "put":
-		return generatedEchoPut.Serve(ctx, input, func(ctx context.Context, request Line) (struct{}, error) {
+		return generatedOperation_Echo_Put.Serve(ctx, input, func(ctx context.Context, request Line) (struct{}, error) {
 			return struct{}{}, e.implementation.Put(ctx, request)
 		})
 	case "reset":
-		return generatedEchoReset.Serve(ctx, input, func(ctx context.Context, _ struct{}) (struct{}, error) {
+		return generatedOperation_Echo_Reset.Serve(ctx, input, func(ctx context.Context, _ struct{}) (struct{}, error) {
 			return struct{}{}, e.implementation.Reset(ctx)
 		})
 	case "say":
-		return generatedEchoSay.Serve(ctx, input, e.implementation.Say)
+		return generatedOperation_Echo_Say.Serve(ctx, input, e.implementation.Say)
 	}
 	return nil, contract.Fail(contract.Invalid, "service example.echo@1 has no method \""+method+"\"")
 }
-func (e *generatedEchoEndpoint) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
+func (e *generatedEndpoint_Echo) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
 	case "tail":
-		return generatedEchoTail.ServeStream(ctx, input, e.implementation.Tail)
+		return generatedOperation_Echo_Tail.ServeStream(ctx, input, e.implementation.Tail)
 	case "ticks":
-		return generatedEchoTicks.ServeStream(ctx, input, func(ctx context.Context, _ struct{}) iter.Seq2[int, error] { return e.implementation.Ticks(ctx) })
+		return generatedOperation_Echo_Ticks.ServeStream(ctx, input, func(ctx context.Context, _ struct{}) iter.Seq2[int, error] { return e.implementation.Ticks(ctx) })
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.echo@1 has no streaming method \""+method+"\""))
 }
 
-type generatedEchoClient struct {
-	endpoint contract.Endpoint
-	local    Echo
-}
+type generatedClient_Echo struct{ endpoint contract.Endpoint }
 
-// NewEchoClient returns a typed client for endpoint. An endpoint made by NewEchoEndpoint in
-// this process is called directly; requests and responses are validated either way.
+// NewEchoClient returns a typed client for endpoint. Requests and responses are
+// validated and cross as JSON, in this process as between processes.
 func NewEchoClient(endpoint contract.Endpoint) (Echo, error) {
 	if endpoint == nil {
 		return nil, contract.Fail(contract.Invalid, "client for example.echo@1 needs an endpoint")
@@ -99,62 +97,36 @@ func NewEchoClient(endpoint contract.Endpoint) (Echo, error) {
 	if provided := endpoint.Service(); provided.Name != "example.echo" || provided.Major != 1 {
 		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for example.echo@1")
 	}
-	client := &generatedEchoClient{endpoint: endpoint}
-	if local, ok := endpoint.(*generatedEchoEndpoint); ok {
-		client.local = local.implementation
-	}
-	return client, nil
+	return &generatedClient_Echo{endpoint: endpoint}, nil
 }
-func (c *generatedEchoClient) Count(ctx context.Context) (int64, error) {
-	if c.local != nil {
-		return generatedEchoCount.Local(ctx, struct{}{}, func(ctx context.Context, _ struct{}) (int64, error) { return c.local.Count(ctx) })
-	}
-	return generatedEchoCount.Call(ctx, c.endpoint, struct{}{})
+func (c *generatedClient_Echo) Count(ctx context.Context) (int64, error) {
+	return generatedOperation_Echo_Count.Call(ctx, c.endpoint, struct{}{})
 }
-func (c *generatedEchoClient) Put(ctx context.Context, request Line) error {
-	if c.local != nil {
-		_, err := generatedEchoPut.Local(ctx, request, func(ctx context.Context, request Line) (struct{}, error) {
-			return struct{}{}, c.local.Put(ctx, request)
-		})
-		return err
-	}
-	_, err := generatedEchoPut.Call(ctx, c.endpoint, request)
+func (c *generatedClient_Echo) Put(ctx context.Context, request Line) error {
+	_, err := generatedOperation_Echo_Put.Call(ctx, c.endpoint, request)
 	return err
 }
-func (c *generatedEchoClient) Reset(ctx context.Context) error {
-	if c.local != nil {
-		_, err := generatedEchoReset.Local(ctx, struct{}{}, func(ctx context.Context, _ struct{}) (struct{}, error) { return struct{}{}, c.local.Reset(ctx) })
-		return err
-	}
-	_, err := generatedEchoReset.Call(ctx, c.endpoint, struct{}{})
+func (c *generatedClient_Echo) Reset(ctx context.Context) error {
+	_, err := generatedOperation_Echo_Reset.Call(ctx, c.endpoint, struct{}{})
 	return err
 }
-func (c *generatedEchoClient) Say(ctx context.Context, request SayRequest) (SayResponse, error) {
-	if c.local != nil {
-		return generatedEchoSay.Local(ctx, request, c.local.Say)
-	}
-	return generatedEchoSay.Call(ctx, c.endpoint, request)
+func (c *generatedClient_Echo) Say(ctx context.Context, request SayRequest) (SayResponse, error) {
+	return generatedOperation_Echo_Say.Call(ctx, c.endpoint, request)
 }
-func (c *generatedEchoClient) Tail(ctx context.Context, request TailRequest) iter.Seq2[Line, error] {
-	if c.local != nil {
-		return generatedEchoTail.LocalStream(ctx, request, c.local.Tail)
-	}
-	return generatedEchoTail.CallStream(ctx, c.endpoint, request)
+func (c *generatedClient_Echo) Tail(ctx context.Context, request TailRequest) iter.Seq2[Line, error] {
+	return generatedOperation_Echo_Tail.CallStream(ctx, c.endpoint, request)
 }
-func (c *generatedEchoClient) Ticks(ctx context.Context) iter.Seq2[int, error] {
-	if c.local != nil {
-		return generatedEchoTicks.LocalStream(ctx, struct{}{}, func(ctx context.Context, _ struct{}) iter.Seq2[int, error] { return c.local.Ticks(ctx) })
-	}
-	return generatedEchoTicks.CallStream(ctx, c.endpoint, struct{}{})
+func (c *generatedClient_Echo) Ticks(ctx context.Context) iter.Seq2[int, error] {
+	return generatedOperation_Echo_Ticks.CallStream(ctx, c.endpoint, struct{}{})
 }
 
-var generatedEchoConfig = schema.NewCodec[Config]("{\"additionalProperties\":false,\"properties\":{\"prefix\":{\"maxLength\":8,\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")
+var generatedConfig_Echo = schema.NewCodec[Config]("{\"additionalProperties\":false,\"properties\":{\"prefix\":{\"maxLength\":8,\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")
 
 // EchoPlugin is plugin "echo". It runs in process as it is, or as a native package
 // through sdk.Define.
-var EchoPlugin = cordis.Plugin[Config]{Name: "echo", Requires: []cordis.Requirement{clock.ClockRequirement(0, 2)}, Validate: generatedEchoConfig.Check, Start: start}
+var EchoPlugin = cordis.Plugin[Config]{Name: "echo", Requires: []cordis.Requirement{clock.ClockRequirement(0, 2)}, Validate: generatedConfig_Echo.Check, Start: start}
 
 // EchoDefinitionSpec describes the plugin to a host.
 func EchoDefinitionSpec() contract.DefinitionSpec {
-	return contract.DefinitionSpec{ID: "echo", ConfigSchema: generatedEchoConfig.Schema(), Requires: []contract.Consumer{clock.ClockConsumer(0, 2)}, Provides: []contract.Service{EchoService()}}
+	return contract.DefinitionSpec{ID: "echo", ConfigSchema: generatedConfig_Echo.Schema(), Requires: []contract.Consumer{clock.ClockConsumer(0, 2)}, Provides: []contract.Service{EchoService()}}
 }
