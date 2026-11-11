@@ -352,3 +352,35 @@ func TestInitializeCarriesTheInflightLimit(t *testing.T) {
 		t.Fatalf("the guest holds a limit of %d, want the announced 16", bound)
 	}
 }
+
+// A request that names a parent the other side has already answered is
+// canceled; the session goes on.
+func TestRequestUnderAnAnsweredParentIsCanceled(t *testing.T) {
+	late, answered := make(chan error, 1), make(chan struct{})
+	var guest *Endpoint
+	host, guest := pair(t,
+		func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+			return json.RawMessage(`{}`), nil
+		},
+		func(ctx context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
+			if method == "work" {
+				// Work that outlives its handler and still calls with its context.
+				go func() {
+					<-answered
+					_, err := guest.Call(context.WithoutCancel(ctx), "back", nil)
+					late <- err
+				}()
+			}
+			return json.RawMessage(`{}`), nil
+		})
+	if _, err := host.Call(t.Context(), "work", nil); err != nil {
+		t.Fatal(err)
+	}
+	close(answered)
+	if err := <-late; !errors.Is(err, contract.Fail(contract.Canceled, "")) {
+		t.Fatalf("the late request = %v, want canceled", err)
+	}
+	if _, err := host.Call(t.Context(), "ping", nil); err != nil {
+		t.Fatalf("the session after the late request: %v", err)
+	}
+}

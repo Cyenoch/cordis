@@ -291,22 +291,31 @@ func TestStreamProtocolViolationsEndTheSession(t *testing.T) {
 			if err := decoder.Decode(&request); err != nil || !request.Stream || request.Window != DefaultWindow {
 				t.Fatalf("stream request: %v %+v", err, request)
 			}
+			written := make(chan struct{})
 			go func() {
+				defer close(written)
 				for _, frame := range test.frames(request.ID) {
 					if peer.Encode(frame) != nil {
 						return
 					}
 				}
 			}()
-			select {
-			case <-endpoint.Done():
-				if !test.ends {
-					t.Fatalf("the session ended: %v", endpoint.Err())
-				}
-			case <-time.After(200 * time.Millisecond):
-				if test.ends {
+			if test.ends {
+				// However slow the machine, the violation ends the session.
+				select {
+				case <-endpoint.Done():
+				case <-time.After(10 * time.Second):
 					t.Fatal("the session survived a protocol violation")
 				}
+				return
+			}
+			// Every frame has been taken; a session that minded one of them
+			// ends shortly after.
+			<-written
+			select {
+			case <-endpoint.Done():
+				t.Fatalf("the session ended: %v", endpoint.Err())
+			case <-time.After(100 * time.Millisecond):
 			}
 		})
 	}

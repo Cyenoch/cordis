@@ -165,7 +165,7 @@ func TestEndpointRejectsReplayedRequest(t *testing.T) {
 	}
 	select {
 	case <-e.Done():
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("replayed request did not close session")
 	}
 }

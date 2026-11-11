@@ -664,10 +664,16 @@ func (e *Endpoint) receive(frame Frame) error {
 		if !ok {
 			previous := e.canceled[frame.Parent]
 			if previous == nil {
-				e.mu.Unlock()
-				return contract.Fail(contract.Invalid, "invalid parent request")
+				// The parent has been answered: a request that still names
+				// it comes from work that outlived its handler. It is
+				// canceled like everything else under that parent; ending
+				// the session over it would punish a late goroutine.
+				ended, cancel := context.WithCancel(e.ctx)
+				cancel()
+				parent = ended
+			} else {
+				parent = previous.ctx
 			}
-			parent = previous.ctx
 		} else {
 			parent = p.ctx
 		}

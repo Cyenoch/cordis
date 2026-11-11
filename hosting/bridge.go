@@ -215,6 +215,10 @@ func (r *run) shutdown(ctx context.Context) error {
 			shutdownCtx, cancel := context.WithTimeout(ctx, r.host.options.Grace)
 			shutdownErr = r.call(shutdownCtx, "shutdown", struct{}{}, nil)
 			cancel()
+			if errors.Is(shutdownErr, context.DeadlineExceeded) && ctx.Err() == nil {
+				// Not the caller's deadline: say whose it was.
+				shutdownErr = contract.Fail(contract.Timeout, fmt.Sprintf("entry %q did not shut down within %v", r.identity.Entry, r.host.options.Grace))
+			}
 		}
 	}
 	closeErr := r.session.Close()
