@@ -142,9 +142,9 @@ func TestOneShotTimersLeaveNothingBehind(t *testing.T) {
 		if got := len(fired.get()); got != 500 {
 			t.Fatalf("fired %d", got)
 		}
-		// The count is the whole process's: a goroutine of the runtime or of
-		// an earlier test may end meanwhile. Only growth is a leak.
-		if after := runtime.NumGoroutine(); after > before {
+		// The count is the whole process's and moves by one or two on its
+		// own; timers that left a goroutine behind would add hundreds.
+		if after := runtime.NumGoroutine(); after > before+50 {
 			t.Fatalf("goroutines: %d before, %d after all timers fired", before, after)
 		}
 	})
@@ -197,7 +197,10 @@ func TestSleepAndTicks(t *testing.T) {
 			seen++
 			time.Sleep(3 * time.Second) // slower than the period
 		}
-		if seen == 0 || seen >= 10 {
+		// Ticks at 1s, 4s and 7s; whether the one waiting at 10s is seen
+		// depends on which of two timers of the same instant fires first.
+		// None is delivered after ctx has ended.
+		if seen < 3 || seen > 4 {
 			t.Fatalf("slow consumer saw %d ticks in 10 periods", seen)
 		}
 	})

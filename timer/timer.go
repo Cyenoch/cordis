@@ -96,7 +96,9 @@ func Ticks(ctx context.Context, d time.Duration) iter.Seq[time.Time] {
 		for {
 			select {
 			case now := <-t.C:
-				if !yield(now) {
+				// A tick that was waiting when ctx ended is not delivered:
+				// select picks at random between two ready cases.
+				if ctx.Err() != nil || !yield(now) {
 					return
 				}
 			case <-ctx.Done():

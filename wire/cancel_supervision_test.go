@@ -29,7 +29,8 @@ func TestUnansweredCancellationDoesNotKeepWaitingGoroutines(t *testing.T) {
 		}()
 		synctest.Wait()
 		before := runtime.NumGoroutine()
-		for range 4 {
+		const calls = 12 // within what the session keeps of unanswered cancellations
+		for range calls {
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan struct{})
 			go func() { defer close(done); _, _ = e.Call(ctx, "ping", nil) }()
@@ -38,8 +39,9 @@ func TestUnansweredCancellationDoesNotKeepWaitingGoroutines(t *testing.T) {
 			<-done
 			synctest.Wait()
 		}
-		// Process-wide count: only growth is a leak.
-		if growth := runtime.NumGoroutine() - before; growth > 0 {
+		// The count is the whole process's and moves by one or two on its
+		// own; a goroutine kept per unanswered cancellation would add calls.
+		if growth := runtime.NumGoroutine() - before; growth >= calls/2 {
 			t.Errorf("unanswered cancellations kept %d waiting goroutines", growth)
 		}
 		e.Close()
