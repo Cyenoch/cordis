@@ -88,7 +88,7 @@ func TestChainAcrossProcesses(t *testing.T) {
 
 func TestChainMiddlewareMisbehaving(t *testing.T) {
 	f := newFixture(t)
-	late := make(chan error, 1)
+	late, finished := make(chan error, 1), make(chan struct{})
 	f.pack(plainManifest("test.guard"), middleware(func(ctx context.Context, in string, next next) (string, error) {
 		switch in {
 		case "short":
@@ -101,7 +101,7 @@ func TestChainMiddlewareMisbehaving(t *testing.T) {
 			return out, err
 		case "late":
 			go func() {
-				time.Sleep(20 * time.Millisecond)
+				<-finished // the execution has ended for its starter
 				_, err := next(context.Background(), in)
 				late <- err
 			}()
@@ -129,6 +129,7 @@ func TestChainMiddlewareMisbehaving(t *testing.T) {
 	if out, err := render.Do(f.ctx(), root, "late", final); err != nil || out != "returned early" {
 		t.Fatalf("late next = %q, %v", out, err)
 	}
+	close(finished)
 	if err := <-late; err == nil || finals != 1 {
 		t.Fatalf("a next after the middleware returned = %v, finals %d", err, finals)
 	}
