@@ -25,6 +25,10 @@ type guest struct {
 	endpoint    *wire.Endpoint
 	ready       chan struct{} // closed once endpoint is set
 	slots       chan struct{} // bounds the requests in flight to the host
+	// controls bounds subscription and chain registration requests to the
+	// part of the limit kept for them, so that together with slots the
+	// session's limit is never exceeded: a request waits instead of failing.
+	controls chan struct{}
 
 	// Set by initialize, before any plugin code runs.
 	identity contract.Identity
@@ -204,6 +208,7 @@ func (g *guest) initialize(ctx context.Context, input json.RawMessage) (json.Raw
 	// Before any plugin code runs: session control shares the limit with
 	// the plugin's requests and keeps eight of it.
 	g.slots = make(chan struct{}, init.Inflight-8)
+	g.controls = make(chan struct{}, 8)
 	g.app = cordis.New(cordis.Options{})
 	g.starting = ctx
 	g.mu.Unlock()
@@ -571,6 +576,14 @@ func (g *guest) control(ctx context.Context, method string, input, output any) e
 	data, err := json.Marshal(input)
 	if err != nil {
 		return err
+	}
+	select {
+	case g.controls <- struct{}{}:
+		defer func() { <-g.controls }()
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-g.endpoint.Done():
+		return contract.Fail(contract.NotReady, "session is closed")
 	}
 	ctx, queued, err := g.admitted(ctx)
 	if err != nil {

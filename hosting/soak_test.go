@@ -336,3 +336,72 @@ func TestInflightLimitBindsThePluginsRequests(t *testing.T) {
 		t.Fatalf("the host saw %d requests of the plugin at once, want %d", got, limit-8)
 	}
 }
+
+// Subscribing and unsubscribing share the session with the plugin's calls.
+// With every place for calls taken, any number of subscriptions cancelled at
+// once still go through, in turn, and none is refused for lack of room.
+func TestControlRequestsDoNotCrowdOutCalls(t *testing.T) {
+	const calls, subscriptions = 40, 60
+	f := newFixture(t)
+	noted := contract.NewEventKey[string]("test.noted")
+	called, subscribed := make(chan error, calls), make(chan error, subscriptions)
+	var entered atomic.Int64
+	release, full := make(chan struct{}), make(chan struct{})
+	f.pack(echoManifest("test.busy", false, echoRequirement(0, 9)), sdk.Define(cordis.Plugin[struct{}]{Name: "main",
+		Requires: []cordis.Requirement{contract.Require(echoKey, 0, 9)},
+		Start: func(ctx context.Context, s *cordis.Scope, _ struct{}) error {
+			provider, err := echoKey.Get(s)
+			if err != nil {
+				return err
+			}
+			for range calls {
+				s.Go(func(ctx context.Context) error {
+					_, err := contract.Invoke[echoRequest, echoResponse](ctx, provider, "echo", echoRequest{Text: "x"})
+					called <- err
+					return nil
+				})
+			}
+			for range subscriptions {
+				cancel, err := noted.On(ctx, s, func(context.Context, string) error { return nil })
+				if err != nil {
+					return err
+				}
+				s.Go(func(ctx context.Context) error {
+					<-full // the calls hold every place they may have
+					subscribed <- cancel(ctx)
+					return nil
+				})
+			}
+			return nil
+		}}))
+	f.open(func(o *Options) { o.Inflight = contract.MinInflight })
+	must(t, echoKey.Provide(f.host.Scope(), contract.Methods(echoService, map[string]contract.Handler{
+		"echo": contract.Typed(func(ctx context.Context, in echoRequest) (echoResponse, error) {
+			entered.Add(1)
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			return echoResponse(in), ctx.Err()
+		}),
+	})))
+	must(t, f.enable(contract.Entry{ID: "busy", Package: "test.busy"}).Wait(f.ctx()))
+	eventually(t, "the calls to fill the session", func() bool { return entered.Load() == contract.MinInflight-8 })
+	close(full)
+	for range subscriptions {
+		select {
+		case err := <-subscribed:
+			if err != nil {
+				t.Errorf("a cancellation was refused instead of waiting: %v", err)
+			}
+		case <-f.ctx().Done():
+			t.Fatal("subscriptions did not get through a session full of calls")
+		}
+	}
+	close(release)
+	for range calls {
+		if err := <-called; err != nil {
+			t.Errorf("a call failed: %v", err)
+		}
+	}
+}
