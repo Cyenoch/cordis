@@ -103,10 +103,10 @@ func TestCLIProcesses(t *testing.T) {
 			t.Fatal(err)
 		}
 		formatted, err := format.Source(generated)
-		if err != nil || !bytes.Equal(generated, formatted) || !bytes.Contains(generated, []byte("NewFirstDefinition")) || !bytes.Contains(generated, []byte("NewSecondDefinition")) {
+		if err != nil || !bytes.Equal(generated, formatted) || !bytes.Contains(generated, []byte("func FirstPlugin(")) || !bytes.Contains(generated, []byte("func SecondPlugin(")) {
 			t.Fatalf("unformatted or incomplete output: %v\n%s", err, generated)
 		}
-		if code, out, stderr := run(t, "", "generate", "-output", "-", jsonInput); code != 0 || !strings.Contains(out, "NewFirstDefinition") || stderr != "" {
+		if code, out, stderr := run(t, "", "generate", "-output", "-", jsonInput); code != 0 || !strings.Contains(out, "func FirstPlugin(") || stderr != "" {
 			t.Fatalf("explicit stdout: code=%d out=%q stderr=%q", code, out, stderr)
 		}
 		for _, args := range [][]string{
@@ -318,7 +318,7 @@ func missingProviderArchive(t *testing.T) string {
 	dir := t.TempDir()
 	manifest := contract.Manifest{
 		Schema: contract.PackageSchema, ID: "example.waiting", Version: "1.0.0", Publisher: "example",
-		Protocol: contract.Protocol{Major: 1}, DefaultDefinition: "main",
+		Protocol: contract.Protocol{Major: contract.ProtocolMajor}, DefaultDefinition: "main",
 		Definitions: []contract.DefinitionSpec{{ID: "main", ConfigSchema: json.RawMessage(`{"type":"object"}`),
 			Requires: []contract.Consumer{{Requirement: contract.Requirement{Name: "example.missing", Major: 1, MinMinor: 1, MaxMinor: 3}, Contract: strings.Repeat("a", 64)}},
 			Provides: []contract.Service{},

@@ -14,13 +14,13 @@ import (
 	"testing"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/hosting"
 )
 
 func testControl(t *testing.T) (*controlServer, string) {
 	t.Helper()
-	h, err := cordis.Open(cordis.Options{Directory: t.TempDir()})
+	h, err := hosting.Open(hosting.Options{Directory: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

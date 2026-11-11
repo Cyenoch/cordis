@@ -27,7 +27,7 @@ description: 显式选择包、处理退出和保留真实验证证据。
 
 原始 stderr 需显式配置 `Options.Stderr`，builtin panic 栈需显式开启 `CapturePanic` 并配置 Logger。错误文本、原始输出和栈可能包含业务数据；配置及调用正文不会由框架自动写进诊断。native 被强制终止时可能没有栈。
 
-仓库的 `diagnostics_example_test.go` 提供可执行的初始化失败示例：从 entry 找到终态 activation，并确认 Close 返回失败时 Done 仍可表示已清理完成。执行 `go test . -run ExampleHost_Done`。
+仓库的 `hosting/diagnostics_example_test.go` 提供可执行的初始化失败示例：从 entry 找到终态 activation，并确认 Close 返回失败时 Done 仍可表示已清理完成。执行 `go test ./hosting -run ExampleHost_Done`。
 
 ## 验证
 

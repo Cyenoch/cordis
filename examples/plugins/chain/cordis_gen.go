@@ -5,12 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/schema"
+	"iter"
 )
 
 var _ context.Context
-var _ contract.Scope
+var _ *cordis.Scope
+var _ contract.Service
+var _ iter.Seq[int]
 
 const RequestSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"operation\":{\"type\":\"string\"},\"owner\":{\"type\":\"string\"}},\"required\":[\"operation\"],\"type\":\"object\"}"
 
@@ -305,18 +309,13 @@ func ConsumerDefinitionSpec() contract.DefinitionSpec {
 func ConsumerUpstreamConsumer() contract.Consumer {
 	return contract.Consumer{Requirement: contract.Requirement{Name: "chain.b", Major: 1, MinMinor: 1, MaxMinor: 3}, Contract: "5541e349f90b51bf68183601e8eb13f49bd3dbecffafa55729ce980c5e3dea33"}
 }
-func NewConsumerDefinition(start func(context.Context, contract.Scope, ConsumerConfig) error) contract.Definition {
-	spec := ConsumerDefinitionSpec()
-	return contract.Definition{ID: spec.ID, Requires: spec.Requirements(), Provides: spec.Provides, Validate: func(raw json.RawMessage) error { var config ConsumerConfig; return json.Unmarshal(raw, &config) }, Start: func(ctx context.Context, scope contract.Scope) error {
-		if start == nil {
-			return fmt.Errorf("definition requires start")
-		}
-		var config ConsumerConfig
-		if err := json.Unmarshal(scope.Config(), &config); err != nil {
-			return err
-		}
-		return start(ctx, scope, config)
-	}}
+
+// ConsumerPlugin builds the kernel plugin for definition "consumer". The same plugin runs in
+// process or, through sdk.Define, as a native package.
+func ConsumerPlugin(start func(context.Context, *cordis.Scope, ConsumerConfig) error) cordis.Plugin[ConsumerConfig] {
+	return cordis.Plugin[ConsumerConfig]{Name: "consumer", Requires: []cordis.Requirement{
+		contract.Require(contract.EndpointKey("chain.b", 1), 1, 3),
+	}, Validate: func(config ConsumerConfig) error { _, err := json.Marshal(config); return err }, Start: start}
 }
 
 const MiddleDefinitionDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
@@ -387,18 +386,13 @@ func MiddleDefinitionSpec() contract.DefinitionSpec {
 func MiddleUpstreamConsumer() contract.Consumer {
 	return contract.Consumer{Requirement: contract.Requirement{Name: "chain.a", Major: 1, MinMinor: 1, MaxMinor: 3}, Contract: "049b33b7ea9e7338ce1d615069282d72d26731cfdc6de2df6a60c11e204dd0cd"}
 }
-func NewMiddleDefinition(start func(context.Context, contract.Scope, MiddleConfig) error) contract.Definition {
-	spec := MiddleDefinitionSpec()
-	return contract.Definition{ID: spec.ID, Requires: spec.Requirements(), Provides: spec.Provides, Validate: func(raw json.RawMessage) error { var config MiddleConfig; return json.Unmarshal(raw, &config) }, Start: func(ctx context.Context, scope contract.Scope) error {
-		if start == nil {
-			return fmt.Errorf("definition requires start")
-		}
-		var config MiddleConfig
-		if err := json.Unmarshal(scope.Config(), &config); err != nil {
-			return err
-		}
-		return start(ctx, scope, config)
-	}}
+
+// MiddlePlugin builds the kernel plugin for definition "middle". The same plugin runs in
+// process or, through sdk.Define, as a native package.
+func MiddlePlugin(start func(context.Context, *cordis.Scope, MiddleConfig) error) cordis.Plugin[MiddleConfig] {
+	return cordis.Plugin[MiddleConfig]{Name: "middle", Requires: []cordis.Requirement{
+		contract.Require(contract.EndpointKey("chain.a", 1), 1, 3),
+	}, Validate: func(config MiddleConfig) error { _, err := json.Marshal(config); return err }, Start: start}
 }
 
 const OptionalParentDefinitionDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
@@ -478,18 +472,11 @@ func OptionalParentDefinitionSpec() contract.DefinitionSpec {
 	return contract.DefinitionSpec{ID: "optional-parent", ConfigSchema: json.RawMessage(OptionalParentConfigSchemaJSON),
 		Requires: []contract.Consumer{}, Provides: []contract.Service{}}
 }
-func NewOptionalParentDefinition(start func(context.Context, contract.Scope, OptionalParentConfig) error) contract.Definition {
-	spec := OptionalParentDefinitionSpec()
-	return contract.Definition{ID: spec.ID, Requires: spec.Requirements(), Provides: spec.Provides, Validate: func(raw json.RawMessage) error { var config OptionalParentConfig; return json.Unmarshal(raw, &config) }, Start: func(ctx context.Context, scope contract.Scope) error {
-		if start == nil {
-			return fmt.Errorf("definition requires start")
-		}
-		var config OptionalParentConfig
-		if err := json.Unmarshal(scope.Config(), &config); err != nil {
-			return err
-		}
-		return start(ctx, scope, config)
-	}}
+
+// OptionalParentPlugin builds the kernel plugin for definition "optional-parent". The same plugin runs in
+// process or, through sdk.Define, as a native package.
+func OptionalParentPlugin(start func(context.Context, *cordis.Scope, OptionalParentConfig) error) cordis.Plugin[OptionalParentConfig] {
+	return cordis.Plugin[OptionalParentConfig]{Name: "optional-parent", Requires: []cordis.Requirement{}, Validate: func(config OptionalParentConfig) error { _, err := json.Marshal(config); return err }, Start: start}
 }
 
 const ProviderDefinitionDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
@@ -555,18 +542,11 @@ func ProviderDefinitionSpec() contract.DefinitionSpec {
 			{Name: "chain.a", Major: 1, Minor: 2},
 		}}
 }
-func NewProviderDefinition(start func(context.Context, contract.Scope, ProviderConfig) error) contract.Definition {
-	spec := ProviderDefinitionSpec()
-	return contract.Definition{ID: spec.ID, Requires: spec.Requirements(), Provides: spec.Provides, Validate: func(raw json.RawMessage) error { var config ProviderConfig; return json.Unmarshal(raw, &config) }, Start: func(ctx context.Context, scope contract.Scope) error {
-		if start == nil {
-			return fmt.Errorf("definition requires start")
-		}
-		var config ProviderConfig
-		if err := json.Unmarshal(scope.Config(), &config); err != nil {
-			return err
-		}
-		return start(ctx, scope, config)
-	}}
+
+// ProviderPlugin builds the kernel plugin for definition "provider". The same plugin runs in
+// process or, through sdk.Define, as a native package.
+func ProviderPlugin(start func(context.Context, *cordis.Scope, ProviderConfig) error) cordis.Plugin[ProviderConfig] {
+	return cordis.Plugin[ProviderConfig]{Name: "provider", Requires: []cordis.Requirement{}, Validate: func(config ProviderConfig) error { _, err := json.Marshal(config); return err }, Start: start}
 }
 
 const ChainAServiceDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
@@ -737,47 +717,93 @@ func (v *ChainAExecuteResponse) UnmarshalJSON(data []byte) error {
 	*v = value
 	return nil
 }
+
+// ChainAService identifies the contract and the minor this package was generated from.
 func ChainAService() contract.Service { return contract.Service{Name: "chain.a", Major: 1, Minor: 2} }
 func ChainAConsumer(minMinor, maxMinor uint32) contract.Consumer {
 	return contract.Consumer{Requirement: contract.Requirement{Name: "chain.a", Major: 1, MinMinor: minMinor, MaxMinor: maxMinor}, Contract: "049b33b7ea9e7338ce1d615069282d72d26731cfdc6de2df6a60c11e204dd0cd"}
 }
 
-type ChainAClient struct {
-	caller   contract.Caller
-	consumer contract.Consumer
+// ChainAEndpoint is the kernel key under which the service is provided and required.
+var ChainAEndpoint = contract.EndpointKey("chain.a", 1)
+
+// ChainARequirement requires the service with a minor in [minMinor, maxMinor].
+func ChainARequirement(minMinor, maxMinor uint32) cordis.Requirement {
+	return contract.Require(ChainAEndpoint, minMinor, maxMinor)
 }
 
-func NewChainAClient(caller contract.Caller, consumer contract.Consumer) (*ChainAClient, error) {
-	if caller == nil {
-		return nil, fmt.Errorf("service client requires caller")
-	}
-	if err := consumer.Check("chain.a", 1, 2, "049b33b7ea9e7338ce1d615069282d72d26731cfdc6de2df6a60c11e204dd0cd"); err != nil {
-		return nil, err
-	}
-	return &ChainAClient{caller: caller, consumer: consumer}, nil
-}
-
-type ChainAServer interface {
+// ChainA is the service. Providers implement it; consumers receive it from NewChainAClient.
+type ChainA interface {
 	Execute(context.Context, ChainAExecuteRequest) (ChainAExecuteResponse, error)
 }
+type generatedChainAEndpoint struct{ implementation ChainA }
 
-func (c *ChainAClient) Execute(ctx context.Context, input ChainAExecuteRequest) (ChainAExecuteResponse, error) {
-	var output ChainAExecuteResponse
-	if c == nil || c.caller == nil {
-		return output, fmt.Errorf("service client has no caller")
+// NewChainAEndpoint adapts an implementation to the endpoint published under ChainAEndpoint.
+func NewChainAEndpoint(implementation ChainA) contract.Endpoint {
+	return &generatedChainAEndpoint{implementation: implementation}
+}
+func (e *generatedChainAEndpoint) Service() contract.Service { return ChainAService() }
+func (e *generatedChainAEndpoint) Call(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
+	switch method {
+	case "execute":
+		var input ChainAExecuteRequest
+		if err := json.Unmarshal(data, &input); err != nil {
+			return nil, err
+		}
+		output, err := e.implementation.Execute(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(output)
+	default:
+		return nil, contract.Fail(contract.Invalid, "unknown service method")
 	}
+}
+func (e *generatedChainAEndpoint) Stream(ctx context.Context, method string, data json.RawMessage) iter.Seq2[json.RawMessage, error] {
+	switch method {
+	default:
+		return contract.FailedStream(contract.Fail(contract.Invalid, "unknown streaming service method"))
+	}
+}
+
+type generatedChainAClient struct {
+	endpoint contract.Endpoint
+	local    ChainA
+}
+
+// NewChainAClient returns a typed client for endpoint. When the endpoint was made by
+// NewChainAEndpoint in this process, calls go straight to the implementation; data is
+// still validated on the way in and out.
+func NewChainAClient(endpoint contract.Endpoint) (ChainA, error) {
+	if endpoint == nil {
+		return nil, fmt.Errorf("service client requires an endpoint")
+	}
+	if provided := endpoint.Service(); provided.Name != "chain.a" || provided.Major != 1 {
+		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for chain.a@1")
+	}
+	client := &generatedChainAClient{endpoint: endpoint}
+	if local, ok := endpoint.(*generatedChainAEndpoint); ok {
+		client.local = local.implementation
+	}
+	return client, nil
+}
+func (c *generatedChainAClient) Execute(ctx context.Context, input ChainAExecuteRequest) (ChainAExecuteResponse, error) {
+	var output ChainAExecuteResponse
 	data, err := json.Marshal(input)
 	if err != nil {
 		return output, err
 	}
-	request, err := json.Marshal(struct {
-		Method string          `json:"method"`
-		Input  json.RawMessage `json:"input"`
-	}{Method: "execute", Input: data})
-	if err != nil {
-		return output, err
+	if c.local != nil {
+		result, err := c.local.Execute(ctx, input)
+		if err != nil {
+			return output, err
+		}
+		if _, err := json.Marshal(result); err != nil {
+			return output, err
+		}
+		return result, nil
 	}
-	response, err := c.caller.Call(ctx, c.consumer.Requirement, request)
+	response, err := c.endpoint.Call(ctx, "execute", data)
 	if err != nil {
 		return output, err
 	}
@@ -785,41 +811,6 @@ func (c *ChainAClient) Execute(ctx context.Context, input ChainAExecuteRequest) 
 		return output, err
 	}
 	return output, nil
-}
-func RegisterChainAServer(registrar contract.Registrar, implementation ChainAServer) error {
-	if registrar == nil || implementation == nil {
-		return fmt.Errorf("service registration requires registrar and implementation")
-	}
-	return registrar.Provide(ChainAService(), func(ctx context.Context, data json.RawMessage) (json.RawMessage, error) {
-		var envelope struct {
-			Method string          `json:"method"`
-			Input  json.RawMessage `json:"input"`
-		}
-		if err := contract.Decode(data, &envelope); err != nil {
-			return nil, err
-		}
-		if envelope.Method == "" || len(envelope.Input) == 0 {
-			return nil, contract.Fail(contract.Invalid, "service envelope requires method and input")
-		}
-		switch envelope.Method {
-		case "execute":
-			var input ChainAExecuteRequest
-			if err := json.Unmarshal(envelope.Input, &input); err != nil {
-				return nil, err
-			}
-			output, err := implementation.Execute(ctx, input)
-			if err != nil {
-				return nil, err
-			}
-			response, err := json.Marshal(output)
-			if err != nil {
-				return nil, err
-			}
-			return response, nil
-		default:
-			return nil, contract.Fail(contract.Invalid, "unknown service method")
-		}
-	})
 }
 
 const ChainBServiceDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
@@ -990,47 +981,93 @@ func (v *ChainBExecuteResponse) UnmarshalJSON(data []byte) error {
 	*v = value
 	return nil
 }
+
+// ChainBService identifies the contract and the minor this package was generated from.
 func ChainBService() contract.Service { return contract.Service{Name: "chain.b", Major: 1, Minor: 2} }
 func ChainBConsumer(minMinor, maxMinor uint32) contract.Consumer {
 	return contract.Consumer{Requirement: contract.Requirement{Name: "chain.b", Major: 1, MinMinor: minMinor, MaxMinor: maxMinor}, Contract: "5541e349f90b51bf68183601e8eb13f49bd3dbecffafa55729ce980c5e3dea33"}
 }
 
-type ChainBClient struct {
-	caller   contract.Caller
-	consumer contract.Consumer
+// ChainBEndpoint is the kernel key under which the service is provided and required.
+var ChainBEndpoint = contract.EndpointKey("chain.b", 1)
+
+// ChainBRequirement requires the service with a minor in [minMinor, maxMinor].
+func ChainBRequirement(minMinor, maxMinor uint32) cordis.Requirement {
+	return contract.Require(ChainBEndpoint, minMinor, maxMinor)
 }
 
-func NewChainBClient(caller contract.Caller, consumer contract.Consumer) (*ChainBClient, error) {
-	if caller == nil {
-		return nil, fmt.Errorf("service client requires caller")
-	}
-	if err := consumer.Check("chain.b", 1, 2, "5541e349f90b51bf68183601e8eb13f49bd3dbecffafa55729ce980c5e3dea33"); err != nil {
-		return nil, err
-	}
-	return &ChainBClient{caller: caller, consumer: consumer}, nil
-}
-
-type ChainBServer interface {
+// ChainB is the service. Providers implement it; consumers receive it from NewChainBClient.
+type ChainB interface {
 	Execute(context.Context, ChainBExecuteRequest) (ChainBExecuteResponse, error)
 }
+type generatedChainBEndpoint struct{ implementation ChainB }
 
-func (c *ChainBClient) Execute(ctx context.Context, input ChainBExecuteRequest) (ChainBExecuteResponse, error) {
-	var output ChainBExecuteResponse
-	if c == nil || c.caller == nil {
-		return output, fmt.Errorf("service client has no caller")
+// NewChainBEndpoint adapts an implementation to the endpoint published under ChainBEndpoint.
+func NewChainBEndpoint(implementation ChainB) contract.Endpoint {
+	return &generatedChainBEndpoint{implementation: implementation}
+}
+func (e *generatedChainBEndpoint) Service() contract.Service { return ChainBService() }
+func (e *generatedChainBEndpoint) Call(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
+	switch method {
+	case "execute":
+		var input ChainBExecuteRequest
+		if err := json.Unmarshal(data, &input); err != nil {
+			return nil, err
+		}
+		output, err := e.implementation.Execute(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(output)
+	default:
+		return nil, contract.Fail(contract.Invalid, "unknown service method")
 	}
+}
+func (e *generatedChainBEndpoint) Stream(ctx context.Context, method string, data json.RawMessage) iter.Seq2[json.RawMessage, error] {
+	switch method {
+	default:
+		return contract.FailedStream(contract.Fail(contract.Invalid, "unknown streaming service method"))
+	}
+}
+
+type generatedChainBClient struct {
+	endpoint contract.Endpoint
+	local    ChainB
+}
+
+// NewChainBClient returns a typed client for endpoint. When the endpoint was made by
+// NewChainBEndpoint in this process, calls go straight to the implementation; data is
+// still validated on the way in and out.
+func NewChainBClient(endpoint contract.Endpoint) (ChainB, error) {
+	if endpoint == nil {
+		return nil, fmt.Errorf("service client requires an endpoint")
+	}
+	if provided := endpoint.Service(); provided.Name != "chain.b" || provided.Major != 1 {
+		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for chain.b@1")
+	}
+	client := &generatedChainBClient{endpoint: endpoint}
+	if local, ok := endpoint.(*generatedChainBEndpoint); ok {
+		client.local = local.implementation
+	}
+	return client, nil
+}
+func (c *generatedChainBClient) Execute(ctx context.Context, input ChainBExecuteRequest) (ChainBExecuteResponse, error) {
+	var output ChainBExecuteResponse
 	data, err := json.Marshal(input)
 	if err != nil {
 		return output, err
 	}
-	request, err := json.Marshal(struct {
-		Method string          `json:"method"`
-		Input  json.RawMessage `json:"input"`
-	}{Method: "execute", Input: data})
-	if err != nil {
-		return output, err
+	if c.local != nil {
+		result, err := c.local.Execute(ctx, input)
+		if err != nil {
+			return output, err
+		}
+		if _, err := json.Marshal(result); err != nil {
+			return output, err
+		}
+		return result, nil
 	}
-	response, err := c.caller.Call(ctx, c.consumer.Requirement, request)
+	response, err := c.endpoint.Call(ctx, "execute", data)
 	if err != nil {
 		return output, err
 	}
@@ -1038,41 +1075,6 @@ func (c *ChainBClient) Execute(ctx context.Context, input ChainBExecuteRequest) 
 		return output, err
 	}
 	return output, nil
-}
-func RegisterChainBServer(registrar contract.Registrar, implementation ChainBServer) error {
-	if registrar == nil || implementation == nil {
-		return fmt.Errorf("service registration requires registrar and implementation")
-	}
-	return registrar.Provide(ChainBService(), func(ctx context.Context, data json.RawMessage) (json.RawMessage, error) {
-		var envelope struct {
-			Method string          `json:"method"`
-			Input  json.RawMessage `json:"input"`
-		}
-		if err := contract.Decode(data, &envelope); err != nil {
-			return nil, err
-		}
-		if envelope.Method == "" || len(envelope.Input) == 0 {
-			return nil, contract.Fail(contract.Invalid, "service envelope requires method and input")
-		}
-		switch envelope.Method {
-		case "execute":
-			var input ChainBExecuteRequest
-			if err := json.Unmarshal(envelope.Input, &input); err != nil {
-				return nil, err
-			}
-			output, err := implementation.Execute(ctx, input)
-			if err != nil {
-				return nil, err
-			}
-			response, err := json.Marshal(output)
-			if err != nil {
-				return nil, err
-			}
-			return response, nil
-		default:
-			return nil, contract.Fail(contract.Invalid, "unknown service method")
-		}
-	})
 }
 
 const ChainCServiceDeclarationFingerprint = "3a70cc765ccf939fe3a4fdb7bc262ed66aa4d402d918958b6c3af1acb7365eb8"
@@ -1243,47 +1245,93 @@ func (v *ChainCExecuteResponse) UnmarshalJSON(data []byte) error {
 	*v = value
 	return nil
 }
+
+// ChainCService identifies the contract and the minor this package was generated from.
 func ChainCService() contract.Service { return contract.Service{Name: "chain.c", Major: 1, Minor: 2} }
 func ChainCConsumer(minMinor, maxMinor uint32) contract.Consumer {
 	return contract.Consumer{Requirement: contract.Requirement{Name: "chain.c", Major: 1, MinMinor: minMinor, MaxMinor: maxMinor}, Contract: "0b32b178d7e6577c7acbdff1c934f77e4e61b1e2d7d68d703783aba4a4dfc2c4"}
 }
 
-type ChainCClient struct {
-	caller   contract.Caller
-	consumer contract.Consumer
+// ChainCEndpoint is the kernel key under which the service is provided and required.
+var ChainCEndpoint = contract.EndpointKey("chain.c", 1)
+
+// ChainCRequirement requires the service with a minor in [minMinor, maxMinor].
+func ChainCRequirement(minMinor, maxMinor uint32) cordis.Requirement {
+	return contract.Require(ChainCEndpoint, minMinor, maxMinor)
 }
 
-func NewChainCClient(caller contract.Caller, consumer contract.Consumer) (*ChainCClient, error) {
-	if caller == nil {
-		return nil, fmt.Errorf("service client requires caller")
-	}
-	if err := consumer.Check("chain.c", 1, 2, "0b32b178d7e6577c7acbdff1c934f77e4e61b1e2d7d68d703783aba4a4dfc2c4"); err != nil {
-		return nil, err
-	}
-	return &ChainCClient{caller: caller, consumer: consumer}, nil
-}
-
-type ChainCServer interface {
+// ChainC is the service. Providers implement it; consumers receive it from NewChainCClient.
+type ChainC interface {
 	Execute(context.Context, ChainCExecuteRequest) (ChainCExecuteResponse, error)
 }
+type generatedChainCEndpoint struct{ implementation ChainC }
 
-func (c *ChainCClient) Execute(ctx context.Context, input ChainCExecuteRequest) (ChainCExecuteResponse, error) {
-	var output ChainCExecuteResponse
-	if c == nil || c.caller == nil {
-		return output, fmt.Errorf("service client has no caller")
+// NewChainCEndpoint adapts an implementation to the endpoint published under ChainCEndpoint.
+func NewChainCEndpoint(implementation ChainC) contract.Endpoint {
+	return &generatedChainCEndpoint{implementation: implementation}
+}
+func (e *generatedChainCEndpoint) Service() contract.Service { return ChainCService() }
+func (e *generatedChainCEndpoint) Call(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
+	switch method {
+	case "execute":
+		var input ChainCExecuteRequest
+		if err := json.Unmarshal(data, &input); err != nil {
+			return nil, err
+		}
+		output, err := e.implementation.Execute(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(output)
+	default:
+		return nil, contract.Fail(contract.Invalid, "unknown service method")
 	}
+}
+func (e *generatedChainCEndpoint) Stream(ctx context.Context, method string, data json.RawMessage) iter.Seq2[json.RawMessage, error] {
+	switch method {
+	default:
+		return contract.FailedStream(contract.Fail(contract.Invalid, "unknown streaming service method"))
+	}
+}
+
+type generatedChainCClient struct {
+	endpoint contract.Endpoint
+	local    ChainC
+}
+
+// NewChainCClient returns a typed client for endpoint. When the endpoint was made by
+// NewChainCEndpoint in this process, calls go straight to the implementation; data is
+// still validated on the way in and out.
+func NewChainCClient(endpoint contract.Endpoint) (ChainC, error) {
+	if endpoint == nil {
+		return nil, fmt.Errorf("service client requires an endpoint")
+	}
+	if provided := endpoint.Service(); provided.Name != "chain.c" || provided.Major != 1 {
+		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for chain.c@1")
+	}
+	client := &generatedChainCClient{endpoint: endpoint}
+	if local, ok := endpoint.(*generatedChainCEndpoint); ok {
+		client.local = local.implementation
+	}
+	return client, nil
+}
+func (c *generatedChainCClient) Execute(ctx context.Context, input ChainCExecuteRequest) (ChainCExecuteResponse, error) {
+	var output ChainCExecuteResponse
 	data, err := json.Marshal(input)
 	if err != nil {
 		return output, err
 	}
-	request, err := json.Marshal(struct {
-		Method string          `json:"method"`
-		Input  json.RawMessage `json:"input"`
-	}{Method: "execute", Input: data})
-	if err != nil {
-		return output, err
+	if c.local != nil {
+		result, err := c.local.Execute(ctx, input)
+		if err != nil {
+			return output, err
+		}
+		if _, err := json.Marshal(result); err != nil {
+			return output, err
+		}
+		return result, nil
 	}
-	response, err := c.caller.Call(ctx, c.consumer.Requirement, request)
+	response, err := c.endpoint.Call(ctx, "execute", data)
 	if err != nil {
 		return output, err
 	}
@@ -1291,39 +1339,4 @@ func (c *ChainCClient) Execute(ctx context.Context, input ChainCExecuteRequest) 
 		return output, err
 	}
 	return output, nil
-}
-func RegisterChainCServer(registrar contract.Registrar, implementation ChainCServer) error {
-	if registrar == nil || implementation == nil {
-		return fmt.Errorf("service registration requires registrar and implementation")
-	}
-	return registrar.Provide(ChainCService(), func(ctx context.Context, data json.RawMessage) (json.RawMessage, error) {
-		var envelope struct {
-			Method string          `json:"method"`
-			Input  json.RawMessage `json:"input"`
-		}
-		if err := contract.Decode(data, &envelope); err != nil {
-			return nil, err
-		}
-		if envelope.Method == "" || len(envelope.Input) == 0 {
-			return nil, contract.Fail(contract.Invalid, "service envelope requires method and input")
-		}
-		switch envelope.Method {
-		case "execute":
-			var input ChainCExecuteRequest
-			if err := json.Unmarshal(envelope.Input, &input); err != nil {
-				return nil, err
-			}
-			output, err := implementation.Execute(ctx, input)
-			if err != nil {
-				return nil, err
-			}
-			response, err := json.Marshal(output)
-			if err != nil {
-				return nil, err
-			}
-			return response, nil
-		default:
-			return nil, contract.Fail(contract.Invalid, "unknown service method")
-		}
-	})
 }

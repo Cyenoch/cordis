@@ -46,7 +46,7 @@ cordis control -connection ./host-connection.json status counter
 策略文件支持严格 JSON、TOML、YAML，只在启动时读取。Go 宿主使用 `Options.Recovery`：
 
 ```go
-Recovery: map[string]cordis.RecoveryPolicy{
+Recovery: map[string]hosting.RecoveryPolicy{
     "counter": {MaxRetries: 3, InitialDelay: time.Second, MaxDelay: 10 * time.Second},
 },
 ```

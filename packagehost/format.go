@@ -112,7 +112,7 @@ func ValidateManifest(m contract.Manifest) error {
 	if err := ValidateVersion(m.Version); err != nil {
 		return err
 	}
-	if m.Protocol.Major != 1 || m.Protocol.MinMinor > m.Protocol.MaxMinor || m.Protocol.MinMinor > 0 {
+	if m.Protocol.Major != contract.ProtocolMajor || m.Protocol.MinMinor > m.Protocol.MaxMinor || m.Protocol.MinMinor > 0 {
 		return fmt.Errorf("unsupported session protocol %d [%d,%d]", m.Protocol.Major, m.Protocol.MinMinor, m.Protocol.MaxMinor)
 	}
 	if len(m.Definitions) == 0 {

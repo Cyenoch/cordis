@@ -34,6 +34,10 @@ func auditEndpoint(t *testing.T, limits Limits) (*Endpoint, net.Conn) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { e.Close(); b.Close(); e.Wait() })
+	// These tests exercise the frame layer on its own, past the handshake.
+	e.mu.Lock()
+	e.ready = true
+	e.mu.Unlock()
 	return e, b
 }
 
@@ -53,7 +57,7 @@ func TestCancellationHistoryRetainsUnansweredRequests(t *testing.T) {
 					continue
 				}
 				if f.Kind == "cancel" && f.ID != "h:1" {
-					if json.NewEncoder(peer).Encode(Frame{Schema: contract.SessionSchema, Kind: "response", Activation: "audit", ID: f.ID, Method: "health", Payload: json.RawMessage(`{}`)}) != nil {
+					if json.NewEncoder(peer).Encode(Frame{Schema: contract.SessionSchema, Kind: "response", Activation: "audit", ID: f.ID, Method: "ping", Payload: json.RawMessage(`{}`)}) != nil {
 						return
 					}
 				}
@@ -62,7 +66,7 @@ func TestCancellationHistoryRetainsUnansweredRequests(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan error, 1)
-			go func() { _, err := e.Call(ctx, "health", nil); done <- err }()
+			go func() { _, err := e.Call(ctx, "ping", nil); done <- err }()
 			<-requests
 			cancel()
 			if err := <-done; !errors.Is(err, context.Canceled) {
@@ -129,7 +133,7 @@ func TestCanceledParentChildInTransitKeepsSessionHealthy(t *testing.T) {
 		synctest.Wait()
 		close(gate.release)
 		synctest.Wait()
-		if _, err := host.Call(context.Background(), "health", nil); err != nil {
+		if _, err := host.Call(context.Background(), "ping", nil); err != nil {
 			t.Fatalf("cooperative bidirectional call killed session after parent cancellation: %v", err)
 		}
 	})
@@ -140,19 +144,19 @@ func TestSendAdmissionObservesEachDeadline(t *testing.T) {
 		e, peer := auditEndpoint(t, Limits{Inflight: 1, Grace: time.Second})
 		// Fill the response queue while the peer never reads from its pipe.
 		for i := 1; i <= 6; i++ {
-			auditWrite(t, peer, Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "audit", ID: fmt.Sprintf("g:%d", i), Method: "health", Payload: json.RawMessage(`{}`), DeadlineMS: 30000})
+			auditWrite(t, peer, Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "audit", ID: fmt.Sprintf("g:%d", i), Method: "ping", Payload: json.RawMessage(`{}`), DeadlineMS: 30000})
 			synctest.Wait()
 		}
 		longCtx, longCancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer longCancel()
 		longDone := make(chan error, 1)
-		go func() { _, err := e.Call(longCtx, "health", nil); longDone <- err }()
+		go func() { _, err := e.Call(longCtx, "ping", nil); longDone <- err }()
 		synctest.Wait()
 		const timeout = 100 * time.Millisecond
 		shortCtx, shortCancel := context.WithTimeout(t.Context(), timeout)
 		defer shortCancel()
 		start := time.Now()
-		if _, err := e.Call(shortCtx, "health", nil); !errors.Is(err, context.DeadlineExceeded) {
+		if _, err := e.Call(shortCtx, "ping", nil); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("short call: %v", err)
 		}
 		if elapsed := time.Since(start); elapsed != timeout {

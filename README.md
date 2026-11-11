@@ -2,7 +2,12 @@
 
 Go 的插件组合框架，参考 cordiverse/cordis 的组合语义。module 为 `github.com/Cyenoch/cordis`，MIT 许可。
 
-核心管理定义、实例、服务依赖、事件和资源生命周期；外部插件通过 native 进程运行。项目处于 alpha 阶段，API 和格式直接随设计收敛，不保留兼容包装或迁移胶水。
+仓库目前有两层，尚未合并：
+
+- **进程内内核**（根包 `cordis`）：只依赖标准库。插件在一个进程里组成实例树，用类型化的键交换普通的 Go 值，支持服务依赖与隔离、事件、中间件链、清理和配置更新。见[进程内内核](docs/kernel.md)，以及建在它上面的[配置文件加载器](docs/loader.md)、[日志服务](docs/logging.md)和[定时辅助](docs/timers.md)。
+- **Host 与 native 插件**（`hosting` 包）：管理签名包和持久实例，外部插件各自在 native 进程里运行，经 JSON 协议交换数据。下面的“使用”与“组合模型”描述这一层。
+
+把 Host 建立在内核上的计划见 [ROADMAP](ROADMAP.md)。项目处于 alpha 阶段，API 和格式直接随设计收敛，不保留兼容包装或迁移胶水。
 
 ## 使用
 
@@ -21,7 +26,7 @@ go build -o ./bin/cordis ./cmd/cordis
 宿主加载一个已签名的 native 包：
 
 ```go
-host, err := cordis.Open(cordis.Options{
+host, err := hosting.Open(hosting.Options{
     Directory: storeDirectory,
     Trust: trustPolicy,
 })
@@ -50,7 +55,7 @@ if err := instance.Wait(ctx); err != nil { return err }
 
 包管理只保存代码、配置意图和运行记录。授权、任务、业务存储、贡献和脱敏由应用实现。native 插件具有启动用户权限，签名证明来源与完整性；资源清理不会回滚业务副作用。
 
-可选 slog 记录生命周期和失败调用，状态及运行记录保留归属与退出摘要；`Host.Done()` 区分“关闭已完成”和“返回了历史错误”。本机控制和有限恢复见对应教程；无缝升级、市场、HMR 和跨进程 waterfall 不在当前范围。
+可选 slog 记录生命周期和失败调用，状态及运行记录保留归属与退出摘要；`Host.Done()` 区分“关闭已完成”和“返回了历史错误”。本机控制和有限恢复见对应教程；无缝升级、市场和 HMR 不在当前范围；跨进程的中间件链与流尚未实现。
 
 ## 验证
 
@@ -62,7 +67,7 @@ Windows 使用 `conformance/run.ps1`。脚本运行 integration/race 测试，�
 
 ## 文档
 
-[在线文档](https://cyenoch.github.io/cordis/) · [插件作者](docs/plugin-author.md) · [宿主接入](docs/host-guide.md) · [API](docs/api.md) · [CLI](docs/cli.md)
+[在线文档](https://cyenoch.github.io/cordis/) · [进程内内核](docs/kernel.md) · [插件作者](docs/plugin-author.md) · [宿主接入](docs/host-guide.md) · [API](docs/api.md) · [CLI](docs/cli.md)
 
 [发布插件](docs/plugin-release.md) · [多包开发](docs/multi-package-dev.md) · [本机控制](docs/local-control.md) · [故障恢复](docs/recovery.md)
 

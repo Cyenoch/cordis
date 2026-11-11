@@ -15,4 +15,4 @@
 
 `.github/workflows/conformance.yml` 在 Linux amd64/arm64、macOS amd64/arm64、Windows amd64 runner 上分别构建 native 并运行通用验收，另独立校验 portable schema 和 OpenSpec。配置 CI 不等于这些平台已经通过；实际运行证据仍写入 tasks。不要用交叉编译或单一宿主 race 声称五平台执行。
 
-聚焦变更可先运行 `go test -race ./wire ./internal/core ./sdk .`，收尾必须运行通用入口。typed 基准用 `go test -run '^$' -bench BenchmarkPublicTypedCall -benchmem .`；性能结果不作缺少场景依据的数字门禁。
+聚焦变更可先运行 `go test -race ./wire ./internal/core ./sdk ./hosting`，收尾必须运行通用入口。typed 基准用 `go test -run '^$' -bench BenchmarkPublicTypedCall -benchmem ./hosting`；性能结果不作缺少场景依据的数字门禁。

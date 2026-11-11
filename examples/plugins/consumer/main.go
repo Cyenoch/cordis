@@ -7,26 +7,31 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/sdk"
 )
 
 func main() {
-	if err := sdk.Run(context.Background(), NewMainDefinition(start)); err != nil {
+	if err := sdk.Run(context.Background(), sdk.Define(MainPlugin(start))); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func start(_ context.Context, scope contract.Scope, config MainConfig) error {
+func start(_ context.Context, s *cordis.Scope, config MainConfig) error {
 	if !filepath.IsAbs(config.Output) {
 		return fmt.Errorf("output must be an absolute path outside the watched source")
 	}
-	client, err := NewExampleMessageClient(scope, MainMessageConsumer())
+	// The plugin requires the message service, so it is here before Start runs.
+	endpoint, err := ExampleMessageEndpoint.Get(s)
 	if err != nil {
 		return err
 	}
-	return contract.Go(scope, func(ctx context.Context) error {
+	client, err := NewExampleMessageClient(endpoint)
+	if err != nil {
+		return err
+	}
+	s.Go(func(ctx context.Context) error {
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -47,4 +52,5 @@ func start(_ context.Context, scope contract.Scope, config MainConfig) error {
 			}
 		}
 	})
+	return nil
 }

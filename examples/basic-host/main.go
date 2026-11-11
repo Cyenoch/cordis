@@ -13,9 +13,9 @@ import (
 	"runtime"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/examples/pluginmeta"
+	"github.com/Cyenoch/cordis/hosting"
 	"github.com/Cyenoch/cordis/packagehost"
 )
 
@@ -75,7 +75,7 @@ func run(artifact string) (result error) {
 		Publishers: map[string][]string{manifest.Publisher: {manifest.ID}},
 	}
 	// Each Host owns its service registry. Separate hosts can provide the same key.
-	hosts := make([]*cordis.Host, 0, 2)
+	hosts := make([]*hosting.Host, 0, 2)
 	defer func() {
 		for _, host := range hosts {
 			closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
@@ -85,7 +85,7 @@ func run(artifact string) (result error) {
 	}()
 	instances := make([]contract.Instance, 0, 2)
 	for index, initial := range []int{10, 100} {
-		host, err := cordis.Open(cordis.Options{Directory: filepath.Join(root, fmt.Sprint(index)), Trust: trust})
+		host, err := hosting.Open(hosting.Options{Directory: filepath.Join(root, fmt.Sprint(index)), Trust: trust})
 		if err != nil {
 			return err
 		}
@@ -128,9 +128,9 @@ func run(artifact string) (result error) {
 	return nil
 }
 
-func expect(ctx context.Context, host *cordis.Host, operation string, delta, want int) error {
-	input := json.RawMessage(fmt.Sprintf(`{"method":"execute","input":{"operation":%q,"delta":%d}}`, operation, delta))
-	data, err := host.Call(ctx, contract.Requirement{Name: "example.counter", Major: 1}, input)
+func expect(ctx context.Context, host *hosting.Host, operation string, delta, want int) error {
+	input := json.RawMessage(fmt.Sprintf(`{"operation":%q,"delta":%d}`, operation, delta))
+	data, err := host.Call(ctx, contract.Requirement{Name: "example.counter", Major: 1}, "execute", input)
 	if err != nil {
 		return err
 	}

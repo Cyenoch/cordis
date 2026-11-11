@@ -240,7 +240,7 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 			if got := string(call(t, session, "stderr", nil)); got != "true" {
 				t.Fatalf("stderr write did not finish: %s", got)
 			}
-			if got := string(call(t, session, "health", nil)); got != `{"healthy":true}` {
+			if got := string(call(t, session, "ping", nil)); got != `{"healthy":true}` {
 				t.Fatalf("stderr limit damaged activation: %s", got)
 			}
 		}
@@ -254,7 +254,7 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 	t.Run("stderr-without-sink-keeps-draining", func(t *testing.T) {
 		session := start(t)
 		call(t, session, "stderr", nil)
-		call(t, session, "health", nil)
+		call(t, session, "ping", nil)
 		if err := session.Close(); err != nil {
 			t.Fatal(err)
 		}
@@ -267,7 +267,7 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 		})
 		// More than a pipe's capacity must drain even after forwarding fails.
 		call(t, session, "stderr", nil)
-		call(t, session, "health", nil)
+		call(t, session, "ping", nil)
 		if err := session.Close(); !errors.Is(err, broken) {
 			t.Fatalf("sink failure hidden: %v", err)
 		}

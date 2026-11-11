@@ -53,7 +53,7 @@ func TestOversizedResponseIsolatesCall(t *testing.T) {
 				if err := <-sibling; err != nil {
 					t.Fatalf("unrelated call: %v", err)
 				}
-				if _, err := caller.Call(t.Context(), "health", nil); err != nil {
+				if _, err := caller.Call(t.Context(), "ping", nil); err != nil {
 					t.Fatalf("subsequent call: %v", err)
 				}
 				if responder.Err() != nil || responder.Identity().Activation != "sample" {
@@ -131,7 +131,7 @@ func TestCanceledOversizedResultDoesNotReplaceCancellation(t *testing.T) {
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation overwritten: %v", err)
 	}
-	if _, err := host.Call(t.Context(), "health", nil); err != nil {
+	if _, err := host.Call(t.Context(), "ping", nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -145,7 +145,7 @@ func TestUnencodableFixedErrorIsFatal(t *testing.T) {
 }
 
 func TestOversizedControlResponsesRemainFatal(t *testing.T) {
-	for _, method := range []string{"initialize", "health", "shutdown", "activation.publish", "activation.retire", "event.subscribe", "event.unsubscribe"} {
+	for _, method := range []string{"initialize", "shutdown", "event.subscribe", "event.unsubscribe", "chain.use", "chain.unuse"} {
 		t.Run(method, func(t *testing.T) {
 			handler := func(_ context.Context, called string, _ json.RawMessage) (json.RawMessage, error) {
 				if called == method {

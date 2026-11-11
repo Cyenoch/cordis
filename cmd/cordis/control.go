@@ -15,8 +15,8 @@ import (
 	"strconv"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/hosting"
 )
 
 const controlPath = "/v1/control"
@@ -41,7 +41,7 @@ type controlSnapshot struct {
 	Online    bool                    `json:"online"`
 	Entries   []contract.Entry        `json:"entries"`
 	Instances []contract.InstanceInfo `json:"instances"`
-	Recovery  []cordis.RecoveryInfo   `json:"recovery"`
+	Recovery  []hosting.RecoveryInfo  `json:"recovery"`
 }
 
 type controlResponse struct {

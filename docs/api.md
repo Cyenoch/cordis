@@ -7,7 +7,11 @@ description: 当前公开入口与职责。
 
 | 包 | 主要入口 |
 |---|---|
-| `cordis` | `Open`、`Host.AddBuiltin`、`Install`、`Select`、`Enable`、`Call`、`Caller`、`Emit`、`Close` |
+| `cordis` | 进程内内核：`New`、`Plugin[C]`、`Instance[C]`、`Scope`、`Service[T]`、`Event[T]`、`Query`、`Chain`、`Setting[O]`，见[进程内内核](kernel.md) |
+| `logging` | 日志插件：`Plugin`、`Service`、`Get`、`Name`、`Level`、`Provider.AddHandler`、`Recent`，见[日志服务](logging.md) |
+| `loader` | 配置文件加载器：`Registry`、`Register`、`Default`、`RegisterSetting`、`Plugin`、`Service`、`Ready`、`Loader` 的 `Create`/`Update`/`Remove`/`Move`/`Reload`/`Wait`/`Entries`、`EntryOf`、`Changed`，见[配置文件加载器](loader.md) |
+| `timer` | `AfterFunc`、`Every`、`Sleep`、`Ticks`、`Throttle`、`Debounce`，见[定时辅助](timers.md) |
+| `hosting` | `Open`、`Host.AddBuiltin`、`Install`、`Select`、`Enable`、`Call`、`Caller`、`Emit`、`Close` |
 | `contract` | `Definition`、`Entry`、`Scope`、`Instance`、服务与事件类型 |
 | `sdk` | `Run`、类型化 `Provide` / `Call`，以及显式流测试入口 `RunTransport` |
 | `schema` | 声明解析、配置验证、服务与配置生成、编辑器 schema 导出 |
@@ -68,7 +72,7 @@ Host 的 `Instance(id)` 和 `Instances()` 返回当前登记。持久控制、�
 
 ## 诊断与关闭完成
 
-`cordis.Options.Logger` 和 `packagehost.Options.Logger` 接受可选 `*slog.Logger`；nil 保持静默。handler 在状态锁外同步执行，必须及时返回，不得重入管理或关闭方法。框架记录生命周期、启动耗时、失败调用和包操作结果，不默认复制配置或调用输入输出。用户错误文本可能包含业务数据，框架不自动脱敏。
+`hosting.Options.Logger` 和 `packagehost.Options.Logger` 接受可选 `*slog.Logger`；nil 保持静默。handler 在状态锁外同步执行，必须及时返回，不得重入管理或关闭方法。框架记录生命周期、启动耗时、失败调用和包操作结果，不默认复制配置或调用输入输出。用户错误文本可能包含业务数据，框架不自动脱敏。
 
 `Status.Outcome` 与 `RunRecord.Outcome` 使用 `contract.Outcome`：Reason、可选 ExitCode/Signal、Forced、StartupDuration，以及分开的 FailureCode/CleanupCode。未知业务错误码归为 PluginFailed，原错误链保留在当次返回值和日志。Status 在终态仍保留最近 activation 身份；历史记录只保存固定结构结果，不保存原始错误文本或栈。
 

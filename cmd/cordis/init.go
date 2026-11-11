@@ -94,22 +94,24 @@ const scaffoldMain = `package main
 
 import (
 	"context"
-"fmt"
-"os"
+	"fmt"
+	"os"
 
-	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/sdk"
 )
 
-func start(ctx context.Context, scope contract.Scope, config MainConfig) error {
+// start runs when the entry starts. Register cleanups, background work and
+// the services the plugin provides on s; they end with the entry.
+func start(ctx context.Context, s *cordis.Scope, config MainConfig) error {
 	return nil
 }
 
 func main() {
-	if err := sdk.Run(context.Background(), NewMainDefinition(start)); err != nil {
- fmt.Fprintln(os.Stderr, err)
- os.Exit(1)
- }
+	if err := sdk.Run(context.Background(), sdk.Define(MainPlugin(start))); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
 `
 
@@ -121,10 +123,11 @@ import (
 	"time"
 
 	"github.com/Cyenoch/cordis/plugintest"
+	"github.com/Cyenoch/cordis/sdk"
 )
 
 func TestStart(t *testing.T) {
-	harness, err := plugintest.New(t.Context(), NewMainDefinition(start), plugintest.Options{})
+	harness, err := plugintest.Start(t.Context(), MainDefinitionSpec(), sdk.Define(MainPlugin(start)), plugintest.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

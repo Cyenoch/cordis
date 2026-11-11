@@ -1,0 +1,22 @@
+# 应用的插件。
+plugins:
+  - id: greeter
+    plugin: greeter
+    config:
+      greeting: hello # 运行期会被改掉
+
+  - id: shout
+    plugin: shout
+
+  # 这个分组有自己的 greeter，组内的 shout 绑定它。
+  - id: tenant
+    isolate:
+      greeter: true
+    plugins:
+      - plugin: greeter
+        config:
+          greeting: hola
+      - id: tenant-shout
+        plugin: shout
+        settings:
+          logger: DEBUG

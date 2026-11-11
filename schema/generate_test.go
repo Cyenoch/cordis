@@ -43,7 +43,7 @@ func TestGenerateRejectsInvalidDeclarations(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct{ name, document, packageName string }{
 		{"unknown definition field", `{"schema":"cordis-go.contract/v1","services":[],"reflect":true}`, "echo"},
-		{"unknown method field", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","version":1,"methods":[{"name":"echo","request":{"type":"string"},"response":{"type":"string"},"stream":true}]}]}`, "echo"},
+		{"unknown method field", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","version":1,"methods":[{"name":"echo","request":{"type":"string"},"response":{"type":"string"},"retries":3}]}]}`, "echo"},
 		{"unsupported data field", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","version":1,"methods":[{"name":"echo","request":{"type":"string","goType":"any"},"response":{"type":"string"}}]}]}`, "echo"},
 		{"package keyword", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","version":1,"methods":[{"name":"echo","request":{"type":"string"},"response":{"type":"string"}}]}]}`, "type"},
 		{"field collision", `{"schema":"cordis-go.contract/v1","services":[{"name":"echo","version":1,"methods":[{"name":"echo","request":{"type":"object","properties":{"x-y":{"type":"string"},"x_y":{"type":"string"}}},"response":{"type":"string"}}]}]}`, "echo"},

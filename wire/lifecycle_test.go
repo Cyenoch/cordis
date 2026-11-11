@@ -90,8 +90,10 @@ func TestAnsweredCancellationDoesNotExpireHealthyEndpoint(t *testing.T) {
 		}
 		time.Sleep(2 * grace)
 		synctest.Wait()
-		if _, err := endpoint.Call(t.Context(), "health", json.RawMessage(`{}`)); err != nil {
-			t.Fatalf("already answered cancellation killed the endpoint: %v", err)
+		select {
+		case <-endpoint.Done():
+			t.Fatalf("already answered cancellation killed the endpoint: %v", endpoint.Err())
+		default:
 		}
 		endpoint.Close()
 		<-peerDone

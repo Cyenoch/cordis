@@ -14,24 +14,10 @@ type Child struct {
 	Isolate    []string        `json:"isolate,omitempty"`
 }
 
-type ChildScope interface {
-	CreateChild(context.Context, Child) (ChildInstance, error)
-}
-
 // ChildInstance exposes an explicit refresh because remote status is a snapshot.
 type ChildInstance interface {
 	Instance
 	Refresh(context.Context) (Status, error)
-}
-
-// CreateChild registers without waiting for activation: a parent must publish
-// before any of its children can start. Wait only after initialization returns.
-func CreateChild(ctx context.Context, scope Scope, child Child) (ChildInstance, error) {
-	creator, ok := scope.(ChildScope)
-	if !ok {
-		return nil, Fail(Incompatible, "scope does not support child instances")
-	}
-	return creator.CreateChild(ctx, child)
 }
 
 type ChildRequest struct {

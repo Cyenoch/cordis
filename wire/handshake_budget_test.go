@@ -69,7 +69,7 @@ func TestGuestUsesRawBootstrapLengthAndBoundNextFrame(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { guest.Close(); right.Close(); guest.Wait() })
-			input := json.RawMessage(`{"frameBytes":4096,"identity":{"activation":"a"},"protocol":{"major":1},"definition":"test","config":{}}`)
+			input := json.RawMessage(`{"frameBytes":4096,"identity":{"activation":"a"},"protocol":{"major":1},"definition":"test","config":{},"services":[],"features":[],"provides":[]}`)
 			first, err := encodeFrame(Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "a", ID: "h:1", Method: "initialize", DeadlineMS: 1000, Payload: input}, contract.MaxFrameBytes)
 			if err != nil {
 				t.Fatal(err)
@@ -256,7 +256,7 @@ func TestBootstrapAndRepeatedInitializeAreNotFallbacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { guest.Close(); left.Close(); guest.Wait() })
-	if _, err := guest.Call(t.Context(), "health", nil); err == nil {
+	if _, err := guest.Call(t.Context(), "ping", nil); err == nil {
 		t.Fatal("guest sent before a budget was bound")
 	}
 	if _, err := New(Options{Transport: left, Identity: contract.Identity{Activation: "a"}, Handler: auditHandler}); err == nil {
@@ -266,7 +266,7 @@ func TestBootstrapAndRepeatedInitializeAreNotFallbacks(t *testing.T) {
 	if _, err := host.Call(t.Context(), "initialize", testInitialize("sample")); err == nil {
 		t.Fatal("repeated initialization succeeded")
 	}
-	if _, err := host.Call(t.Context(), "health", nil); err != nil {
+	if _, err := host.Call(t.Context(), "ping", nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -319,7 +319,7 @@ func TestLocalOversizedRequestDoesNotInvokePeer(t *testing.T) {
 	if _, ok := errors.AsType[*frameSizeError](err); !ok || calls.Load() != 0 {
 		t.Fatalf("local size rejection: %v, handled=%d", err, calls.Load())
 	}
-	if _, err := host.Call(t.Context(), "health", nil); err != nil {
+	if _, err := host.Call(t.Context(), "ping", nil); err != nil {
 		t.Fatal(err)
 	}
 }

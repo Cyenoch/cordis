@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -23,7 +24,33 @@ func (e *UnknownFieldError) Error() string {
 	return fmt.Sprintf("unknown contract field %q", e.Field)
 }
 
+// PathError locates a decoding failure by JSON Pointer; the empty pointer is
+// the root. Unwrap yields the failure itself.
+type PathError struct {
+	Path string
+	Err  error
+}
+
+func (e *PathError) Error() string {
+	if e.Path == "" {
+		return e.Err.Error()
+	}
+	return e.Path + ": " + e.Err.Error()
+}
+
+func (e *PathError) Unwrap() error { return e.Err }
+
+// under prefixes the location of err with one more path segment.
+func under(segment string, err error) error {
+	segment = "/" + strings.ReplaceAll(strings.ReplaceAll(segment, "~", "~0"), "/", "~1")
+	if located, ok := err.(*PathError); ok {
+		return &PathError{Path: segment + located.Path, Err: located.Err}
+	}
+	return &PathError{Path: segment, Err: err}
+}
+
 // Decode rejects duplicate keys, unknown fields, deep values and trailing data.
+// A failure inside the value is a *PathError.
 func Decode(data []byte, target any) error {
 	return DecodeWithLimits(data, target, 32, 10000)
 }
@@ -167,13 +194,13 @@ func checkValue(dec *json.Decoder, t reflect.Type, depth, maxDepth, maxArray int
 			if t != nil && t.Kind() == reflect.Struct {
 				child = jsonFields(t)[name]
 				if child == nil {
-					return &UnknownFieldError{Field: name}
+					return under(name, &UnknownFieldError{Field: name})
 				}
 			} else if t != nil && t.Kind() == reflect.Map {
 				child = t.Elem()
 			}
 			if err := checkValue(dec, child, depth+1, maxDepth, maxArray, strictContainers); err != nil {
-				return err
+				return under(name, err)
 			}
 		}
 	case '[':
@@ -188,7 +215,7 @@ func checkValue(dec *json.Decoder, t reflect.Type, depth, maxDepth, maxArray int
 				return Fail(Invalid, "JSON array limit exceeded")
 			}
 			if err := checkValue(dec, child, depth+1, maxDepth, maxArray, strictContainers); err != nil {
-				return err
+				return under(strconv.Itoa(count-1), err)
 			}
 		}
 		if t != nil && t.Kind() == reflect.Array && count != t.Len() {

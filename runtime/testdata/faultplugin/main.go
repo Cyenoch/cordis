@@ -58,7 +58,7 @@ func main() {
 				panic(err)
 			}
 			value = map[string]any{"frameBytes": input.FrameBytes, "minor": 0, "features": []any{}, "services": []any{}}
-		case "health":
+		case "ping":
 			value = map[string]bool{"healthy": true}
 		case "stubborn":
 			signal.Ignore(syscall.SIGTERM)

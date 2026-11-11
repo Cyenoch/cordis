@@ -44,7 +44,7 @@ func pair(t *testing.T, host Handler, guest Handler) (*Endpoint, *Endpoint) {
 }
 
 func testInitialize(activation string) json.RawMessage {
-	data, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Identity: contract.Identity{Activation: activation}, Protocol: contract.Protocol{Major: 1}, Definition: "test", Config: json.RawMessage(`{}`)})
+	data, err := json.Marshal(contract.Initialize{FrameBytes: contract.MaxFrameBytes, Identity: contract.Identity{Activation: activation}, Protocol: contract.Protocol{Major: 1}, Definition: "test", Config: json.RawMessage(`{}`), Services: []contract.Service{}, Features: []string{}, Provides: []contract.Service{}})
 	if err != nil {
 		panic(err)
 	}
@@ -90,7 +90,7 @@ func TestEndpointBidirectionalCalls(t *testing.T) {
 func TestEndpointCancellationDiscardsLateResult(t *testing.T) {
 	entered := make(chan struct{})
 	guest := func(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
-		if method == "initialize" || method == "health" {
+		if method == "initialize" || method == "ping" {
 			return json.RawMessage(`{}`), nil
 		}
 		close(entered)
@@ -106,7 +106,7 @@ func TestEndpointCancellationDiscardsLateResult(t *testing.T) {
 	if err := <-result; !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel result: %v", err)
 	}
-	if _, err := h.Call(t.Context(), "health", json.RawMessage(`{}`)); err != nil {
+	if _, err := h.Call(t.Context(), "ping", json.RawMessage(`{}`)); err != nil {
 		t.Fatalf("cooperative cancellation broke healthy session: %v", err)
 	}
 }
@@ -135,6 +135,7 @@ func TestEndpointRejectsReplayedRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	past(e)
 	defer func() {
 		if err := b.Close(); err != nil {
 			t.Error(err)
@@ -142,7 +143,7 @@ func TestEndpointRejectsReplayedRequest(t *testing.T) {
 		e.Close()
 		e.Wait()
 	}()
-	frame := Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "a", ID: "g:1", Method: "health", Payload: json.RawMessage(`{}`), DeadlineMS: 1000}
+	frame := Frame{Schema: contract.SessionSchema, Kind: "request", Activation: "a", ID: "g:1", Method: "ping", Payload: json.RawMessage(`{}`), DeadlineMS: 1000}
 	data, err := encodeFrame(frame, 1024)
 	if err != nil {
 		t.Fatal(err)

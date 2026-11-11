@@ -1,11 +1,11 @@
 ---
 title: 快速开始
-description: 从 TOML 声明生成独立插件，完成构建、调试和签名包前台运行。
+description: 从 TOML 声明生成独立插件，完成构建、调用、持续开发和签名包前台运行。
 ---
 
 # 快速开始
 
-从一份 TOML 作者声明生成配置、Start 包装和服务描述，业务只写 Go。以下使用包含本轮功能的本地 Cordis 检出；目前尚无发布版本，不使用 `@latest` 或虚构的 SDK 版本。
+本页用一份 TOML 声明生成配置类型、插件构造函数和服务端点，业务只写 Go，随后构建、调用、持续开发并以签名包运行。依赖使用本地 Cordis 检出；项目尚未发布，没有 `@latest` 或可下载的 SDK 版本。
 
 ## 准备工具
 
@@ -69,7 +69,7 @@ import (
     "fmt"
     "os"
 
-    "github.com/Cyenoch/cordis/contract"
+    "github.com/Cyenoch/cordis"
     "github.com/Cyenoch/cordis/sdk"
 )
 
@@ -79,23 +79,23 @@ func (e echo) Echo(_ context.Context, input ExampleEchoEchoRequest) (ExampleEcho
     return ExampleEchoEchoResponse{Text: e.prefix + input.Text}, nil
 }
 
-func start(_ context.Context, scope contract.Scope, config MainConfig) error {
+func start(_ context.Context, s *cordis.Scope, config MainConfig) error {
     prefix := "hello, "
     if config.Prefix.Present {
         prefix = config.Prefix.Value
     }
-    return RegisterExampleEchoServer(scope, echo{prefix: prefix})
+    return ExampleEchoEndpoint.Provide(s, NewExampleEchoEndpoint(echo{prefix: prefix}))
 }
 
 func main() {
-    if err := sdk.Run(context.Background(), NewMainDefinition(start)); err != nil {
+    if err := sdk.Run(context.Background(), sdk.Define(MainPlugin(start))); err != nil {
         fmt.Fprintln(os.Stderr, err)
         os.Exit(1)
     }
 }
 ```
 
-配置校验和解码由生成的 `MainConfig` / `NewMainDefinition` 完成；`sdk.Run` 处理协议、信号和清理，错误交给 main，stdout 留给协议。
+配置校验和解码由生成的 `MainConfig` 与 `MainPlugin` 完成；`start` 收到的 `*cordis.Scope` 与[进程内内核](kernel.md)里的相同，清理、后台工作和服务都登记在它上面。`sdk.Run` 处理协议、信号和清理，错误交给 main，stdout 留给协议。服务方法可能被并发调用，实现需要自行保证并发安全。
 
 ## 构建、测试、打包
 
@@ -189,4 +189,4 @@ Ctrl+C 退出后再查询：
 - [插件作者](plugin-author.md)、[宿主接入](host-guide.md)：运行 native 插件和可靠关闭。
 - [数据契约](contracts.md)、[生成服务](generated-service.md)：配置类型、服务范围和编辑器 schema。
 
-仓库示例 counter 与 chain 各自使用独立 module。`go generate ./examples/pluginmeta` 同时更新示例契约与 Host 元数据；`bash conformance/run.sh` 验证真实 native 进程，Windows 使用 `conformance/run.ps1`。
+仓库示例 `examples/plugins` 下的每个插件各自是独立 module。`go generate ./examples/pluginmeta` 同时更新示例契约与 Host 元数据；`bash conformance/run.sh` 验证真实 native 进程，Windows 使用 `conformance/run.ps1`。

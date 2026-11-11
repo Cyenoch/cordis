@@ -11,6 +11,7 @@ try {
     Run-Go test -tags=integration -race ./... -timeout 5m
     Run-Go build -o "$work/basic-host.exe" ./examples/basic-host
     Run-Go build -o "$work/lifecycle-smoke.exe" ./conformance/cmd/lifecycle-smoke
+    Run-Go build -o "$work/stream-smoke.exe" ./conformance/cmd/stream-smoke
     Push-Location examples/plugins/counter
     try {
         Run-Go build -o "$work/counter.exe" .
@@ -20,10 +21,16 @@ try {
         Run-Go build -o "$work/chain.exe" .
         Run-Go build -ldflags '-X main.rejectInitialization=true' -o "$work/chain-bad.exe" .
     } finally { Pop-Location }
+    Push-Location examples/plugins/feed
+    try {
+        Run-Go build -o "$work/feed.exe" .
+    } finally { Pop-Location }
     & "$work/basic-host.exe" -native "$work/counter.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Basic host smoke failed' }
     & "$work/lifecycle-smoke.exe" -guest "$work/chain.exe" -bad-guest "$work/chain-bad.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Native lifecycle smoke failed' }
+    & "$work/stream-smoke.exe" -guest "$work/feed.exe"
+    if ($LASTEXITCODE -ne 0) { throw 'Native stream smoke failed' }
     Write-Output 'Full Windows acceptance passed.'
 } finally {
     # Windows can retain an exited executable image briefly after Wait returns.

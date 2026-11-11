@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/examples/pluginmeta"
+	"github.com/Cyenoch/cordis/hosting"
 	"github.com/Cyenoch/cordis/packagehost"
 )
 
@@ -256,16 +256,16 @@ func TestNativeRecoveryAndOnlineManualRetry(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	options := cordis.Options{Directory: directory, Trust: trust, Recovery: map[string]cordis.RecoveryPolicy{
+	options := hosting.Options{Directory: directory, Trust: trust, Recovery: map[string]hosting.RecoveryPolicy{
 		"target":  {MaxRetries: 2, InitialDelay: 100 * time.Millisecond, MaxDelay: 150 * time.Millisecond},
 		"waiting": {MaxRetries: 1, InitialDelay: 10 * time.Millisecond, MaxDelay: 10 * time.Millisecond},
 	}}
-	h, err := cordis.Open(options)
+	h, err := hosting.Open(options)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = closeHost(h, 5*time.Second) })
-	restore := func(host *cordis.Host) {
+	restore := func(host *hosting.Host) {
 		t.Helper()
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -291,26 +291,26 @@ func TestNativeRecoveryAndOnlineManualRetry(t *testing.T) {
 	healthy, _ := h.Status("healthy")
 	caller, _ := h.Caller("target")
 	required := contract.Requirement{Name: "chain.a", Major: 1, MinMinor: 2, MaxMinor: 2}
-	if _, err := caller.Call(t.Context(), required, json.RawMessage(`{"method":"execute","input":{"operation":"stats"}}`)); err != nil {
+	if _, err := caller.Call(t.Context(), required, "execute", json.RawMessage(`{"operation":"stats"}`)); err != nil {
 		t.Fatalf("fixture service is not reachable: %v", err)
 	}
 	for n := 0; n < 3; n++ {
 		current, _ := h.Status("target")
-		_, err := caller.Call(t.Context(), required, json.RawMessage(`{"method":"execute","input":{"operation":"crash"}}`))
+		_, err := caller.Call(t.Context(), required, "execute", json.RawMessage(`{"operation":"crash"}`))
 		if err == nil {
 			t.Fatal("crash call succeeded")
 		}
 		if n < 2 {
 			until(t, func() bool {
 				status, _ := h.Status("target")
-				if h.RecoveryStatus()[0].State == cordis.RecoveryCleanupFailed {
+				if h.RecoveryStatus()[0].State == hosting.RecoveryCleanupFailed {
 					t.Fatalf("crash cleanup failed: %+v", status)
 				}
 				return status.State == contract.Active && status.Identity != current.Identity
 			})
 		}
 	}
-	until(t, func() bool { return h.RecoveryStatus()[0].State == cordis.RecoveryExhausted })
+	until(t, func() bool { return h.RecoveryStatus()[0].State == hosting.RecoveryExhausted })
 	response, err := requestControl(t.Context(), s.connection, "status", "target", time.Second)
 	if err != nil || response.Status == nil || response.Status.Recovery[0].Used != 2 ||
 		response.Status.Instances[0].Status.Outcome.ExitCode == nil || *response.Status.Instances[0].Status.Outcome.ExitCode != 7 {
@@ -323,11 +323,11 @@ func TestNativeRecoveryAndOnlineManualRetry(t *testing.T) {
 	if after, _ := h.Status("healthy"); after.Identity != healthy.Identity || after.State != contract.Active {
 		t.Fatal("recovery restarted an unrelated instance")
 	}
-	if waiting := h.RecoveryStatus()[1]; waiting.Used != 0 || waiting.State != cordis.RecoveryIdle || waiting.NextRetryAt != nil {
+	if waiting := h.RecoveryStatus()[1]; waiting.Used != 0 || waiting.State != hosting.RecoveryIdle || waiting.NextRetryAt != nil {
 		t.Fatalf("Waiting entry consumed recovery budget: %+v", waiting)
 	}
 	identity, _ := h.Status("target")
-	_, err = caller.Call(t.Context(), required, json.RawMessage(`{"method":"execute","input":{"operation":"unknown"}}`))
+	_, err = caller.Call(t.Context(), required, "execute", json.RawMessage(`{"operation":"unknown"}`))
 	if err == nil {
 		t.Fatal("expected ordinary business error")
 	}
@@ -341,7 +341,7 @@ func TestNativeRecoveryAndOnlineManualRetry(t *testing.T) {
 	if err := closeHost(h, 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := cordis.Open(options)
+	reopened, err := hosting.Open(options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,10 +356,10 @@ func TestNativeRecoveryAndOnlineManualRetry(t *testing.T) {
 	}
 	until(t, func() bool {
 		info := reopened.RecoveryStatus()[0]
-		if info.State == cordis.RecoveryCleanupFailed {
+		if info.State == hosting.RecoveryCleanupFailed {
 			t.Fatalf("clean initialization failure blocked recovery: %+v", target.Status())
 		}
-		return info.State == cordis.RecoveryExhausted
+		return info.State == hosting.RecoveryExhausted
 	})
 	if info := reopened.RecoveryStatus()[0]; info.Used != 2 || target.Status().Outcome.CleanupCode != "" {
 		t.Fatalf("native initialization budget/cleanup: %+v %+v", info, target.Status())

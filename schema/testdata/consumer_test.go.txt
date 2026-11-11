@@ -10,15 +10,16 @@ import (
     "github.com/Cyenoch/cordis/schema"
 )
 
-type localScope struct { handler contract.Handler }
-func (s *localScope) Provide(service contract.Service,handler contract.Handler) error {
-    if service.Name != "example.echo" || service.Major != 1 { return contract.Fail(contract.Invalid,"wrong service registration") }
-    s.handler = handler
-    return nil
-}
-func (s *localScope) Call(ctx context.Context,requirement contract.Requirement,input json.RawMessage) (json.RawMessage,error) {
-    if requirement.Name != "example.echo" || requirement.Major != 1 || requirement.MinMinor!=1 || requirement.MaxMinor!=3 { return nil,contract.Fail(contract.Invalid,"wrong requirement") }
-    if !requirement.Accepts(contract.Service{Name:"example.echo",Major:1,Minor:2}) { return nil,contract.Fail(contract.Incompatible,"provider minor mismatch") };return s.handler(ctx,input)
+// remote hides the generated endpoint type, so the client takes the encoded
+// path it uses across a process boundary.
+type remote struct{ contract.Endpoint }
+
+func clients(t *testing.T) (direct, encoded ExampleEcho, endpoint contract.Endpoint) {
+    t.Helper()
+    endpoint = NewExampleEchoEndpoint(implementation{})
+    direct,err := NewExampleEchoClient(endpoint); if err != nil { t.Fatal(err) }
+    encoded,err = NewExampleEchoClient(remote{endpoint}); if err != nil { t.Fatal(err) }
+    return direct,encoded,endpoint
 }
 
 type implementation struct{}
@@ -33,9 +34,7 @@ func (implementation) Choose(ctx context.Context,input ExampleEchoChooseRequest)
 }
 
 func TestGeneratedTypedRoundTrip(t *testing.T) {
-    scope := &localScope{}
-    if err := RegisterExampleEchoServer(scope,implementation{}); err != nil { t.Fatal(err) }
-    client,err := NewExampleEchoClient(scope, ExampleEchoConsumer(1,3)); if err != nil { t.Fatal(err) }
+    direct,client,_ := clients(t)
     input := ExampleEchoEchoRequest{
         Text: "hi",
         Sequence: schema.Int64(9223372036854775807),
@@ -46,6 +45,8 @@ func TestGeneratedTypedRoundTrip(t *testing.T) {
     response,err := client.Echo(context.Background(),input)
     if err != nil { t.Fatal(err) }
     if response.Text != "hihi" || response.Sequence != 9223372036854775807 { t.Fatalf("wrong response: %+v",response) }
+    same,err := direct.Echo(context.Background(),input)
+    if err != nil || same.Text != response.Text || same.Sequence != response.Sequence { t.Fatalf("in-process path differs: %+v %v",same,err) }
     encoded,err := json.Marshal(input)
     if err != nil { t.Fatal(err) }
     var wire map[string]json.RawMessage
@@ -62,39 +63,36 @@ func TestGeneratedTypedRoundTrip(t *testing.T) {
     if _,exists := wire["repeat"]; exists { t.Fatal("absent optional field was serialized") }
     input.Repeat = schema.Some(json.Number("0"))
     if _,err := client.Echo(context.Background(),input); err == nil { t.Fatal("client sent invalid range") }
+    if _,err := direct.Echo(context.Background(),input); err == nil { t.Fatal("in-process path skipped input validation") }
 }
 
 func TestGeneratedUnionAndStrictServer(t *testing.T) {
-    scope := &localScope{}
-    if err := RegisterExampleEchoServer(scope,implementation{}); err != nil { t.Fatal(err) }
-    client,err := NewExampleEchoClient(scope, ExampleEchoConsumer(1,3)); if err != nil { t.Fatal(err) }
+    _,client,endpoint := clients(t)
     input := NewExampleEchoChooseRequestVariantText(ExampleEchoChooseRequestVariantText{Text:"chosen"})
     response,err := client.Choose(context.Background(),input)
     if err != nil { t.Fatal(err) }
     if len(response) != 1 || response[0] != "chosen" { t.Fatalf("wrong union response: %v",response) }
     if _,err := json.Marshal(ExampleEchoChooseRequest{}); err == nil { t.Fatal("empty union encoded") }
-    for _,raw := range []string{
-        `{"method":"choose","input":{"kind":"text","text":"x"},"extra":true}`,
-        `{"method":"choose","input":{"kind":"other"}}`,
-        `{"method":"choose","input":{"kind":"text","text":"x","extra":true}}`,
-        `{"method":"unknown","input":{}}`,
-        `{"method":"echo"}`,
+    for _,call := range [][2]string{
+        {"choose",`{"kind":"other"}`},
+        {"choose",`{"kind":"text","text":"x","extra":true}`},
+        {"unknown",`{}`},
+        {"echo",`{}`},
     } {
-        if _,err := scope.handler(context.Background(),json.RawMessage(raw)); err == nil { t.Fatalf("invalid envelope accepted: %s",raw) }
+        if _,err := endpoint.Call(context.Background(),call[0],json.RawMessage(call[1])); err == nil { t.Fatalf("invalid call accepted: %v",call) }
     }
 }
 
 func mustRepeat(n json.Number)int {v,err:=n.Int64();if err!=nil{panic(err)};return int(v)}
 
-func TestWrongConsumerIdentity(t *testing.T) {
- for _,mutate:=range []func(*contract.Consumer){
-  func(c *contract.Consumer){c.Requirement.Name="another"},
-  func(c *contract.Consumer){c.Requirement.Major=2},
-  func(c *contract.Consumer){c.Requirement.MinMinor=2},
-  func(c *contract.Consumer){c.Requirement.MaxMinor=0},
-  func(c *contract.Consumer){c.Contract="another method schema"},
- } {
-  c:=ExampleEchoConsumer(1,3);mutate(&c)
-  if _,err:=NewExampleEchoClient(&localScope{},c);err==nil{t.Fatal("invalid consumer accepted")}
- }
+type foreign struct{ contract.Endpoint; service contract.Service }
+func (f foreign) Service() contract.Service { return f.service }
+
+func TestClientRejectsForeignEndpoint(t *testing.T) {
+    endpoint := NewExampleEchoEndpoint(implementation{})
+    if endpoint.Service() != ExampleEchoService() { t.Fatalf("endpoint reports %+v",endpoint.Service()) }
+    for _,service := range []contract.Service{{Name:"another",Major:1},{Name:"example.echo",Major:2}} {
+        if _,err := NewExampleEchoClient(foreign{endpoint,service}); err == nil { t.Fatalf("client accepted endpoint %+v",service) }
+    }
+    if _,err := NewExampleEchoClient(nil); err == nil { t.Fatal("client accepted a nil endpoint") }
 }

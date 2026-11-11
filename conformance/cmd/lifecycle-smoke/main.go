@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/examples/pluginmeta"
+	"github.com/Cyenoch/cordis/hosting"
 	"github.com/Cyenoch/cordis/packagehost"
 )
 
@@ -54,11 +54,11 @@ func run(guest, badGuest string) (result error) {
 		return err
 	}
 	manifest := pluginmeta.Chain()
-	options := cordis.Options{Directory: filepath.Join(root, "store"), Trust: packagehost.TrustPolicy{
+	options := hosting.Options{Directory: filepath.Join(root, "store"), Trust: packagehost.TrustPolicy{
 		Keys:       map[string]packagehost.TrustedKey{"author": {PublicKey: public, Publisher: manifest.Publisher}},
 		Publishers: map[string][]string{manifest.Publisher: {manifest.ID}},
 	}}
-	host, err := cordis.Open(options)
+	host, err := hosting.Open(options)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func run(guest, badGuest string) (result error) {
 	if err := host.Close(ctx); err != nil {
 		return err
 	}
-	reopened, err := cordis.Open(options)
+	reopened, err := hosting.Open(options)
 	if err != nil {
 		return err
 	}
@@ -177,7 +177,7 @@ func run(guest, badGuest string) (result error) {
 	return nil
 }
 
-func optionalChild(ctx context.Context, host *cordis.Host, packageID string) error {
+func optionalChild(ctx context.Context, host *hosting.Host, packageID string) error {
 	parent, err := host.Enable(ctx, contract.Entry{ID: "parent", Package: packageID, Definition: "optional-parent"})
 	if err != nil {
 		return err
@@ -192,12 +192,12 @@ func optionalChild(ctx context.Context, host *cordis.Host, packageID string) err
 	if err := provider.Wait(ctx); err != nil {
 		return err
 	}
-	results, err := host.Emit(ctx, "chain.optional-ready", json.RawMessage(`null`), contract.First)
+	answer, err := host.Emit(ctx, contract.Event{Kind: contract.KindQuery, Name: "chain.optional-ready", Input: json.RawMessage(`{}`), Mode: contract.First})
 	if err != nil {
 		return err
 	}
-	if len(results) != 1 || !results[0].Handled || string(results[0].Value) != "true" {
-		return fmt.Errorf("optional child did not activate: %+v", results)
+	if !answer.Handled || string(answer.Value) != "true" {
+		return fmt.Errorf("optional child did not activate: %+v", answer)
 	}
 	value, err := invoke(ctx, host, "chain.b", "stats")
 	if err != nil {
@@ -206,12 +206,12 @@ func optionalChild(ctx context.Context, host *cordis.Host, packageID string) err
 	if value.Live != 1 {
 		return fmt.Errorf("optional child did not acquire its resource: %+v", value)
 	}
-	results, err = host.Emit(ctx, "chain.handled", json.RawMessage(`null`), contract.First)
+	answer, err = host.Emit(ctx, contract.Event{Kind: contract.KindQuery, Name: "chain.handled", Input: json.RawMessage(`{}`), Mode: contract.First})
 	if err != nil {
 		return err
 	}
-	if len(results) != 1 || !results[0].Handled || string(results[0].Value) != "0" {
-		return fmt.Errorf("first handled event lost a zero result: %+v", results)
+	if !answer.Handled || string(answer.Value) != "0" {
+		return fmt.Errorf("first handled query lost a zero result: %+v", answer)
 	}
 	if err := host.Disable(ctx, "parent"); err != nil {
 		return err
@@ -265,9 +265,9 @@ type counts struct {
 	Label    string `json:"label"`
 }
 
-func invoke(ctx context.Context, host *cordis.Host, service, operation string) (counts, error) {
-	input := json.RawMessage(fmt.Sprintf(`{"method":"execute","input":{"operation":%q}}`, operation))
-	data, err := host.Call(ctx, contract.Requirement{Name: service, Major: 1, MinMinor: 1, MaxMinor: 3}, input)
+func invoke(ctx context.Context, host *hosting.Host, service, operation string) (counts, error) {
+	input := json.RawMessage(fmt.Sprintf(`{"operation":%q}`, operation))
+	data, err := host.Call(ctx, contract.Requirement{Name: service, Major: 1, MinMinor: 1, MaxMinor: 3}, "execute", input)
 	var value counts
 	if err != nil {
 		return value, fmt.Errorf("%s %s: %w", service, operation, err)
@@ -276,7 +276,7 @@ func invoke(ctx context.Context, host *cordis.Host, service, operation string) (
 	return value, err
 }
 
-func expect(ctx context.Context, host *cordis.Host, label string) error {
+func expect(ctx context.Context, host *hosting.Host, label string) error {
 	value, err := invoke(ctx, host, "chain.c", "stats")
 	if err != nil {
 		return err

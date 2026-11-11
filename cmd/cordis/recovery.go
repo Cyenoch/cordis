@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/config"
+	"github.com/Cyenoch/cordis/hosting"
 )
 
-func loadRecovery(path string) (map[string]cordis.RecoveryPolicy, error) {
+func loadRecovery(path string) (map[string]hosting.RecoveryPolicy, error) {
 	document, err := config.Load(path, "")
 	if err != nil {
 		return nil, fmt.Errorf("load recovery: %w", err)
@@ -24,7 +24,7 @@ func loadRecovery(path string) (map[string]cordis.RecoveryPolicy, error) {
 	if input == nil {
 		return nil, fmt.Errorf("recovery file must contain an object keyed by entry ID")
 	}
-	result := make(map[string]cordis.RecoveryPolicy, len(input))
+	result := make(map[string]hosting.RecoveryPolicy, len(input))
 	for id, entry := range input {
 		initial, err := time.ParseDuration(entry.InitialDelay)
 		if err != nil {
@@ -34,7 +34,7 @@ func loadRecovery(path string) (map[string]cordis.RecoveryPolicy, error) {
 		if err != nil {
 			return nil, fmt.Errorf("recovery %q maxDelay: %w", id, err)
 		}
-		result[id] = cordis.RecoveryPolicy{MaxRetries: entry.MaxRetries, InitialDelay: initial, MaxDelay: maximum}
+		result[id] = hosting.RecoveryPolicy{MaxRetries: entry.MaxRetries, InitialDelay: initial, MaxDelay: maximum}
 	}
 	return result, nil
 }

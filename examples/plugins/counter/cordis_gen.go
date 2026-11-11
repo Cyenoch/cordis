@@ -5,12 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/schema"
+	"iter"
 )
 
 var _ context.Context
-var _ contract.Scope
+var _ *cordis.Scope
+var _ contract.Service
+var _ iter.Seq[int]
 
 const SettingsSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"initial\":{\"type\":\"integer\"}},\"required\":[],\"type\":\"object\"}"
 
@@ -132,18 +136,11 @@ func CounterDefinitionSpec() contract.DefinitionSpec {
 			{Name: "example.counter", Major: 1, Minor: 0},
 		}}
 }
-func NewCounterDefinition(start func(context.Context, contract.Scope, CounterConfig) error) contract.Definition {
-	spec := CounterDefinitionSpec()
-	return contract.Definition{ID: spec.ID, Requires: spec.Requirements(), Provides: spec.Provides, Validate: func(raw json.RawMessage) error { var config CounterConfig; return json.Unmarshal(raw, &config) }, Start: func(ctx context.Context, scope contract.Scope) error {
-		if start == nil {
-			return fmt.Errorf("definition requires start")
-		}
-		var config CounterConfig
-		if err := json.Unmarshal(scope.Config(), &config); err != nil {
-			return err
-		}
-		return start(ctx, scope, config)
-	}}
+
+// CounterPlugin builds the kernel plugin for definition "counter". The same plugin runs in
+// process or, through sdk.Define, as a native package.
+func CounterPlugin(start func(context.Context, *cordis.Scope, CounterConfig) error) cordis.Plugin[CounterConfig] {
+	return cordis.Plugin[CounterConfig]{Name: "counter", Requires: []cordis.Requirement{}, Validate: func(config CounterConfig) error { _, err := json.Marshal(config); return err }, Start: start}
 }
 
 const ExampleCounterServiceDeclarationFingerprint = "ace3973e31d3a9465c5898daa7a6c9a2b55ac31bfb81f8e8b162a9f6cf0f064a"
@@ -284,6 +281,8 @@ func (v *ExampleCounterExecuteResponse) UnmarshalJSON(data []byte) error {
 	*v = value
 	return nil
 }
+
+// ExampleCounterService identifies the contract and the minor this package was generated from.
 func ExampleCounterService() contract.Service {
 	return contract.Service{Name: "example.counter", Major: 1, Minor: 0}
 }
@@ -291,42 +290,86 @@ func ExampleCounterConsumer(minMinor, maxMinor uint32) contract.Consumer {
 	return contract.Consumer{Requirement: contract.Requirement{Name: "example.counter", Major: 1, MinMinor: minMinor, MaxMinor: maxMinor}, Contract: "4c4b3c748511f8e491d0851de095710b34f7a4f6d1d5903ce779f78a7c380a8f"}
 }
 
-type ExampleCounterClient struct {
-	caller   contract.Caller
-	consumer contract.Consumer
+// ExampleCounterEndpoint is the kernel key under which the service is provided and required.
+var ExampleCounterEndpoint = contract.EndpointKey("example.counter", 1)
+
+// ExampleCounterRequirement requires the service with a minor in [minMinor, maxMinor].
+func ExampleCounterRequirement(minMinor, maxMinor uint32) cordis.Requirement {
+	return contract.Require(ExampleCounterEndpoint, minMinor, maxMinor)
 }
 
-func NewExampleCounterClient(caller contract.Caller, consumer contract.Consumer) (*ExampleCounterClient, error) {
-	if caller == nil {
-		return nil, fmt.Errorf("service client requires caller")
-	}
-	if err := consumer.Check("example.counter", 1, 0, "4c4b3c748511f8e491d0851de095710b34f7a4f6d1d5903ce779f78a7c380a8f"); err != nil {
-		return nil, err
-	}
-	return &ExampleCounterClient{caller: caller, consumer: consumer}, nil
-}
-
-type ExampleCounterServer interface {
+// ExampleCounter is the service. Providers implement it; consumers receive it from NewExampleCounterClient.
+type ExampleCounter interface {
 	Execute(context.Context, ExampleCounterExecuteRequest) (ExampleCounterExecuteResponse, error)
 }
+type generatedExampleCounterEndpoint struct{ implementation ExampleCounter }
 
-func (c *ExampleCounterClient) Execute(ctx context.Context, input ExampleCounterExecuteRequest) (ExampleCounterExecuteResponse, error) {
-	var output ExampleCounterExecuteResponse
-	if c == nil || c.caller == nil {
-		return output, fmt.Errorf("service client has no caller")
+// NewExampleCounterEndpoint adapts an implementation to the endpoint published under ExampleCounterEndpoint.
+func NewExampleCounterEndpoint(implementation ExampleCounter) contract.Endpoint {
+	return &generatedExampleCounterEndpoint{implementation: implementation}
+}
+func (e *generatedExampleCounterEndpoint) Service() contract.Service { return ExampleCounterService() }
+func (e *generatedExampleCounterEndpoint) Call(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
+	switch method {
+	case "execute":
+		var input ExampleCounterExecuteRequest
+		if err := json.Unmarshal(data, &input); err != nil {
+			return nil, err
+		}
+		output, err := e.implementation.Execute(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(output)
+	default:
+		return nil, contract.Fail(contract.Invalid, "unknown service method")
 	}
+}
+func (e *generatedExampleCounterEndpoint) Stream(ctx context.Context, method string, data json.RawMessage) iter.Seq2[json.RawMessage, error] {
+	switch method {
+	default:
+		return contract.FailedStream(contract.Fail(contract.Invalid, "unknown streaming service method"))
+	}
+}
+
+type generatedExampleCounterClient struct {
+	endpoint contract.Endpoint
+	local    ExampleCounter
+}
+
+// NewExampleCounterClient returns a typed client for endpoint. When the endpoint was made by
+// NewExampleCounterEndpoint in this process, calls go straight to the implementation; data is
+// still validated on the way in and out.
+func NewExampleCounterClient(endpoint contract.Endpoint) (ExampleCounter, error) {
+	if endpoint == nil {
+		return nil, fmt.Errorf("service client requires an endpoint")
+	}
+	if provided := endpoint.Service(); provided.Name != "example.counter" || provided.Major != 1 {
+		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for example.counter@1")
+	}
+	client := &generatedExampleCounterClient{endpoint: endpoint}
+	if local, ok := endpoint.(*generatedExampleCounterEndpoint); ok {
+		client.local = local.implementation
+	}
+	return client, nil
+}
+func (c *generatedExampleCounterClient) Execute(ctx context.Context, input ExampleCounterExecuteRequest) (ExampleCounterExecuteResponse, error) {
+	var output ExampleCounterExecuteResponse
 	data, err := json.Marshal(input)
 	if err != nil {
 		return output, err
 	}
-	request, err := json.Marshal(struct {
-		Method string          `json:"method"`
-		Input  json.RawMessage `json:"input"`
-	}{Method: "execute", Input: data})
-	if err != nil {
-		return output, err
+	if c.local != nil {
+		result, err := c.local.Execute(ctx, input)
+		if err != nil {
+			return output, err
+		}
+		if _, err := json.Marshal(result); err != nil {
+			return output, err
+		}
+		return result, nil
 	}
-	response, err := c.caller.Call(ctx, c.consumer.Requirement, request)
+	response, err := c.endpoint.Call(ctx, "execute", data)
 	if err != nil {
 		return output, err
 	}
@@ -334,39 +377,4 @@ func (c *ExampleCounterClient) Execute(ctx context.Context, input ExampleCounter
 		return output, err
 	}
 	return output, nil
-}
-func RegisterExampleCounterServer(registrar contract.Registrar, implementation ExampleCounterServer) error {
-	if registrar == nil || implementation == nil {
-		return fmt.Errorf("service registration requires registrar and implementation")
-	}
-	return registrar.Provide(ExampleCounterService(), func(ctx context.Context, data json.RawMessage) (json.RawMessage, error) {
-		var envelope struct {
-			Method string          `json:"method"`
-			Input  json.RawMessage `json:"input"`
-		}
-		if err := contract.Decode(data, &envelope); err != nil {
-			return nil, err
-		}
-		if envelope.Method == "" || len(envelope.Input) == 0 {
-			return nil, contract.Fail(contract.Invalid, "service envelope requires method and input")
-		}
-		switch envelope.Method {
-		case "execute":
-			var input ExampleCounterExecuteRequest
-			if err := json.Unmarshal(envelope.Input, &input); err != nil {
-				return nil, err
-			}
-			output, err := implementation.Execute(ctx, input)
-			if err != nil {
-				return nil, err
-			}
-			response, err := json.Marshal(output)
-			if err != nil {
-				return nil, err
-			}
-			return response, nil
-		default:
-			return nil, contract.Fail(contract.Invalid, "unknown service method")
-		}
-	})
 }

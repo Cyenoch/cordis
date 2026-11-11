@@ -1,5 +1,7 @@
-// Package plugintest runs real SDK definitions and codecs with explicit test
-// service ports. Process execution is covered by runtime integration tests.
+// Package plugintest runs a plugin definition the way a host runs it,
+// without building a package: the real SDK runtime talks to a real Host
+// over an in-memory session. The plugin's Start, its codecs, its
+// requirements and its declared services are all exercised.
 package plugintest
 
 import (
@@ -7,159 +9,137 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"sync"
+	"os"
+	"path/filepath"
+	"runtime"
 
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/hosting"
+	"github.com/Cyenoch/cordis/packagehost"
+	"github.com/Cyenoch/cordis/runtime/memory"
 	"github.com/Cyenoch/cordis/sdk"
-	"github.com/Cyenoch/cordis/wire"
 )
 
-// Options configures only business inputs and test doubles. Ports do not grant
-// production services.
+// Options configures a harness.
 type Options struct {
-	Config   json.RawMessage
-	Business contract.Caller
+	// Config is the entry's configuration; empty means {}.
+	Config json.RawMessage
+	// Setup runs on the host's root scope before the plugin starts. Use it
+	// to load the in-process plugins that provide what the plugin requires.
+	Setup func(root *cordis.Scope) error
+	// Children are further definitions of the same package, for plugins
+	// that create child instances.
+	Children []Child
 }
 
-// Harness owns one initialized, published definition. Always Close it, including
-// after a test fails. Cancellation of New's context bounds startup, not lifetime.
+// Child is a definition a plugin may create as a child instance.
+type Child struct {
+	Spec       contract.DefinitionSpec
+	Definition sdk.Definition
+}
+
+// Harness is one host running one entry of the plugin under test.
 type Harness struct {
-	endpoint     *wire.Endpoint
-	registration contract.Registration
-	serveDone    chan struct{}
-	serveErr     error
-	closeOnce    sync.Once
-	closeDone    chan struct{}
-	closeErr     error
+	host      *hosting.Host
+	instance  contract.Instance
+	directory string
 }
 
-// New validates configuration through the definition and executes its real Start.
-// Failed initialization drains registered resources before returning its error.
-func New(ctx context.Context, definition contract.Definition, options Options) (*Harness, error) {
-	guestIn, hostOut := io.Pipe()
-	hostIn, guestOut := io.Pipe()
-	guest := &wire.Transport{Reader: guestIn, Writer: guestOut, Closers: []io.Closer{guestIn, guestOut}}
-	host := &wire.Transport{Reader: hostIn, Writer: hostOut, Closers: []io.Closer{hostIn, hostOut}}
-	h := &Harness{serveDone: make(chan struct{}), closeDone: make(chan struct{})}
-	identity := contract.Identity{Package: "plugintest", Entry: definition.ID, Activation: contract.NewID()}
-	endpoint, err := wire.New(wire.Options{FrameBytes: contract.MaxFrameBytes, Transport: host, Identity: identity, Handler: options.handle})
+// Start runs definition as an entry whose ID is spec.ID and waits until it
+// is Active. spec is what the generated <Name>DefinitionSpec returns. When
+// the plugin does not become Active, Start returns why and cleans up.
+// Always Close a harness that Start returned.
+func Start(ctx context.Context, spec contract.DefinitionSpec, definition sdk.Definition, options Options) (h *Harness, err error) {
+	directory, err := os.MkdirTemp("", "cordis-plugintest-")
 	if err != nil {
-		return nil, errors.Join(err, guest.Close(), host.Close())
+		return nil, err
 	}
-	h.endpoint = endpoint
-	go func() {
-		h.serveErr = sdk.RunTransport(context.WithoutCancel(ctx), definition, guest)
-		h.serveErr = errors.Join(h.serveErr, guest.Close())
-		close(h.serveDone)
+	h = &Harness{directory: directory}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, h.Close(context.WithoutCancel(ctx)))
+			h = nil
+		}
 	}()
-	config := options.Config
-	if len(config) == 0 {
-		config = json.RawMessage(`{}`)
+	manifest := contract.Manifest{Schema: contract.PackageSchema, ID: "plugintest.plugin", Version: "0.0.0", Publisher: "plugintest",
+		Protocol: contract.Protocol{Major: contract.ProtocolMajor}, DefaultDefinition: spec.ID,
+		Definitions: []contract.DefinitionSpec{spec}, Dependencies: []contract.Dependency{}, OptionalDependencies: []contract.Dependency{},
+		Runtime: contract.RuntimeSpec{Kind: "native", Artifacts: []contract.Artifact{{OS: runtime.GOOS, Arch: runtime.GOARCH, Path: "plugin"}}}}
+	definitions := []sdk.Definition{definition}
+	for _, child := range options.Children {
+		manifest.Definitions = append(manifest.Definitions, child.Spec)
+		definitions = append(definitions, child.Definition)
 	}
-	input, err := json.Marshal(contract.Initialize{
-		FrameBytes: contract.MaxFrameBytes, Identity: identity, Protocol: contract.Protocol{Major: 1},
-		Definition: definition.ID, Config: config,
-	})
-	if err == nil {
-		var output json.RawMessage
-		output, err = endpoint.Call(ctx, "initialize", input)
-		if err == nil {
-			err = contract.Decode(output, &h.registration)
+	source := filepath.Join(directory, "source")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		return h, err
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		return h, err
+	}
+	if err := os.WriteFile(filepath.Join(source, "plugin.json"), raw, 0o600); err != nil {
+		return h, err
+	}
+	if err := os.WriteFile(filepath.Join(source, "plugin"), []byte("runs in memory"), 0o600); err != nil {
+		return h, err
+	}
+	archive := filepath.Join(directory, "plugin.zip")
+	packed, err := packagehost.Pack(ctx, source, archive)
+	if err != nil {
+		return h, err
+	}
+	plugins := memory.New()
+	plugins.Register(manifest.ID, definitions...)
+	h.host, err = hosting.Open(hosting.Options{Directory: filepath.Join(directory, "store"), Runtime: plugins,
+		Trust: packagehost.TrustPolicy{DevDigests: map[string]bool{packed.Ref.Digest: true},
+			Publishers: map[string][]string{manifest.Publisher: {manifest.ID}}}})
+	if err != nil {
+		return h, err
+	}
+	installed, err := h.host.Install(ctx, archive)
+	if err != nil {
+		return h, err
+	}
+	if err := h.host.Select(ctx, installed.Ref); err != nil {
+		return h, err
+	}
+	if options.Setup != nil {
+		if err := options.Setup(h.host.Scope()); err != nil {
+			return h, err
 		}
 	}
-	if err == nil {
-		_, err = endpoint.Call(ctx, "activation.publish", json.RawMessage(`{}`))
-	}
+	h.instance, err = h.host.Enable(ctx, contract.Entry{ID: spec.ID, Package: manifest.ID, Definition: spec.ID, Config: options.Config})
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("start test definition %q: %w", definition.ID, err), h.Close(context.WithoutCancel(ctx)))
+		return h, err
+	}
+	if err := h.instance.Wait(ctx); err != nil {
+		return h, fmt.Errorf("start definition %q: %w", spec.ID, err)
+	}
+	if status := h.instance.Status(); status.State != contract.Active {
+		return h, fmt.Errorf("definition %q is %s, waiting for %+v", spec.ID, status.State, status.Waiting)
 	}
 	return h, nil
 }
 
-func (o Options) handle(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
-	switch method {
-	case "call":
-		var call contract.ServiceCall
-		if err := contract.Decode(input, &call); err != nil {
-			return nil, err
-		}
-		if o.Business != nil {
-			return o.Business.Call(ctx, call.Required, call.Input)
-		}
-	}
-	return nil, contract.Fail(contract.NotReady, "test port not configured: "+method)
-}
+// Scope is the root scope of the host. Get the plugin's endpoints from it,
+// emit the events it listens to, and load more in-process plugins on it.
+func (h *Harness) Scope() *cordis.Scope { return h.host.Scope() }
 
-// Call implements contract.Caller, so typed and generated clients use the same
-// request/response codecs as production instead of invoking handlers directly.
-func (h *Harness) Call(ctx context.Context, required contract.Requirement, input json.RawMessage) (json.RawMessage, error) {
-	for _, service := range h.registration.Services {
-		if required.Accepts(service) {
-			data, err := json.Marshal(contract.Invocation{Service: service, Input: input})
-			if err != nil {
-				return nil, err
-			}
-			return h.endpoint.Call(ctx, "call", data)
-		}
-	}
-	return nil, contract.Fail(contract.NotReady, "compatible test service not provided")
-}
+// Host is the host that runs the plugin, for tests of updates, children
+// and status.
+func (h *Harness) Host() *hosting.Host { return h.host }
 
-// Deliver exercises the definition's real event handlers and dispatch behavior.
-func (h *Harness) Deliver(ctx context.Context, event contract.Event) ([]contract.EventResult, error) {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return nil, err
-	}
-	data, err = h.endpoint.Call(ctx, "event", data)
-	if err != nil {
-		return nil, err
-	}
-	var results []contract.EventResult
-	err = contract.Decode(data, &results)
-	return results, err
-}
+// Instance is the entry of the plugin under test.
+func (h *Harness) Instance() contract.Instance { return h.instance }
 
-// Retire cancels activation work and ordinary calls without releasing resources.
-func (h *Harness) Retire(ctx context.Context) error {
-	_, err := h.endpoint.Call(ctx, "activation.retire", json.RawMessage(`{}`))
-	return err
-}
-
-// Wait returns the local SDK failure, including the original managed-work cause.
-func (h *Harness) Wait(ctx context.Context) error {
-	select {
-	case <-h.serveDone:
-		return h.serveErr
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// Close starts one shared shutdown. A canceled wait does not claim resources
-// have drained, interrupt cleanup ports or create another shutdown operation.
+// Close stops the plugin, running its cleanups, and removes the harness's
+// files. It returns the errors of the cleanups.
 func (h *Harness) Close(ctx context.Context) error {
-	h.closeOnce.Do(func() {
-		go func() {
-			cleanupCtx := context.WithoutCancel(ctx)
-			_, shutdownErr := h.endpoint.Call(cleanupCtx, "shutdown", json.RawMessage(`{}`))
-			closeErr := h.endpoint.Close()
-			h.endpoint.Wait()
-			<-h.serveDone
-			h.closeErr = errors.Join(shutdownErr, closeErr, h.serveErr)
-			close(h.closeDone)
-		}()
-	})
-	select {
-	case <-h.closeDone:
-		return h.closeErr
-	default:
+	var err error
+	if h.host != nil {
+		err = h.host.Close(ctx)
 	}
-	select {
-	case <-h.closeDone:
-		return h.closeErr
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return errors.Join(err, os.RemoveAll(h.directory))
 }

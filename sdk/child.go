@@ -6,35 +6,36 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 )
 
-type childInstance struct {
-	client *Client
-	id     string
-	mu     sync.Mutex
-	status contract.Status
-}
-
-func (c *Client) CreateChild(ctx context.Context, child contract.Child) (contract.ChildInstance, error) {
-	instance := &childInstance{client: c, id: child.ID}
+// CreateChild asks the host to run another definition of the same package
+// as a child of the activation that s runs in. The child has its own
+// process and ends with the activation. CreateChild does not wait for the
+// child to start: a child can only start after its parent has.
+func CreateChild(ctx context.Context, s *cordis.Scope, child contract.Child) (contract.ChildInstance, error) {
+	g, ok := guestOf(s)
+	if !ok {
+		return nil, contract.Fail(contract.Incompatible, "child instances need a native plugin process")
+	}
+	instance := &childInstance{guest: g, id: child.ID}
 	if err := instance.invoke(ctx, contract.ChildRequest{Action: "create", Child: child}, &instance.status); err != nil {
 		return nil, err
 	}
 	return instance, nil
 }
 
+type childInstance struct {
+	guest  *guest
+	id     string
+	mu     sync.Mutex
+	status contract.Status
+}
+
 func (i *childInstance) invoke(ctx context.Context, request contract.ChildRequest, target any) error {
 	request.ID = i.id
-	data, err := json.Marshal(request)
-	if err != nil {
-		return err
-	}
-	response, err := i.client.endpoint.Call(ctx, "child", data)
-	if err != nil {
-		return err
-	}
-	return contract.Decode(response, target)
+	return i.guest.request(ctx, "child", request, target)
 }
 
 // Status is the last acknowledged status. Refresh obtains a current host snapshot.

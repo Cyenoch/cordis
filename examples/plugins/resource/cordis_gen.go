@@ -5,12 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/schema"
+	"iter"
 )
 
 var _ context.Context
-var _ contract.Scope
+var _ *cordis.Scope
+var _ contract.Service
+var _ iter.Seq[int]
 
 const MainDefinitionDeclarationFingerprint = "3227b584f9cbff077da3040c57d1ce8361f8bffb8748c68855867d60edc312bb"
 const MainConfigSchemaJSON = "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}"
@@ -59,18 +63,11 @@ func MainDefinitionSpec() contract.DefinitionSpec {
 			{Name: "example.resource", Major: 1, Minor: 0},
 		}}
 }
-func NewMainDefinition(start func(context.Context, contract.Scope, MainConfig) error) contract.Definition {
-	spec := MainDefinitionSpec()
-	return contract.Definition{ID: spec.ID, Requires: spec.Requirements(), Provides: spec.Provides, Validate: func(raw json.RawMessage) error { var config MainConfig; return json.Unmarshal(raw, &config) }, Start: func(ctx context.Context, scope contract.Scope) error {
-		if start == nil {
-			return fmt.Errorf("definition requires start")
-		}
-		var config MainConfig
-		if err := json.Unmarshal(scope.Config(), &config); err != nil {
-			return err
-		}
-		return start(ctx, scope, config)
-	}}
+
+// MainPlugin builds the kernel plugin for definition "main". The same plugin runs in
+// process or, through sdk.Define, as a native package.
+func MainPlugin(start func(context.Context, *cordis.Scope, MainConfig) error) cordis.Plugin[MainConfig] {
+	return cordis.Plugin[MainConfig]{Name: "main", Requires: []cordis.Requirement{}, Validate: func(config MainConfig) error { _, err := json.Marshal(config); return err }, Start: start}
 }
 
 const ExampleResourceServiceDeclarationFingerprint = "3227b584f9cbff077da3040c57d1ce8361f8bffb8748c68855867d60edc312bb"
@@ -152,6 +149,8 @@ func (v *ExampleResourceReadResponse) UnmarshalJSON(data []byte) error {
 	*v = ExampleResourceReadResponse(value)
 	return nil
 }
+
+// ExampleResourceService identifies the contract and the minor this package was generated from.
 func ExampleResourceService() contract.Service {
 	return contract.Service{Name: "example.resource", Major: 1, Minor: 0}
 }
@@ -159,42 +158,88 @@ func ExampleResourceConsumer(minMinor, maxMinor uint32) contract.Consumer {
 	return contract.Consumer{Requirement: contract.Requirement{Name: "example.resource", Major: 1, MinMinor: minMinor, MaxMinor: maxMinor}, Contract: "6b9d533aa516f1a058554b2e91238581ae4a97d077e3b7d84b2c605d2b6b5a20"}
 }
 
-type ExampleResourceClient struct {
-	caller   contract.Caller
-	consumer contract.Consumer
+// ExampleResourceEndpoint is the kernel key under which the service is provided and required.
+var ExampleResourceEndpoint = contract.EndpointKey("example.resource", 1)
+
+// ExampleResourceRequirement requires the service with a minor in [minMinor, maxMinor].
+func ExampleResourceRequirement(minMinor, maxMinor uint32) cordis.Requirement {
+	return contract.Require(ExampleResourceEndpoint, minMinor, maxMinor)
 }
 
-func NewExampleResourceClient(caller contract.Caller, consumer contract.Consumer) (*ExampleResourceClient, error) {
-	if caller == nil {
-		return nil, fmt.Errorf("service client requires caller")
-	}
-	if err := consumer.Check("example.resource", 1, 0, "6b9d533aa516f1a058554b2e91238581ae4a97d077e3b7d84b2c605d2b6b5a20"); err != nil {
-		return nil, err
-	}
-	return &ExampleResourceClient{caller: caller, consumer: consumer}, nil
-}
-
-type ExampleResourceServer interface {
+// ExampleResource is the service. Providers implement it; consumers receive it from NewExampleResourceClient.
+type ExampleResource interface {
 	Read(context.Context, ExampleResourceReadRequest) (ExampleResourceReadResponse, error)
 }
+type generatedExampleResourceEndpoint struct{ implementation ExampleResource }
 
-func (c *ExampleResourceClient) Read(ctx context.Context, input ExampleResourceReadRequest) (ExampleResourceReadResponse, error) {
-	var output ExampleResourceReadResponse
-	if c == nil || c.caller == nil {
-		return output, fmt.Errorf("service client has no caller")
+// NewExampleResourceEndpoint adapts an implementation to the endpoint published under ExampleResourceEndpoint.
+func NewExampleResourceEndpoint(implementation ExampleResource) contract.Endpoint {
+	return &generatedExampleResourceEndpoint{implementation: implementation}
+}
+func (e *generatedExampleResourceEndpoint) Service() contract.Service {
+	return ExampleResourceService()
+}
+func (e *generatedExampleResourceEndpoint) Call(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
+	switch method {
+	case "read":
+		var input ExampleResourceReadRequest
+		if err := json.Unmarshal(data, &input); err != nil {
+			return nil, err
+		}
+		output, err := e.implementation.Read(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(output)
+	default:
+		return nil, contract.Fail(contract.Invalid, "unknown service method")
 	}
+}
+func (e *generatedExampleResourceEndpoint) Stream(ctx context.Context, method string, data json.RawMessage) iter.Seq2[json.RawMessage, error] {
+	switch method {
+	default:
+		return contract.FailedStream(contract.Fail(contract.Invalid, "unknown streaming service method"))
+	}
+}
+
+type generatedExampleResourceClient struct {
+	endpoint contract.Endpoint
+	local    ExampleResource
+}
+
+// NewExampleResourceClient returns a typed client for endpoint. When the endpoint was made by
+// NewExampleResourceEndpoint in this process, calls go straight to the implementation; data is
+// still validated on the way in and out.
+func NewExampleResourceClient(endpoint contract.Endpoint) (ExampleResource, error) {
+	if endpoint == nil {
+		return nil, fmt.Errorf("service client requires an endpoint")
+	}
+	if provided := endpoint.Service(); provided.Name != "example.resource" || provided.Major != 1 {
+		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for example.resource@1")
+	}
+	client := &generatedExampleResourceClient{endpoint: endpoint}
+	if local, ok := endpoint.(*generatedExampleResourceEndpoint); ok {
+		client.local = local.implementation
+	}
+	return client, nil
+}
+func (c *generatedExampleResourceClient) Read(ctx context.Context, input ExampleResourceReadRequest) (ExampleResourceReadResponse, error) {
+	var output ExampleResourceReadResponse
 	data, err := json.Marshal(input)
 	if err != nil {
 		return output, err
 	}
-	request, err := json.Marshal(struct {
-		Method string          `json:"method"`
-		Input  json.RawMessage `json:"input"`
-	}{Method: "read", Input: data})
-	if err != nil {
-		return output, err
+	if c.local != nil {
+		result, err := c.local.Read(ctx, input)
+		if err != nil {
+			return output, err
+		}
+		if _, err := json.Marshal(result); err != nil {
+			return output, err
+		}
+		return result, nil
 	}
-	response, err := c.caller.Call(ctx, c.consumer.Requirement, request)
+	response, err := c.endpoint.Call(ctx, "read", data)
 	if err != nil {
 		return output, err
 	}
@@ -202,39 +247,4 @@ func (c *ExampleResourceClient) Read(ctx context.Context, input ExampleResourceR
 		return output, err
 	}
 	return output, nil
-}
-func RegisterExampleResourceServer(registrar contract.Registrar, implementation ExampleResourceServer) error {
-	if registrar == nil || implementation == nil {
-		return fmt.Errorf("service registration requires registrar and implementation")
-	}
-	return registrar.Provide(ExampleResourceService(), func(ctx context.Context, data json.RawMessage) (json.RawMessage, error) {
-		var envelope struct {
-			Method string          `json:"method"`
-			Input  json.RawMessage `json:"input"`
-		}
-		if err := contract.Decode(data, &envelope); err != nil {
-			return nil, err
-		}
-		if envelope.Method == "" || len(envelope.Input) == 0 {
-			return nil, contract.Fail(contract.Invalid, "service envelope requires method and input")
-		}
-		switch envelope.Method {
-		case "read":
-			var input ExampleResourceReadRequest
-			if err := json.Unmarshal(envelope.Input, &input); err != nil {
-				return nil, err
-			}
-			output, err := implementation.Read(ctx, input)
-			if err != nil {
-				return nil, err
-			}
-			response, err := json.Marshal(output)
-			if err != nil {
-				return nil, err
-			}
-			return response, nil
-		default:
-			return nil, contract.Fail(contract.Invalid, "unknown service method")
-		}
-	})
 }

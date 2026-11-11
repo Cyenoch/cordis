@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,13 +22,19 @@ type Handler func(context.Context, string, json.RawMessage) (json.RawMessage, er
 // frame. It must not block or run business callbacks. A nil handler uses Handler.
 type Prepare func(context.Context, string, json.RawMessage) (Handler, error)
 
+// StreamHandler serves a request whose results are a sequence. The sequence
+// ends the stream when it ends; a non-nil error ends it with that error.
+type StreamHandler func(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error]
+
 type Options struct {
 	Transport io.ReadWriteCloser
 	Identity  contract.Identity
 	Guest     bool
 	Handler   Handler
 	Prepare   Prepare
-	Limits    Limits
+	// Stream serves stream requests. Without it they are refused.
+	Stream StreamHandler
+	Limits Limits
 	// FrameBytes is required for hosts. Guests bind it from initialize.
 	FrameBytes int
 }
@@ -46,12 +53,14 @@ type pending struct {
 	ctx    context.Context
 	method string
 	result chan reply
+	stream *inflow // set for a stream request
 }
 type incoming struct {
 	cancel      context.CancelFunc
 	method      string
 	recoverable bool
 	canceled    bool
+	stream      *outflow // set for a stream request
 }
 type cancellation struct {
 	ctx      context.Context
@@ -66,10 +75,12 @@ type Endpoint struct {
 	transport        io.ReadWriteCloser
 	handler          Handler
 	prepare          Prepare
+	stream           StreamHandler
 	limits           Limits
 	guest            bool
 	identity         contract.Identity
 	ready            bool
+	readied          chan struct{} // closed when ready becomes true
 	frameBytes       int
 	initializeIssued bool
 	sequence         uint64
@@ -119,10 +130,10 @@ func New(options Options) (*Endpoint, error) {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	e := &Endpoint{transport: options.Transport, handler: options.Handler, prepare: options.Prepare, limits: limits, guest: options.Guest,
+	e := &Endpoint{transport: options.Transport, handler: options.Handler, prepare: options.Prepare, stream: options.Stream, limits: limits, guest: options.Guest,
 		identity: options.Identity, frameBytes: options.FrameBytes, pending: map[string]*pending{}, incoming: map[string]incoming{},
 		canceled: map[string]*cancellation{}, cancelOrder: []string{}, issue: make(chan struct{}, 1),
-		out: make(chan outbound, limits.Inflight+4), done: make(chan struct{}), ctx: ctx, cancel: cancel}
+		out: make(chan outbound, limits.Inflight+4), done: make(chan struct{}), readied: make(chan struct{}), ctx: ctx, cancel: cancel}
 	e.wg.Go(e.readLoop)
 	e.wg.Go(e.writeLoop)
 	return e, nil
@@ -130,9 +141,13 @@ func New(options Options) (*Endpoint, error) {
 
 func (e *Endpoint) Identity() contract.Identity { e.mu.Lock(); defer e.mu.Unlock(); return e.identity }
 func (e *Endpoint) Done() <-chan struct{}       { return e.done }
-func (e *Endpoint) Err() error                  { e.mu.Lock(); defer e.mu.Unlock(); return e.err }
-func (e *Endpoint) Close() error                { e.shutdown(io.EOF); return nil }
-func (e *Endpoint) Wait()                       { e.wg.Wait() }
+
+// Ready is closed once initialize has succeeded and the session admits
+// business requests.
+func (e *Endpoint) Ready() <-chan struct{} { return e.readied }
+func (e *Endpoint) Err() error             { e.mu.Lock(); defer e.mu.Unlock(); return e.err }
+func (e *Endpoint) Close() error           { e.shutdown(io.EOF); return nil }
+func (e *Endpoint) Wait()                  { e.wg.Wait() }
 
 func (e *Endpoint) shutdown(err error) {
 	e.closeOnce.Do(func() {
@@ -173,11 +188,13 @@ func (e *Endpoint) CallWithReceipt(ctx context.Context, method string, input jso
 		input = json.RawMessage(`{}`)
 	}
 	deadline, has := ctx.Deadline()
-	if !has {
+	if !has && !unbounded(method) {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, e.limits.Deadline)
 		defer cancel()
 		deadline, _ = ctx.Deadline()
+	} else if !has {
+		deadline = time.Now().Add(120 * time.Second) // the field is required; the peer ignores it
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -217,7 +234,7 @@ func (e *Endpoint) CallWithReceipt(ctx context.Context, method string, input jso
 		parent, exists := e.incoming[ref.id]
 		initializing = exists && (parent.method == "initialize" || parent.method == "shutdown")
 	}
-	if !e.ready && !initializing && method != "initialize" && method != "health" && method != "shutdown" {
+	if !e.ready && !initializing && method != "initialize" && method != "shutdown" {
 		e.mu.Unlock()
 		<-e.issue
 		return nil, contract.Fail(contract.NotReady, "session not initialized")
@@ -258,26 +275,7 @@ func (e *Endpoint) CallWithReceipt(ctx context.Context, method string, input jso
 		}
 		return result.payload, result.err
 	case <-ctx.Done():
-		if !e.removePending(id, true) {
-			return nil, ctx.Err()
-		}
-		cancelCtx, cancel := context.WithTimeout(e.ctx, e.limits.Grace)
-		defer cancel()
-		if err := e.send(cancelCtx, Frame{Schema: contract.SessionSchema, Kind: "cancel", Activation: activation, ID: id}); err != nil && e.ctx.Err() == nil {
-			e.shutdown(err)
-		}
-		e.mu.Lock()
-		if record := e.canceled[id]; record != nil && record.awaiting && e.ctx.Err() == nil {
-			record.timer = time.AfterFunc(e.limits.Grace, func() {
-				e.mu.Lock()
-				unanswered := record.awaiting && e.ctx.Err() == nil
-				e.mu.Unlock()
-				if unanswered {
-					e.shutdown(contract.Fail(contract.Timeout, "peer ignored cancellation"))
-				}
-			})
-		}
-		e.mu.Unlock()
+		e.abandon(id, activation)
 		return nil, ctx.Err()
 	case <-e.done:
 		select {
@@ -352,7 +350,7 @@ func (e *Endpoint) enqueue(ctx context.Context, message outbound) error {
 
 func controlMethod(method string) bool {
 	switch method {
-	case "initialize", "health", "shutdown", "activation.publish", "activation.retire", "event.subscribe", "event.unsubscribe":
+	case "initialize", "shutdown", "event.subscribe", "event.unsubscribe", "chain.use", "chain.unuse":
 		return true
 	default:
 		return false
@@ -398,6 +396,7 @@ func (e *Endpoint) sendResponse(ctx, deliveryCtx context.Context, response Frame
 			return contract.Fail(contract.Canceled, "initialization canceled")
 		}
 		e.ready = true
+		close(e.readied)
 		close(committed)
 		e.mu.Unlock()
 		return nil
@@ -454,6 +453,16 @@ func (e *Endpoint) writeLoop() {
 				data = data[n:]
 			}
 			if message.shutdown {
+				// The host closes the session once it has this answer. Keep
+				// reading until then: it may still be sending the answers to
+				// requests this side canceled while it stopped, and writing
+				// those into a closed stream would look like a failure.
+				linger := time.NewTimer(e.limits.Grace)
+				select {
+				case <-e.done:
+				case <-linger.C:
+				}
+				linger.Stop()
 				e.shutdown(io.EOF)
 				return
 			}
@@ -509,6 +518,10 @@ func (e *Endpoint) receive(frame Frame) error {
 		return contract.Fail(contract.Invalid, "activation mismatch")
 	}
 	switch frame.Kind {
+	case "item":
+		return e.receiveItem(frame)
+	case "credit":
+		return e.receiveCredit(frame)
 	case "response":
 		p, ok := e.pending[frame.ID]
 		if !ok {
@@ -535,6 +548,7 @@ func (e *Endpoint) receive(frame Frame) error {
 				return err
 			}
 			e.ready = true
+			close(e.readied)
 		}
 		var err error
 		if frame.Error != nil {
@@ -581,7 +595,7 @@ func (e *Endpoint) receive(frame Frame) error {
 	} else if parent := e.canceled[frame.Parent]; parent != nil {
 		initializing = parent.method == "initialize" || parent.method == "shutdown"
 	}
-	if !e.ready && !initializing && frame.Method != "initialize" && frame.Method != "health" && frame.Method != "shutdown" {
+	if !e.ready && !initializing && frame.Method != "initialize" && frame.Method != "shutdown" {
 		e.mu.Unlock()
 		return contract.Fail(contract.NotReady, "request before initialization")
 	}
@@ -603,11 +617,24 @@ func (e *Endpoint) receive(frame Frame) error {
 			parent = p.ctx
 		}
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(frame.DeadlineMS)*time.Millisecond)
+	// A stream is timed by its caller, and a chain execution by whoever
+	// started it; neither is cut off after the deadline of a plain request.
+	ctx, cancel := context.WithCancel(parent)
+	if !frame.Stream && !unbounded(frame.Method) {
+		ctx, cancel = context.WithTimeout(parent, time.Duration(frame.DeadlineMS)*time.Millisecond)
+	}
 	ctx = context.WithValue(ctx, requestKey{}, requestReference{endpoint: e, id: frame.ID})
-	e.incoming[frame.ID] = incoming{cancel: cancel, method: frame.Method, recoverable: e.ready && !controlMethod(frame.Method)}
+	request := incoming{cancel: cancel, method: frame.Method, recoverable: e.ready && !controlMethod(frame.Method)}
+	if frame.Stream {
+		request.stream = &outflow{credit: frame.Window, granted: make(chan struct{}, 1)}
+	}
+	e.incoming[frame.ID] = request
 	e.activeIncoming++
 	e.mu.Unlock()
+	if frame.Stream {
+		e.wg.Go(func() { e.serveStream(ctx, cancel, frame, request.stream) })
+		return nil
+	}
 	handler := e.handler
 	var prepareErr error
 	if e.prepare != nil {

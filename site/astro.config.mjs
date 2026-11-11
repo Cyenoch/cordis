@@ -49,6 +49,10 @@ export default defineConfig({
           label: '动手开发',
           items: [
             { label: '编写插件', slug: 'plugin-author' },
+            { label: '进程内内核', slug: 'kernel' },
+            { label: '配置文件加载器', slug: 'loader' },
+            { label: '日志服务', slug: 'logging' },
+            { label: '定时辅助', slug: 'timers' },
             { label: '接入宿主', slug: 'host-guide' },
             { label: 'CLI 命令', slug: 'cli' },
           ],

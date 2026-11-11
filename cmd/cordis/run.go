@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/config"
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/hosting"
 	"github.com/Cyenoch/cordis/packagehost"
 )
 
@@ -127,7 +127,7 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 		return err
 	}
 	defer func() { result = errors.Join(result, os.RemoveAll(root)) }()
-	host, err := cordis.Open(cordis.Options{
+	host, err := hosting.Open(hosting.Options{
 		FrameBytes: contract.MaxFrameBytes, Directory: filepath.Join(root, "store"),
 		Trust: packagehost.TrustPolicy{
 			DevDigests: map[string]bool{pkg.Ref.Digest: true},
@@ -162,7 +162,15 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 	if *service == "" {
 		return writeJSON(out, instance.Status())
 	}
-	value, err := host.Call(ctx, required, inputData)
+	// The input names the method of the service and carries its input.
+	var call struct {
+		Method string          `json:"method"`
+		Input  json.RawMessage `json:"input"`
+	}
+	if err := contract.Decode(inputData, &call); err != nil || call.Method == "" {
+		return errors.Join(&usageError{message: `-input must be {"method": "...", "input": ...}`}, err)
+	}
+	value, err := host.Call(ctx, required, call.Method, call.Input)
 	if err != nil {
 		return err
 	}

@@ -8,7 +8,7 @@ description: 现有测试保护的当前可观察契约。
 | 契约 | 测试入口 |
 |---|---|
 | 依赖就绪、更新、传递清理和迟到初始化 | `internal/core` |
-| 父子身份、配置与动态登记 | 根包的 children、child_controls、host_lifecycle 测试 |
+| 父子身份、配置与动态登记 | `hosting` 包的 children、child_controls、host_lifecycle 测试 |
 | 真实启动、发布确认、取消和清理 | `sdk` 与 `runtime` |
 | 完整性、签名、原子选择和进程中断 | `packagehost` |
 | 帧预算、在途准入与取消 | `wire` |

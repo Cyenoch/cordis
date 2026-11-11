@@ -25,12 +25,12 @@ func TestBuildActualSDKNativeWithoutRunningArtifact(t *testing.T) {
 	writeAuthorFile(t, dir, "main.go", `package main
 import (
     "context"
-    "github.com/Cyenoch/cordis/contract"
+    "github.com/Cyenoch/cordis"
     "github.com/Cyenoch/cordis/sdk"
 )
 func main() {
     panic("the build and pack APIs must never execute this artifact")
-    _ = sdk.Run(context.Background(), NewMainDefinition(func(context.Context, contract.Scope, MainConfig) error { return nil }))
+    _ = sdk.Run(context.Background(), sdk.Define(MainPlugin(func(context.Context, *cordis.Scope, MainConfig) error { return nil })))
 }
 `)
 	o := BuildOptions{GoPackage: ".", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}

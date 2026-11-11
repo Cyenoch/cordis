@@ -78,7 +78,7 @@ func TestOfflineCLIManagesIntentAndIncompatibleUpgrade(t *testing.T) {
 	key, trust := cliTrust(t, "example", "demo")
 	m := contract.Manifest{
 		Schema: contract.PackageSchema, ID: "demo", Version: "1.0.0", Publisher: "example",
-		Protocol: contract.Protocol{Major: 1}, DefaultDefinition: "main",
+		Protocol: contract.Protocol{Major: contract.ProtocolMajor}, DefaultDefinition: "main",
 		Definitions: []contract.DefinitionSpec{{ID: "main", Requires: []contract.Consumer{}, Provides: []contract.Service{},
 			ConfigSchema: json.RawMessage(`{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false}`)}},
 		Dependencies: []contract.Dependency{}, OptionalDependencies: []contract.Dependency{},
@@ -246,7 +246,7 @@ func TestOfflineCLIProtectsEnabledReverseDependencies(t *testing.T) {
 	key, trust := cliTrust(t, "example", "demo", "dep")
 	manifest := contract.Manifest{
 		Schema: contract.PackageSchema, ID: "dep", Version: "1.0.0", Publisher: "example",
-		Protocol: contract.Protocol{Major: 1}, DefaultDefinition: "main",
+		Protocol: contract.Protocol{Major: contract.ProtocolMajor}, DefaultDefinition: "main",
 		Definitions: []contract.DefinitionSpec{{ID: "main", ConfigSchema: json.RawMessage(`{"type":"object"}`),
 			Requires: []contract.Consumer{}, Provides: []contract.Service{}}},
 		Dependencies: []contract.Dependency{}, OptionalDependencies: []contract.Dependency{},

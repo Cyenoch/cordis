@@ -58,7 +58,7 @@ func TestLoadAuthorFormatsAndDefaults(t *testing.T) {
 			if err := a.Generate(&generated, "main"); err != nil {
 				t.Fatal(err)
 			}
-			if !bytes.Contains(generated.Bytes(), []byte("NewMainDefinition")) {
+			if !bytes.Contains(generated.Bytes(), []byte("func MainPlugin(")) {
 				t.Fatal("missing typed definition constructor")
 			}
 			got, err := os.ReadFile(filepath.Join(dir, tt.name))
@@ -81,7 +81,7 @@ func TestLoadAuthorRejectsAmbiguityAndOldMachineFields(t *testing.T) {
 	})
 	for _, tt := range []struct{ name, data string }{
 		{"machine missing definition schema", `{"schema":"cordis-go.package/v1","id":"demo","version":"1.0.0","publisher":"example","protocol":{"major":1},"definitions":[{"id":"main"}],"defaultDefinition":"main","runtime":{"kind":"native","artifacts":[{"os":"darwin","arch":"arm64","path":"plugin"}]}}`},
-		{"old package configSchema", strings.Replace(minimalAuthorJSON, `"contract":`, `"configSchema":{"type":"object"},"contract":`, 1)},
+		{"package-level configSchema", strings.Replace(minimalAuthorJSON, `"contract":`, `"configSchema":{"type":"object"},"contract":`, 1)},
 		{"unknown machine schema", strings.Replace(minimalAuthorJSON, `"id":"demo"`, `"schema":"old","id":"demo"`, 1)},
 		{"multiple definitions need default", strings.Replace(minimalAuthorJSON, `{"id":"main"}`, `{"id":"main"},{"id":"other"}`, 1)},
 		{"mixed contract sources", strings.Replace(minimalAuthorJSON, `"contract":`, `"contracts":["other.json"],"contract":`, 1)},

@@ -130,38 +130,27 @@ func Load(path string, format Format) (*Document, error) {
 	return Parse(path, data, format)
 }
 
-// Decode applies contract.Decode, including its unknown-field checks.
-// Location matching is best effort when a codec returns no structured path.
+// Decode applies contract.Decode, including its unknown-field checks, and
+// locates the failure. Structural failures carry their exact path. A type
+// mismatch reported by encoding/json names its field path without array
+// indexes, so inside an array it resolves to the nearest enclosing position.
 func (d *Document) Decode(target any) error {
 	err := contract.Decode(d.JSON, target)
 	if err == nil {
 		return nil
 	}
 	path := ""
-	var unknown *contract.UnknownFieldError
-	if errors.As(err, &unknown) {
-		path = d.uniqueField(unknown.Field)
-	}
+	var located *contract.PathError
 	var typeError *json.UnmarshalTypeError
-	if path == "" && errors.As(err, &typeError) && typeError.Field != "" {
-		fields := strings.Split(typeError.Field, ".")
-		path = d.uniqueField(fields[len(fields)-1])
-	}
-	return d.Locate(path, err)
-}
-
-func (d *Document) uniqueField(name string) string {
-	suffix := "/" + escapePointer(name)
-	found := ""
-	for path := range d.Positions {
-		if strings.HasSuffix(path, suffix) {
-			if found != "" {
-				return ""
-			}
-			found = path
+	switch {
+	case errors.As(err, &located):
+		path = located.Path
+	case errors.As(err, &typeError) && typeError.Field != "":
+		for _, field := range strings.Split(typeError.Field, ".") {
+			path = childPath(path, field)
 		}
 	}
-	return found
+	return d.Locate(path, err)
 }
 
 // Locate wraps cause at path, falling back to the nearest recorded ancestor.

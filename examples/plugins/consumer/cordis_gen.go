@@ -5,12 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/schema"
+	"iter"
 )
 
 var _ context.Context
-var _ contract.Scope
+var _ *cordis.Scope
+var _ contract.Service
+var _ iter.Seq[int]
 
 const MainDefinitionDeclarationFingerprint = "555ebef5ac2eae0423e9c3769f5faadb427ed6f59ec942ab6cc13aa66e5c57c4"
 const MainConfigSchemaJSON = "{\"additionalProperties\":false,\"properties\":{\"output\":{\"type\":\"string\"}},\"required\":[\"output\"],\"type\":\"object\"}"
@@ -76,18 +80,13 @@ func MainDefinitionSpec() contract.DefinitionSpec {
 func MainMessageConsumer() contract.Consumer {
 	return contract.Consumer{Requirement: contract.Requirement{Name: "example.message", Major: 1, MinMinor: 0, MaxMinor: 0}, Contract: "bae198b1b7bed2abc73cf7e2e205ec01b7b2658bc8d54a73b258adb5714439db"}
 }
-func NewMainDefinition(start func(context.Context, contract.Scope, MainConfig) error) contract.Definition {
-	spec := MainDefinitionSpec()
-	return contract.Definition{ID: spec.ID, Requires: spec.Requirements(), Provides: spec.Provides, Validate: func(raw json.RawMessage) error { var config MainConfig; return json.Unmarshal(raw, &config) }, Start: func(ctx context.Context, scope contract.Scope) error {
-		if start == nil {
-			return fmt.Errorf("definition requires start")
-		}
-		var config MainConfig
-		if err := json.Unmarshal(scope.Config(), &config); err != nil {
-			return err
-		}
-		return start(ctx, scope, config)
-	}}
+
+// MainPlugin builds the kernel plugin for definition "main". The same plugin runs in
+// process or, through sdk.Define, as a native package.
+func MainPlugin(start func(context.Context, *cordis.Scope, MainConfig) error) cordis.Plugin[MainConfig] {
+	return cordis.Plugin[MainConfig]{Name: "main", Requires: []cordis.Requirement{
+		contract.Require(contract.EndpointKey("example.message", 1), 0, 0),
+	}, Validate: func(config MainConfig) error { _, err := json.Marshal(config); return err }, Start: start}
 }
 
 const ExampleMessageServiceDeclarationFingerprint = "555ebef5ac2eae0423e9c3769f5faadb427ed6f59ec942ab6cc13aa66e5c57c4"
@@ -169,6 +168,8 @@ func (v *ExampleMessageReadResponse) UnmarshalJSON(data []byte) error {
 	*v = ExampleMessageReadResponse(value)
 	return nil
 }
+
+// ExampleMessageService identifies the contract and the minor this package was generated from.
 func ExampleMessageService() contract.Service {
 	return contract.Service{Name: "example.message", Major: 1, Minor: 0}
 }
@@ -176,42 +177,86 @@ func ExampleMessageConsumer(minMinor, maxMinor uint32) contract.Consumer {
 	return contract.Consumer{Requirement: contract.Requirement{Name: "example.message", Major: 1, MinMinor: minMinor, MaxMinor: maxMinor}, Contract: "bae198b1b7bed2abc73cf7e2e205ec01b7b2658bc8d54a73b258adb5714439db"}
 }
 
-type ExampleMessageClient struct {
-	caller   contract.Caller
-	consumer contract.Consumer
+// ExampleMessageEndpoint is the kernel key under which the service is provided and required.
+var ExampleMessageEndpoint = contract.EndpointKey("example.message", 1)
+
+// ExampleMessageRequirement requires the service with a minor in [minMinor, maxMinor].
+func ExampleMessageRequirement(minMinor, maxMinor uint32) cordis.Requirement {
+	return contract.Require(ExampleMessageEndpoint, minMinor, maxMinor)
 }
 
-func NewExampleMessageClient(caller contract.Caller, consumer contract.Consumer) (*ExampleMessageClient, error) {
-	if caller == nil {
-		return nil, fmt.Errorf("service client requires caller")
-	}
-	if err := consumer.Check("example.message", 1, 0, "bae198b1b7bed2abc73cf7e2e205ec01b7b2658bc8d54a73b258adb5714439db"); err != nil {
-		return nil, err
-	}
-	return &ExampleMessageClient{caller: caller, consumer: consumer}, nil
-}
-
-type ExampleMessageServer interface {
+// ExampleMessage is the service. Providers implement it; consumers receive it from NewExampleMessageClient.
+type ExampleMessage interface {
 	Read(context.Context, ExampleMessageReadRequest) (ExampleMessageReadResponse, error)
 }
+type generatedExampleMessageEndpoint struct{ implementation ExampleMessage }
 
-func (c *ExampleMessageClient) Read(ctx context.Context, input ExampleMessageReadRequest) (ExampleMessageReadResponse, error) {
-	var output ExampleMessageReadResponse
-	if c == nil || c.caller == nil {
-		return output, fmt.Errorf("service client has no caller")
+// NewExampleMessageEndpoint adapts an implementation to the endpoint published under ExampleMessageEndpoint.
+func NewExampleMessageEndpoint(implementation ExampleMessage) contract.Endpoint {
+	return &generatedExampleMessageEndpoint{implementation: implementation}
+}
+func (e *generatedExampleMessageEndpoint) Service() contract.Service { return ExampleMessageService() }
+func (e *generatedExampleMessageEndpoint) Call(ctx context.Context, method string, data json.RawMessage) (json.RawMessage, error) {
+	switch method {
+	case "read":
+		var input ExampleMessageReadRequest
+		if err := json.Unmarshal(data, &input); err != nil {
+			return nil, err
+		}
+		output, err := e.implementation.Read(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(output)
+	default:
+		return nil, contract.Fail(contract.Invalid, "unknown service method")
 	}
+}
+func (e *generatedExampleMessageEndpoint) Stream(ctx context.Context, method string, data json.RawMessage) iter.Seq2[json.RawMessage, error] {
+	switch method {
+	default:
+		return contract.FailedStream(contract.Fail(contract.Invalid, "unknown streaming service method"))
+	}
+}
+
+type generatedExampleMessageClient struct {
+	endpoint contract.Endpoint
+	local    ExampleMessage
+}
+
+// NewExampleMessageClient returns a typed client for endpoint. When the endpoint was made by
+// NewExampleMessageEndpoint in this process, calls go straight to the implementation; data is
+// still validated on the way in and out.
+func NewExampleMessageClient(endpoint contract.Endpoint) (ExampleMessage, error) {
+	if endpoint == nil {
+		return nil, fmt.Errorf("service client requires an endpoint")
+	}
+	if provided := endpoint.Service(); provided.Name != "example.message" || provided.Major != 1 {
+		return nil, contract.Fail(contract.Incompatible, "endpoint provides "+provided.Key()+", client is for example.message@1")
+	}
+	client := &generatedExampleMessageClient{endpoint: endpoint}
+	if local, ok := endpoint.(*generatedExampleMessageEndpoint); ok {
+		client.local = local.implementation
+	}
+	return client, nil
+}
+func (c *generatedExampleMessageClient) Read(ctx context.Context, input ExampleMessageReadRequest) (ExampleMessageReadResponse, error) {
+	var output ExampleMessageReadResponse
 	data, err := json.Marshal(input)
 	if err != nil {
 		return output, err
 	}
-	request, err := json.Marshal(struct {
-		Method string          `json:"method"`
-		Input  json.RawMessage `json:"input"`
-	}{Method: "read", Input: data})
-	if err != nil {
-		return output, err
+	if c.local != nil {
+		result, err := c.local.Read(ctx, input)
+		if err != nil {
+			return output, err
+		}
+		if _, err := json.Marshal(result); err != nil {
+			return output, err
+		}
+		return result, nil
 	}
-	response, err := c.caller.Call(ctx, c.consumer.Requirement, request)
+	response, err := c.endpoint.Call(ctx, "read", data)
 	if err != nil {
 		return output, err
 	}
@@ -219,39 +264,4 @@ func (c *ExampleMessageClient) Read(ctx context.Context, input ExampleMessageRea
 		return output, err
 	}
 	return output, nil
-}
-func RegisterExampleMessageServer(registrar contract.Registrar, implementation ExampleMessageServer) error {
-	if registrar == nil || implementation == nil {
-		return fmt.Errorf("service registration requires registrar and implementation")
-	}
-	return registrar.Provide(ExampleMessageService(), func(ctx context.Context, data json.RawMessage) (json.RawMessage, error) {
-		var envelope struct {
-			Method string          `json:"method"`
-			Input  json.RawMessage `json:"input"`
-		}
-		if err := contract.Decode(data, &envelope); err != nil {
-			return nil, err
-		}
-		if envelope.Method == "" || len(envelope.Input) == 0 {
-			return nil, contract.Fail(contract.Invalid, "service envelope requires method and input")
-		}
-		switch envelope.Method {
-		case "read":
-			var input ExampleMessageReadRequest
-			if err := json.Unmarshal(envelope.Input, &input); err != nil {
-				return nil, err
-			}
-			output, err := implementation.Read(ctx, input)
-			if err != nil {
-				return nil, err
-			}
-			response, err := json.Marshal(output)
-			if err != nil {
-				return nil, err
-			}
-			return response, nil
-		default:
-			return nil, contract.Fail(contract.Invalid, "unknown service method")
-		}
-	})
 }

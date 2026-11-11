@@ -402,6 +402,9 @@
         },
         "response": {
           "$ref": "#/$defs/rootData"
+        },
+        "stream": {
+          "type": "boolean"
         }
       },
       "required": [

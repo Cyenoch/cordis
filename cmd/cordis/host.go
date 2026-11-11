@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/hosting"
 )
 
 func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, error), out, errOut io.Writer) (result error) {
@@ -31,14 +31,14 @@ func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, e
 		return err
 	}
 	logger := slog.New(slog.NewJSONHandler(errOut, nil))
-	var recovery map[string]cordis.RecoveryPolicy
+	var recovery map[string]hosting.RecoveryPolicy
 	if *recoveryFile != "" {
 		recovery, err = loadRecovery(*recoveryFile)
 		if err != nil {
 			return err
 		}
 	}
-	h, err := cordis.Open(cordis.Options{Directory: *directory, Trust: trust, Logger: logger, Recovery: recovery})
+	h, err := hosting.Open(hosting.Options{Directory: *directory, Trust: trust, Logger: logger, Recovery: recovery})
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, e
 		case <-ticker.C:
 			status := struct {
 				Instances []contract.InstanceInfo `json:"instances"`
-				Recovery  []cordis.RecoveryInfo   `json:"recovery"`
+				Recovery  []hosting.RecoveryInfo  `json:"recovery"`
 			}{h.Instances(), h.RecoveryStatus()}
 			encoded, err := json.Marshal(status)
 			if err != nil {
@@ -111,7 +111,7 @@ func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, e
 	}
 }
 
-func closeHost(h *cordis.Host, timeout time.Duration) error {
+func closeHost(h *hosting.Host, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return h.Close(ctx)

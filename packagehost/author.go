@@ -115,11 +115,22 @@ func LoadAuthor(sourceDir string) (*Author, error) {
 	slices.Sort(a.sources)
 	m := contract.Manifest{
 		Schema: contract.PackageSchema, ID: input.ID, Version: input.Version, Publisher: input.Publisher,
-		Protocol: contract.Protocol{Major: 1}, Runtime: input.Runtime,
+		Protocol: contract.Protocol{Major: contract.ProtocolMajor}, Runtime: input.Runtime,
 		Resources:         slices.Clone(input.Resources),
 		DefaultDefinition: input.DefaultDefinition,
 		Definitions:       []contract.DefinitionSpec{}, Dependencies: append([]contract.Dependency{}, input.Dependencies...),
 		OptionalDependencies: append([]contract.Dependency{}, input.OptionalDependencies...),
+	}
+	// A package whose contracts have streaming methods needs a host that
+	// speaks streams; it fails at negotiation on one that does not.
+	for _, d := range a.Contracts {
+		for _, service := range d.Services {
+			for _, method := range service.Methods {
+				if method.Stream && !slices.Contains(m.Protocol.RequiredFeatures, "streams") {
+					m.Protocol.RequiredFeatures = append(m.Protocol.RequiredFeatures, "streams")
+				}
+			}
+		}
 	}
 	for _, d := range a.Contracts {
 		specs, err := d.Specs()

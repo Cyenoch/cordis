@@ -1,0 +1,63 @@
+package composed
+
+import (
+ "context"
+ "encoding/json"
+ "errors"
+ "iter"
+ "testing"
+
+ "github.com/Cyenoch/cordis/contract"
+)
+
+type ticker struct{ produced *int }
+
+func (t ticker) Count(ctx context.Context, input TickerCountRequest) iter.Seq2[TickerCountResponse, error] {
+ return func(yield func(TickerCountResponse, error) bool) {
+  upto, _ := input.Upto.Int64()
+  for i := 0; i < int(upto); i++ {
+   *t.produced++
+   if i == 5 { yield(TickerCountResponse{}, errors.New("five is too many")); return }
+   if !yield(TickerCountResponse{Value: json.Number(string(rune('0' + i)))}, nil) { return }
+  }
+ }
+}
+func (ticker) Name(context.Context, TickerNameRequest) (TickerNameResponse, error) { return "ticker", nil }
+
+// remote hides the implementation, so that the client encodes and decodes
+// as it does across a session.
+type remote struct{ contract.Endpoint }
+
+func TestStreamingMethod(t *testing.T) {
+ for name, wrap := range map[string]func(contract.Endpoint) contract.Endpoint{
+  "same process": func(e contract.Endpoint) contract.Endpoint { return e },
+  "encoded":      func(e contract.Endpoint) contract.Endpoint { return remote{e} },
+ } {
+  t.Run(name, func(t *testing.T) {
+   produced := 0
+   client, err := NewTickerClient(wrap(NewTickerEndpoint(ticker{&produced})))
+   if err != nil { t.Fatal(err) }
+   // Item by item, and stopping early stops the provider.
+   var got []string
+   for item, err := range client.Count(context.Background(), TickerCountRequest{Upto: "4"}) {
+    if err != nil { t.Fatal(err) }
+    got = append(got, item.Value.String())
+    if len(got) == 2 { break }
+   }
+   if len(got) != 2 || got[0] != "0" || got[1] != "1" || produced != 2 { t.Fatalf("items %v, produced %d", got, produced) }
+   // The items a provider produced precede its error.
+   got, produced = nil, 0
+   var failure error
+   for item, err := range client.Count(context.Background(), TickerCountRequest{Upto: "9"}) {
+    if err != nil { failure = err; break }
+    got = append(got, item.Value.String())
+   }
+   if len(got) != 5 || failure == nil { t.Fatalf("items %v, error %v", got, failure) }
+   // Input is validated on both paths.
+   failure = nil
+   for _, err := range client.Count(context.Background(), TickerCountRequest{Upto: "-1"}) { failure = err }
+   if failure == nil { t.Fatal("an input its schema rejects was accepted") }
+   if out, err := client.Name(context.Background(), TickerNameRequest{}); err != nil || out != "ticker" { t.Fatalf("plain method: %v %v", out, err) }
+  })
+ }
+}

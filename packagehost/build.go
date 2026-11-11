@@ -384,7 +384,7 @@ func validateBuildDescriptor(d BuildDescriptor) error {
 		return fmt.Errorf("%s: missing generated Go package or .go output", BuildDescriptorFile)
 	}
 	p := d.SDK.Protocol
-	if p.Major != 1 || p.MinMinor != 0 || p.MinMinor > p.MaxMinor {
+	if p.Major != contract.ProtocolMajor || p.MinMinor != 0 || p.MinMinor > p.MaxMinor {
 		return fmt.Errorf("%s: unsupported SDK protocol", BuildDescriptorFile)
 	}
 	seen := map[string]bool{}

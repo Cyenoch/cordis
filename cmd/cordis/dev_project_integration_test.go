@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/examples/pluginmeta"
+	"github.com/Cyenoch/cordis/hosting"
 	"github.com/Cyenoch/cordis/packagehost"
 )
 
@@ -218,7 +218,7 @@ func TestDevPackageSelectionHonorsRequiredAndOptionalDependencies(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			h, err := cordis.Open(cordis.Options{Directory: t.TempDir(), Trust: trust})
+			h, err := hosting.Open(hosting.Options{Directory: t.TempDir(), Trust: trust})
 			if err != nil {
 				t.Fatal(err)
 			}

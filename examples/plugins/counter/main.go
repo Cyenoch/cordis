@@ -6,38 +6,44 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync/atomic"
 
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/sdk"
 )
 
 func main() {
-	if err := sdk.Run(context.Background(), NewCounterDefinition(start)); err != nil {
+	if err := sdk.Run(context.Background(), sdk.Define(CounterPlugin(start))); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
+// changed is an event anyone in the host may emit.
+var changed = contract.NewEventKey[struct{}]("counter.changed")
+
+// counter is called concurrently, so its state is atomic.
 type counter struct {
-	value, events int64
+	value, events atomic.Int64
 }
 
-func start(ctx context.Context, scope contract.Scope, config CounterConfig) error {
+func start(ctx context.Context, s *cordis.Scope, config CounterConfig) error {
 	c := &counter{}
 	if config.Initial.Present {
 		value, err := config.Initial.Value.Float64()
 		if err != nil {
 			return err
 		}
-		c.value = int64(value) // The generated integer codec already enforces the safe integer range.
+		c.value.Store(int64(value)) // The generated integer codec already enforces the safe integer range.
 	}
-	if _, err := scope.On(ctx, "counter.changed", contract.SubscriptionOptions{}, func(context.Context, json.RawMessage) (contract.EventResult, error) {
-		c.events++
-		return contract.EventResult{}, nil
+	if _, err := changed.On(ctx, s, func(context.Context, struct{}) error {
+		c.events.Add(1)
+		return nil
 	}); err != nil {
 		return err
 	}
-	return RegisterExampleCounterServer(scope, c)
+	return ExampleCounterEndpoint.Provide(s, NewExampleCounterEndpoint(c))
 }
 
 func (c *counter) Execute(ctx context.Context, input ExampleCounterExecuteRequest) (ExampleCounterExecuteResponse, error) {
@@ -48,7 +54,7 @@ func (c *counter) Execute(ctx context.Context, input ExampleCounterExecuteReques
 		if err != nil {
 			return out, err
 		}
-		c.value += int64(delta)
+		c.value.Add(int64(delta))
 	case "get":
 	case "wait":
 		<-ctx.Done()
@@ -61,7 +67,7 @@ func (c *counter) Execute(ctx context.Context, input ExampleCounterExecuteReques
 	default:
 		return out, contract.Fail(contract.Invalid, "unknown operation")
 	}
-	out.Value = json.Number(strconv.FormatInt(c.value, 10))
-	out.Events = json.Number(strconv.FormatInt(c.events, 10))
+	out.Value = json.Number(strconv.FormatInt(c.value.Load(), 10))
+	out.Events = json.Number(strconv.FormatInt(c.events.Load(), 10))
 	return out, nil
 }

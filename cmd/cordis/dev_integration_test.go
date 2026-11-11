@@ -16,18 +16,19 @@ import (
 	"testing"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/hosting"
 	"github.com/Cyenoch/cordis/packagehost"
 )
 
 const devPlugin = `package main
 import ("context"; "fmt"; "os"; "time"
- "github.com/Cyenoch/cordis/contract"
+ "github.com/Cyenoch/cordis"
  "github.com/Cyenoch/cordis/sdk")
 const version = %q
 const logPath = %q
-func start(_ context.Context, scope contract.Scope, config MainConfig) error {
+func start(_ context.Context, scope *cordis.Scope, config MainConfig) error {
  mark := func(event string) error {
   file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
   if err != nil { return err }
@@ -35,7 +36,7 @@ func start(_ context.Context, scope contract.Scope, config MainConfig) error {
   closeErr := file.Close()
   if err != nil { return err }; return closeErr
  }
- if err := scope.Defer(func(ctx context.Context) error {
+ scope.Defer(func(ctx context.Context) error {
   if err := mark("closing"); err != nil { return err }
   if config.Gate != "" {
    tick := time.NewTicker(time.Millisecond); defer tick.Stop()
@@ -44,13 +45,13 @@ func start(_ context.Context, scope contract.Scope, config MainConfig) error {
    }
   }
   return mark("stop")
- }); err != nil { return err }
+ })
  if err := mark("start"); err != nil { return err }
  if config.Fail { return fmt.Errorf("requested initialization failure") }
  return nil
 }
 func main() {
- if err := sdk.Run(context.Background(), NewMainDefinition(start)); err != nil {
+ if err := sdk.Run(context.Background(), sdk.Define(MainPlugin(start))); err != nil {
   fmt.Fprintln(os.Stderr, err); os.Exit(1)
  }
 }
@@ -347,7 +348,7 @@ func TestDevInputsExcludeOutputsAndWatchExternalFiles(t *testing.T) {
 
 func TestDevCandidateRetainsDirectoryUntilCleanupCompletes(t *testing.T) {
 	directory := t.TempDir()
-	h, err := cordis.Open(cordis.Options{Directory: filepath.Join(directory, "store")})
+	h, err := hosting.Open(hosting.Options{Directory: filepath.Join(directory, "store")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,14 +363,10 @@ func TestDevCandidateRetainsDirectoryUntilCleanupCompletes(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	instance, err := h.AddBuiltin(t.Context(), contract.Entry{ID: "slow"}, contract.Definition{
-		Start: func(_ context.Context, scope contract.Scope) error {
-			return scope.Defer(func(context.Context) error { <-release; return nil })
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	instance := cordis.Plugin[struct{}]{Name: "slow", Start: func(_ context.Context, s *cordis.Scope, _ struct{}) error {
+		s.Defer(func(context.Context) error { <-release; return nil })
+		return nil
+	}}.Load(h.Scope(), struct{}{})
 	if err := instance.Wait(t.Context()); err != nil {
 		t.Fatal(err)
 	}

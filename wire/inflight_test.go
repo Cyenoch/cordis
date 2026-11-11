@@ -69,7 +69,7 @@ func TestTimeoutBurstReleasesIncomingAdmissionBeforeHandlersExit(t *testing.T) {
 			<-canceled
 		}
 		synctest.Wait()
-		if _, err := host.Call(t.Context(), "health", nil); err != nil {
+		if _, err := host.Call(t.Context(), "ping", nil); err != nil {
 			t.Fatalf("health after timeout burst: %v; guest: %v", err, guest.Err())
 		}
 	})
@@ -91,11 +91,11 @@ func TestIncomingAdmissionRejectsUncanceledOverflow(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer closeLifecycleEndpoint(t, endpoint, peer)
+		defer closeLifecycleEndpoint(t, past(endpoint), peer)
 		for n := 1; n <= 3; n++ {
 			auditWrite(t, peer, Frame{
 				Schema: contract.SessionSchema, Kind: "request", Activation: "overflow",
-				ID: fmt.Sprintf("g:%d", n), Method: "health", DeadlineMS: 30000, Payload: json.RawMessage(`{}`),
+				ID: fmt.Sprintf("g:%d", n), Method: "ping", DeadlineMS: 30000, Payload: json.RawMessage(`{}`),
 			})
 			if n <= 2 {
 				<-entered
@@ -121,7 +121,7 @@ func TestIncomingAdmissionReleasesNormallyCompletedRequests(t *testing.T) {
 			id := fmt.Sprintf("g:%d", n)
 			auditWrite(t, peer, Frame{
 				Schema: contract.SessionSchema, Kind: "request", Activation: "audit", ID: id,
-				Method: "health", DeadlineMS: 1000, Payload: json.RawMessage(`{}`),
+				Method: "ping", DeadlineMS: 1000, Payload: json.RawMessage(`{}`),
 			})
 			var response Frame
 			if err := decoder.Decode(&response); err != nil {
@@ -160,10 +160,10 @@ func TestCanceledHandlerCompletionDoesNotReleaseAnotherRequestsAdmission(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer closeLifecycleEndpoint(t, endpoint, peer)
+		defer closeLifecycleEndpoint(t, past(endpoint), peer)
 		request := Frame{
 			Schema: contract.SessionSchema, Kind: "request", Activation: "retiring", ID: "g:1",
-			Method: "health", DeadlineMS: 30000, Payload: json.RawMessage(`"retiring"`),
+			Method: "ping", DeadlineMS: 30000, Payload: json.RawMessage(`"retiring"`),
 		}
 		auditWrite(t, peer, request)
 		<-entered
@@ -202,12 +202,13 @@ func TestCanceledIncomingHandlersHaveSeparateBound(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		past(endpoint)
 		defer func() { close(release); closeLifecycleEndpoint(t, endpoint, peer) }()
 		for n := 1; n <= 5; n++ {
 			id := fmt.Sprintf("g:%d", n)
 			auditWrite(t, peer, Frame{
 				Schema: contract.SessionSchema, Kind: "request", Activation: "cancel-flood", ID: id,
-				Method: "health", DeadlineMS: 30000, Payload: json.RawMessage(`{}`),
+				Method: "ping", DeadlineMS: 30000, Payload: json.RawMessage(`{}`),
 			})
 			<-entered
 			auditWrite(t, peer, Frame{Schema: contract.SessionSchema, Kind: "cancel", Activation: "cancel-flood", ID: id})

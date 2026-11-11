@@ -39,19 +39,50 @@ builtin 父定义通过 `Children` 携带可选定义；native 子定义来自�
 
 ## 与官方 Cordis 的对应
 
-以下对照使用只读参考提交 `35fdc969e4b6c48c48ed44717c7a018324e4dd88`，不是对官方最新版本的兼容承诺。本项目按 Go/native 的执行方式实现对应场景，不能直接加载官方 TypeScript 插件。
+以下对照使用只读参考提交 `35fdc969e4b6c48c48ed44717c7a018324e4dd88`，不是对官方最新版本的兼容承诺。对齐的是能力和语义，不是 API 的形状与名称，也不能加载官方的 TypeScript 插件。
 
-| 场景 | 固定参考版本 | 本项目 |
+仓库现在有两层，能力不同：
+
+- **进程内内核**：根包 `cordis`，见[进程内内核](kernel.md)。
+- **Host/native**：`hosting` 包和 native 插件进程，本页前面各节描述的就是这一层。它目前还没有建立在内核上，两层的插件不在同一棵实例树里。
+
+| 官方能力 | 进程内内核 | Host/native |
 |---|---|---|
-| 两组插件使用同名服务 | `Context.isolate` 创建带服务隔离信息的上下文 | Entry/Child 声明完整 service key，边界在登记时固定，由子树继承 |
-| 取消监听、只听一次、优先监听 | `on` 返回撤销函数，`once` 与 prepend | `On` / typed `Subscribe` 返回 Cancel 句柄，options 提供 Once/Prepend |
-| 取首个处理结果 | serial/bail 按返回值决定是否结束 | First 按显式 Handled 决定，允许明确处理 false |
-| 过滤事件范围 | 发射对象可携带 filter，global 监听跳过过滤；普通事件不自动按祖先传播 | Host 广播，不提供 filter/global，也不随服务隔离改变范围 |
-| 围绕后续监听执行逻辑 | waterfall 传递 next | 不提供跨进程 waterfall；本地 `contract.Chain` 只包装一个业务 handler |
-| 按上下文覆盖服务配置 | `Context.intercept` | 本轮不提供 intercept |
-| 改代码后重新加载 | HMR 插件跟踪模块并重载 | dev 构建、预检后关闭旧 Host，再创建新 activation，不保留进程内存 |
-| 组合配置及写回 | include/patch 管理配置树和变更写回 | 静态 entry 保存配置及父子关系；动态 child 绑定父 activation，不独立持久化，不提供 include/patch/源配置写回 |
+| `ctx.plugin`、fiber 树 | `Plugin[C].Load(scope, config)`，实例树任意深度 | 持久 entry 的父子关系，同包的动态子实例 |
+| 活对象服务 `ctx.provide` / `inject` | `Service[T]` 的 `Provide`、`Get`，`Requires` 声明 | 只有 JSON 进出的服务处理函数 |
+| `ctx.inject(deps, callback)` | `Scope.When` | 无 |
+| `Service.check` | `Service[T].Where` 与 `Changed` | 版本区间 |
+| `ctx.isolate` | `Scope.Isolate`、`IsolateIn` | entry 的 `Isolate` 声明，登记时固定 |
+| `ctx.intercept` | `Setting[O]` | 无 |
+| `on`、`once`、prepend | `Event[T].On` 与登记选项 | `On` / typed `Subscribe`，返回 Cancel 句柄 |
+| `emit`、`parallel` | `Emit`、`EmitParallel` | Sequential、Parallel |
+| `serial`、`bail` | `Query[In, Out]` 的 `Ask`，显式 ok | First，显式 Handled |
+| `waterfall` | `Chain[In, Out]` 的 `Use`、`Do` | 无；本地 `contract.Chain` 只包装一个业务 handler |
+| 事件过滤、global | `Scope.Filter`、`Global` | 无，Host 内广播 |
+| `ctx.effect` 与撤销函数 | `Scope.Defer`、`Scope.Sub` | `Scope.Defer` |
+| `fiber.update`、`internal/update` | `Instance.Update`、`OnUpdate` | `Instance.Update`，总是重建 activation |
+| `internal/status`、`internal/service` | `InstanceChanged`、`ServiceChanged` | 状态查询与运行记录 |
+| `ctx.logger`、exporter | `logging` 包，基于 `log/slog`，见[日志服务](logging.md) | 可选 slog 诊断日志与 stderr 转发 |
+| `ctx.timeout`、`interval`、`throttle`、`debounce` | `timer` 包的函数，见[定时辅助](timers.md) | 无 |
+| HMR | 无 | `cordis dev` 构建、预检后重启，不保留进程内存 |
+| loader、include、group、配置写回 | `loader` 包：配置文件到实例树、运行期编辑、保留注释的 YAML 写回、嵌套文件与补丁，见[配置文件加载器](loader.md)。改变设置、隔离或所属分组会重新加载条目；没有表达式求值 | 静态 entry 保存配置及父子关系，不写回源配置；与加载器文件是两份独立的意图 |
 
-官方参考实现可定位到 [context](https://github.com/cordiverse/cordis/blob/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/core/src/context.ts)、[events](https://github.com/cordiverse/cordis/blob/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/core/src/events.ts)、[HMR](https://github.com/cordiverse/cordis/tree/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/hmr) 和 [include](https://github.com/cordiverse/cordis/tree/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/include)。本项目的 Replace 会清理并重建 activation，旧句柄不控制新实例；离线 CLI 不控制正在运行的 Host，[本机在线控制](local-control.md) 须显式开启，[有限恢复](recovery.md) 须按实例配置。服务隔离也不限制进程权限。
+内核与官方的有意差异：
+
+| 官方行为 | 内核 |
+|---|---|
+| fiber 顶层的清理并发执行 | 按登记逆序顺序执行 |
+| provider 变化时不取消消费者进行中的加载 | 取消它的 `ctx` |
+| 只有 `update` 能恢复失败的 fiber | `Update` 和 `Restart` 都能 |
+| 根 dispose 等于重启 | `App.Close` 是终态 |
+| 被取代的更新等待者得到最新结果 | 得到 `ErrSuperseded` |
+| 加载中收到更新时调用监听而不重启 | 取消并以新配置重新启动 |
+| 服务方法经 Proxy 得到调用方上下文 | 服务方法显式接收调用方的 `*Scope` |
+
+Go 中不提供的官方能力：Proxy 式 `ctx.foo` 属性访问、mixin、accessor、`ctx.set`、非根作用域上不带声明的宽松查询、可调用服务、按插件索引的 registry、插件从内部停止或更新自己、`internal/dispatch` 钩子、effect 的自省、保留内存状态的 HMR、加载 TypeScript 插件。
+
+跨进程的 waterfall 与流、native 插件的 intercept、远程管理、HMR 与配置回写都还没有实现。
+
+官方参考实现可定位到 [context](https://github.com/cordiverse/cordis/blob/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/core/src/context.ts)、[events](https://github.com/cordiverse/cordis/blob/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/core/src/events.ts)、[HMR](https://github.com/cordiverse/cordis/tree/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/hmr) 和 [include](https://github.com/cordiverse/cordis/tree/35fdc969e4b6c48c48ed44717c7a018324e4dd88/packages/include)。Host 的 Replace 会清理并重建 activation，旧句柄不控制新实例；离线 CLI 不控制正在运行的 Host，[本机在线控制](local-control.md) 须显式开启，[有限恢复](recovery.md) 须按实例配置。服务隔离也不限制进程权限。
 
 [完整组合程序](composition-tutorial.md) · [资源释放](resources.md)

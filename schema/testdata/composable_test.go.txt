@@ -7,22 +7,10 @@ import (
  "reflect"
  "testing"
 
+ "github.com/Cyenoch/cordis"
  "github.com/Cyenoch/cordis/contract"
  "github.com/Cyenoch/cordis/schema"
 )
-
-type localScope struct {
- contract.Scope
- config json.RawMessage
- handlers map[string]contract.Handler
-}
-func (s *localScope) Config() json.RawMessage { return s.config }
-func (s *localScope) Provide(service contract.Service,handler contract.Handler)error{s.handlers[service.Name]=handler;return nil}
-func (s *localScope) Call(ctx context.Context,r contract.Requirement,input json.RawMessage)(json.RawMessage,error){
- minor:=uint32(0);if r.Name=="alpha"{minor=2}
- if !r.Accepts(contract.Service{Name:r.Name,Major:1,Minor:minor}){return nil,contract.Fail(contract.Incompatible,"provider outside range")}
- return s.handlers[r.Name](ctx,input)
-}
 
 type alphaServer struct{}
 func (alphaServer) Echo(_ context.Context,input AlphaEchoRequest)(AlphaEchoResponse,error){return AlphaEchoResponse{Text:input.Text},nil}
@@ -30,15 +18,26 @@ type betaServer struct{}
 func (betaServer) Echo(_ context.Context,input BetaEchoRequest)(BetaEchoResponse,error){return BetaEchoResponse{Text:input.Text},nil}
 
 func TestComposableServices(t *testing.T){
- s:=&localScope{handlers:map[string]contract.Handler{}}
- if err:=RegisterAlphaServer(s,alphaServer{});err!=nil{t.Fatal(err)}
- if err:=RegisterBetaServer(s,betaServer{});err!=nil{t.Fatal(err)}
- a,err:=NewAlphaClient(s,CounterSourceConsumer());if err!=nil{t.Fatal(err)}
- b,err:=NewBetaClient(s,BetaConsumer(0,0));if err!=nil{t.Fatal(err)}
+ a,err:=NewAlphaClient(NewAlphaEndpoint(alphaServer{}));if err!=nil{t.Fatal(err)}
+ b,err:=NewBetaClient(NewBetaEndpoint(betaServer{}));if err!=nil{t.Fatal(err)}
  response,err:=a.Echo(context.Background(),AlphaEchoRequest{Text:"direct leaf"});if err!=nil{t.Fatal(err)}
  next,err:=b.Echo(context.Background(),BetaEchoRequest{Text:response.Text});if err!=nil||next.Text!="direct leaf"{t.Fatalf("response=%+v err=%v",next,err)}
- exact,err:=NewAlphaClient(s,AlphaConsumer(1,1));if err!=nil{t.Fatal(err)}
- if _,err:=exact.Echo(context.Background(),AlphaEchoRequest{Text:"outside"});err==nil{t.Fatal("provider outside explicit range accepted")}
+ if _,err:=NewBetaClient(NewAlphaEndpoint(alphaServer{}));err==nil{t.Fatal("client accepted another service's endpoint")}
+}
+
+// A requirement outside the provider's minor keeps the consumer waiting.
+func TestRequirementRange(t *testing.T){
+ app:=cordis.New(cordis.Options{})
+ defer app.Close(context.Background())
+ if err:=AlphaEndpoint.Provide(app.Scope(),NewAlphaEndpoint(alphaServer{}));err!=nil{t.Fatal(err)}
+ wait:=func(r cordis.Requirement)cordis.State{
+  inst:=cordis.Plugin[struct{}]{Name:"consumer",Requires:[]cordis.Requirement{r}}.Load(app.Scope(),struct{}{})
+  if err:=inst.Wait(context.Background());err!=nil{t.Fatal(err)}
+  return inst.Status().State
+ }
+ minor:=AlphaService().Minor
+ if got:=wait(AlphaRequirement(minor,minor));got!=cordis.Active{t.Fatalf("matching range: %v",got)}
+ if got:=wait(AlphaRequirement(minor+1,minor+1));got!=cordis.Waiting{t.Fatalf("range above the provider: %v",got)}
 }
 
 func TestTypedDefinitionAndManifestMetadata(t *testing.T){
@@ -48,24 +47,31 @@ func TestTypedDefinitionAndManifestMetadata(t *testing.T){
  if !reflect.DeepEqual(specs,[]contract.DefinitionSpec{CounterDefinitionSpec(),PanelDefinitionSpec()}){t.Fatal("Manifest and generated descriptors drifted")}
  hash,err:=os.ReadFile("fingerprint.txt");if err!=nil{t.Fatal(err)}
  if string(hash)!=PanelDefinitionDeclarationFingerprint{t.Fatal("generated fingerprint differs from parsed graph")}
+ app:=cordis.New(cordis.Options{})
+ defer app.Close(context.Background())
  called:=false
- panel:=NewPanelDefinition(func(_ context.Context,_ contract.Scope,cfg PanelConfig)error{
+ panel:=PanelPlugin(func(_ context.Context,_ *cordis.Scope,cfg PanelConfig)error{
   called=true
   if cfg.Title!="ok"||cfg.Note.Valid||!cfg.Enabled.Present||cfg.Enabled.Value{t.Fatalf("typed config=%+v",cfg)}
   return nil
  })
- if err:=panel.Validate([]byte(`{"title":"x","note":null}`));err==nil{t.Fatal("config constraint lost")}
- if err:=panel.Validate([]byte(`{}`));err==nil{t.Fatal("required config lost")}
- s:=&localScope{config:[]byte(`{"title":"ok","note":null,"enabled":false}`)}
- if err:=panel.Start(context.Background(),s);err!=nil{t.Fatal(err)}
+ if panel.Name!="panel"{t.Fatalf("plugin name %q",panel.Name)}
+ var config PanelConfig
+ if err:=json.Unmarshal([]byte(`{"title":"x","note":null}`),&config);err==nil{t.Fatal("config constraint lost")}
+ if err:=json.Unmarshal([]byte(`{}`),&config);err==nil{t.Fatal("required config lost")}
+ if err:=panel.Validate(PanelConfig{Title:"x"});err==nil{t.Fatal("plugin accepts a config its schema rejects")}
+ if err:=json.Unmarshal([]byte(`{"title":"ok","note":null,"enabled":false}`),&config);err!=nil{t.Fatal(err)}
+ panel.Requires=nil
+ if err:=panel.Load(app.Scope(),config).Wait(context.Background());err!=nil{t.Fatal(err)}
  if !called{t.Fatal("typed start not called")}
- counter:=NewCounterDefinition(func(_ context.Context,_ contract.Scope,cfg CounterConfig)error{return nil})
- if err:=counter.Validate([]byte(`1`));err==nil{t.Fatal("explicit scalar config root constraint lost")}
- if err:=counter.Validate([]byte(`2`));err!=nil{t.Fatal(err)}
- contribution:=NewContributionDefinition(func(_ context.Context,_ contract.Scope,cfg ContributionConfig)error{return nil})
- if len(contribution.Requires)!=0||len(contribution.Provides)!=0{t.Fatal("contribution-only definition has fictitious service")}
- if err:=contribution.Validate([]byte(`{}`));err!=nil{t.Fatal(err)}
- if err:=contribution.Validate([]byte(`{"unknown":1}`));err==nil{t.Fatal("implicit config is not closed")}
+ var counter CounterConfig
+ if err:=json.Unmarshal([]byte(`1`),&counter);err==nil{t.Fatal("explicit scalar config root constraint lost")}
+ if err:=json.Unmarshal([]byte(`2`),&counter);err!=nil{t.Fatal(err)}
+ contribution:=ContributionPlugin(nil)
+ if len(contribution.Requires)!=0{t.Fatal("contribution-only definition has fictitious service")}
+ var extra ContributionConfig
+ if err:=json.Unmarshal([]byte(`{}`),&extra);err!=nil{t.Fatal(err)}
+ if err:=json.Unmarshal([]byte(`{"unknown":1}`),&extra);err==nil{t.Fatal("implicit config is not closed")}
 }
 
 func TestNamedRootAndOptionalNull(t *testing.T){

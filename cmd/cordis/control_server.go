@@ -14,13 +14,13 @@ import (
 	"sync"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/hosting"
 	"github.com/Cyenoch/cordis/packagehost"
 )
 
 type controlServer struct {
-	host       *cordis.Host
+	host       *hosting.Host
 	connection controlConnection
 	path       string
 	fileInfo   os.FileInfo
@@ -33,7 +33,7 @@ type controlServer struct {
 	requests   sync.WaitGroup
 }
 
-func startControl(ctx context.Context, host *cordis.Host, path string) (*controlServer, error) {
+func startControl(ctx context.Context, host *hosting.Host, path string) (*controlServer, error) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("listen for local control: %w", err)
@@ -213,7 +213,7 @@ func (s *controlServer) snapshot(ctx context.Context, id string) (*controlSnapsh
 	if err != nil {
 		return nil, err
 	}
-	status := &controlSnapshot{Online: true, Entries: []contract.Entry{}, Instances: []contract.InstanceInfo{}, Recovery: []cordis.RecoveryInfo{}}
+	status := &controlSnapshot{Online: true, Entries: []contract.Entry{}, Instances: []contract.InstanceInfo{}, Recovery: []hosting.RecoveryInfo{}}
 	for _, entry := range entries {
 		if id == "" || entry.ID == id {
 			status.Entries = append(status.Entries, entry)

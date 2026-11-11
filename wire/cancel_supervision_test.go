@@ -32,7 +32,7 @@ func TestUnansweredCancellationDoesNotKeepWaitingGoroutines(t *testing.T) {
 		for range 4 {
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan struct{})
-			go func() { defer close(done); _, _ = e.Call(ctx, "health", nil) }()
+			go func() { defer close(done); _, _ = e.Call(ctx, "ping", nil) }()
 			<-requests
 			cancel()
 			<-done
@@ -62,7 +62,7 @@ func TestAcknowledgedCancellationReleasesSupervision(t *testing.T) {
 					continue
 				}
 				if f.Kind == "cancel" {
-					if json.NewEncoder(peer).Encode(Frame{Schema: contract.SessionSchema, Kind: "response", Activation: "audit", ID: f.ID, Method: "health", Payload: json.RawMessage(`{}`)}) != nil {
+					if json.NewEncoder(peer).Encode(Frame{Schema: contract.SessionSchema, Kind: "response", Activation: "audit", ID: f.ID, Method: "ping", Payload: json.RawMessage(`{}`)}) != nil {
 						return
 					}
 				}
@@ -71,7 +71,7 @@ func TestAcknowledgedCancellationReleasesSupervision(t *testing.T) {
 		for range 500 {
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 1)
-			go func() { _, err := e.Call(ctx, "health", nil); done <- err }()
+			go func() { _, err := e.Call(ctx, "ping", nil); done <- err }()
 			<-requests
 			cancel()
 			<-done
@@ -79,7 +79,7 @@ func TestAcknowledgedCancellationReleasesSupervision(t *testing.T) {
 		}
 		time.Sleep(2 * time.Hour)
 		done := make(chan error, 1)
-		go func() { _, err := e.Call(t.Context(), "health", nil); done <- err }()
+		go func() { _, err := e.Call(t.Context(), "ping", nil); done <- err }()
 		select {
 		case request := <-requests:
 			auditWrite(t, peer, Frame{

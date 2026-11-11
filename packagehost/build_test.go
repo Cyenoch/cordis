@@ -34,8 +34,8 @@ func externalAuthorBuild(t *testing.T, dir, source string) BuildDescriptor {
 	}
 	writeAuthorFile(t, dir, "go.mod", "module example.net/fixture\n\ngo 1.27.3\n\nrequire github.com/Cyenoch/cordis v0.0.0\nreplace github.com/Cyenoch/cordis => "+strconv.Quote(repo)+"\n")
 	writeAuthorFile(t, dir, "main.go", `package main
-import("context"; "github.com/Cyenoch/cordis/contract"; "github.com/Cyenoch/cordis/sdk")
-func main(){ _ = sdk.Run(context.Background(), NewMainDefinition(func(context.Context,contract.Scope,MainConfig)error{return nil})) }
+import("context"; "github.com/Cyenoch/cordis"; "github.com/Cyenoch/cordis/sdk")
+func main(){ _ = sdk.Run(context.Background(), sdk.Define(MainPlugin(func(context.Context,*cordis.Scope,MainConfig)error{return nil}))) }
 `)
 	d, err := Build(t.Context(), dir, BuildOptions{GoPackage: ".", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
 	if err != nil {

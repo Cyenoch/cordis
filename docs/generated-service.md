@@ -1,11 +1,11 @@
 ---
 title: 生成服务实操
-description: 从一份受限 JSON 契约生成 Go client/server，在真实 Host Scope 上注册和调用。
+description: 从一份受限 JSON 契约生成 Go 端点与客户端，在内核作用域上发布和调用。
 ---
 
 # 生成服务实操
 
-同一份作者声明生成配置、typed Start、service client/server 和 Manifest 的 definition 元数据。生成代码只依赖标准库、`contract` 和 `schema`；字段规则见[数据契约参考](contracts.md)。
+一份契约声明同时生成配置类型、插件构造函数、服务端点与客户端，以及 Manifest 需要的 definition 描述。本页从声明到一次真实调用走完全程；字段规则见[数据契约](contracts.md)。
 
 ## 建立独立项目
 
@@ -58,7 +58,7 @@ Windows 使用空目录，并将 replace 指向本地检出的绝对路径。
 }
 ```
 
-`version:1` 是 1.0；`"1.1"` 是 1.1，不接受浮点数 `1.1`、补丁位或旧 `major/minor`。consumer 范围必须显式声明；引用同文档服务确定 major 与方法契约，不由 provider 版本猜范围。
+`version:1` 是 1.0；`"1.1"` 是 1.1，不接受浮点数 `1.1`、补丁位或 `major`/`minor` 字段。consumer 范围必须显式声明；引用同文档服务确定 major 与方法契约，不由 provider 版本猜范围。
 
 用公开库生成，并同时导出配置编辑器 schema：
 
@@ -103,7 +103,7 @@ func run() error {
 go run generate.go
 ```
 
-生成前统一检查符号并运行 gofmt；失败不会写半份生成内容。这里的 `os.WriteFile` 是教程的本地写文件步骤，不提供原子替换保证。多个声明可一起传给 `GenerateMany`；独立调用 `Generate` 的文件也可放在同包，不会各自重定义 Caller/Registrar。指纹常量按 definition/service 命名，分次调用 `GenerateMany`（包括 CLI generate）也不会引入固定公共常量；完整声明可通过 `declaration.Fingerprint()` 取得。
+生成前统一检查符号并运行 gofmt；失败不会写半份生成内容。这里的 `os.WriteFile` 是教程的本地写文件步骤，不提供原子替换保证。多个声明可一起传给 `GenerateMany`；独立调用 `Generate` 的文件也可放在同包。指纹常量按 definition/service 命名，分次调用 `GenerateMany`（包括 CLI generate）也不会引入固定公共常量；完整声明可通过 `declaration.Fingerprint()` 取得。
 
 ## 注册和调用
 
@@ -112,7 +112,6 @@ package main
 
 import (
     "context"
-    "encoding/json"
     "errors"
     "fmt"
     "os"
@@ -120,8 +119,7 @@ import (
     "time"
 
     "example.com/cordis-generated/echo"
-    cordis "github.com/Cyenoch/cordis"
-    "github.com/Cyenoch/cordis/contract"
+    "github.com/Cyenoch/cordis"
 )
 
 type echoServer struct { prefix string }
@@ -137,30 +135,22 @@ func main() {
     }
 }
 
-func run() (result error) {
+func run() error {
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
     defer cancel()
-    directory, err := os.MkdirTemp("", "cordis-generated-")
-    if err != nil { return err }
-    defer func() { result = errors.Join(result, os.RemoveAll(directory)) }()
-    host, err := cordis.Open(cordis.Options{Directory: directory})
-    if err != nil { return err }
-    defer func() {
-        closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
-        defer stop()
-        result = errors.Join(result, host.Close(closeCtx))
-    }()
-    provider, err := host.AddBuiltin(ctx, contract.Entry{
-        ID: "echo", Config: json.RawMessage(`{"prefix":"> "}`),
-    }, echo.NewEchoDefinition(func(_ context.Context, scope contract.Scope, cfg echo.EchoConfig) error {
-        return echo.RegisterExampleEchoServer(scope, echoServer{prefix: cfg.Prefix})
-    }))
-    if err != nil { return err }
+    app := cordis.New(cordis.Options{})
+    defer app.Close(ctx)
+    root := app.Scope()
+
+    provider := echo.EchoPlugin(func(_ context.Context, s *cordis.Scope, cfg echo.EchoConfig) error {
+        return echo.ExampleEchoEndpoint.Provide(s, echo.NewExampleEchoEndpoint(echoServer{prefix: cfg.Prefix}))
+    }).Load(root, echo.EchoConfig{Prefix: "> "})
     if err := provider.Wait(ctx); err != nil { return err }
-    consumer, err := host.AddBuiltin(ctx, contract.Entry{
-        ID: "client", Config: json.RawMessage(`{}`),
-    }, echo.NewClientDefinition(func(ctx context.Context, scope contract.Scope, _ echo.ClientConfig) error {
-        client, err := echo.NewExampleEchoClient(scope, echo.ClientSourceConsumer())
+
+    consumer := echo.ClientPlugin(func(ctx context.Context, s *cordis.Scope, _ echo.ClientConfig) error {
+        endpoint, err := echo.ExampleEchoEndpoint.Get(s)
+        if err != nil { return err }
+        client, err := echo.NewExampleEchoClient(endpoint)
         if err != nil { return err }
         output, err := client.Echo(ctx, echo.ExampleEchoEchoRequest{Text: "hello"})
         if err != nil { return err }
@@ -170,8 +160,7 @@ func run() (result error) {
         }
         fmt.Println("empty text rejected")
         return nil
-    }))
-    if err != nil { return err }
+    }).Load(root, echo.ClientConfig{})
     return consumer.Wait(ctx)
 }
 ```
@@ -188,15 +177,15 @@ empty text rejected
 
 本例作者不重复手写 Definition ID、Requires/Provides、配置 Decode 或字段 schema。用于机器包时，将 `declaration.Specs()` 直接赋给 `Manifest.Definitions`；生成的 `EchoDefinitionSpec()` / `ClientDefinitionSpec()` 来自同一数据。配置-only 或仅贡献的 definition 不需要虚构服务。
 
-client 在发送前校验 request，server 在分派前校验另一端的数据。这是两个信任边界，不补默认值。未知字段、未知方法、缺失 input、坏 response 及失败的业务调用均明确返回错误。
+客户端在发送前校验请求，端点在分派前校验收到的数据，这是两个信任边界，都不补默认值。未知字段、未知方法、坏响应及失败的业务调用均明确返回错误。
 
-## 消费者范围与契约身份
+## 消费者范围
 
-`ClientSourceConsumer()` 的范围是声明里的 1.1–1.3。client 不缩窄成生成时的 1.1；如果实际 provider 为兼容的 1.2，仍可按该范围路由。简单调用也可显式使用 `ExampleEchoConsumer(1, 3)`；构造器返回错误，不静默修正范围。
+`ClientSourceConsumer()` 的范围是声明里的 1.1–1.3，它进入 `ClientDefinitionSpec()` 的 `Requires`，也就是 `ClientPlugin` 的依赖：只有 minor 落在范围内的 provider 才会绑定，范围外的 provider 使消费者保持 Waiting。客户端不会把范围缩窄成生成时的 1.1，实际 provider 为 1.2 时仍可调用。代码里需要显式范围时用 `ExampleEchoRequirement(1, 3)`。
 
-`contract.Consumer` 包含 Requirement 与本地方法契约指纹。client 检查服务名、major、范围是否包含声明 minor，以及方法身份；同名同 major 的另一份方法 schema 不会仅凭版本通过。身份不包含 provider minor，不要求 provider 整体指纹相等，也不证明语义兼容。包 SemVer、服务版本和会话协议各自独立。
+`NewExampleEchoClient(endpoint)` 检查端点的服务名和 major，不匹配时返回错误。服务版本、包 SemVer 与会话协议版本相互独立。
 
-Host 直接实现 `contract.Caller`，可以交给生成 client；插件使用自身 Scope 的依赖绑定。生成 client 不依赖具体 SDK Client。
+端点在内核里就是一个普通服务：进程内的消费者、Host 应用的 `host.Scope()` 和另一个进程里的插件，都用 `ExampleEchoEndpoint.Get(scope)` 取得它，再构造客户端。
 
 ## 可选、null 与联合
 

@@ -36,6 +36,14 @@
           "type": "string",
           "pattern": "^[hg]:[1-9][0-9]*$",
           "maxLength": 128
+        },
+        "stream": {
+          "const": true
+        },
+        "window": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
         }
       },
       "required": [
@@ -47,7 +55,15 @@
         "payload",
         "deadlineMs"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "dependentRequired": {
+        "stream": [
+          "window"
+        ],
+        "window": [
+          "stream"
+        ]
+      }
     },
     {
       "type": "object",
@@ -175,6 +191,70 @@
         "id"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "cordis-go.session/v1"
+        },
+        "activation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[hg]:[1-9][0-9]*$",
+          "maxLength": 128
+        },
+        "kind": {
+          "const": "item"
+        },
+        "payload": {}
+      },
+      "required": [
+        "schema",
+        "kind",
+        "activation",
+        "id",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "cordis-go.session/v1"
+        },
+        "activation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[hg]:[1-9][0-9]*$",
+          "maxLength": 128
+        },
+        "kind": {
+          "const": "credit"
+        },
+        "credit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        }
+      },
+      "required": [
+        "schema",
+        "kind",
+        "activation",
+        "id",
+        "credit"
+      ],
+      "additionalProperties": false
     }
   ],
   "$defs": {
@@ -256,6 +336,72 @@
           "type": "integer",
           "minimum": 4096,
           "maximum": 1048576
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^(?!/)(?!.*//)[A-Za-z0-9._/-]+(?<!/)$"
+              },
+              "major": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "minor": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              }
+            },
+            "required": [
+              "name",
+              "major",
+              "minor"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provides": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^(?!/)(?!.*//)[A-Za-z0-9._/-]+(?<!/)$"
+              },
+              "major": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "minor": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              }
+            },
+            "required": [
+              "name",
+              "major",
+              "minor"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -263,7 +409,10 @@
         "identity",
         "protocol",
         "definition",
-        "config"
+        "config",
+        "services",
+        "features",
+        "provides"
       ],
       "additionalProperties": false
     },
@@ -364,14 +513,16 @@
           "additionalProperties": false
         },
         "input": {},
-        "cleanup": {
-          "type": "boolean"
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
         "service",
-        "input",
-        "cleanup"
+        "method",
+        "input"
       ],
       "additionalProperties": false
     },
@@ -411,10 +562,16 @@
           ],
           "additionalProperties": false
         },
-        "input": {}
+        "input": {},
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
       },
       "required": [
         "required",
+        "method",
         "input"
       ],
       "additionalProperties": false
@@ -432,23 +589,20 @@
             "parallel",
             "first"
           ]
+        },
+        "kind": {
+          "enum": [
+            "event",
+            "query"
+          ]
         }
       },
       "required": [
+        "kind",
         "name",
         "input",
         "mode"
       ],
-      "additionalProperties": false
-    },
-    "activationPublish": {
-      "type": "object",
-      "properties": {},
-      "additionalProperties": false
-    },
-    "activationRetire": {
-      "type": "object",
-      "properties": {},
       "additionalProperties": false
     },
     "serviceKey": {
@@ -513,10 +667,17 @@
         },
         "options": {
           "$ref": "#/$defs/subscriptionOptions"
+        },
+        "kind": {
+          "enum": [
+            "event",
+            "query"
+          ]
         }
       },
       "required": [
         "id",
+        "kind",
         "name"
       ],
       "additionalProperties": false
@@ -569,6 +730,31 @@
       },
       "required": [
         "handled"
+      ],
+      "additionalProperties": false
+    },
+    "failure": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "error"
       ],
       "additionalProperties": false
     }

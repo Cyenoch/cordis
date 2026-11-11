@@ -3,6 +3,7 @@ package wire
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +26,19 @@ type Frame struct {
 	Error      *contract.Error `json:"error,omitempty"`
 	DeadlineMS int64           `json:"deadlineMs,omitempty"`
 	Parent     string          `json:"parent,omitempty"`
+	// Stream marks a request whose results arrive as item frames; Window is
+	// the number of items the caller accepts before it grants more.
+	Stream bool `json:"stream,omitempty"`
+	Window int  `json:"window,omitempty"`
+	// Credit is the number of further items a credit frame grants.
+	Credit int `json:"credit,omitempty"`
 }
+
+// MaxWindow bounds what a caller buffers for one stream.
+const MaxWindow = 256
+
+// DefaultWindow is the window of streams started through Endpoint.Stream.
+const DefaultWindow = 16
 
 type receivedField[T any] struct {
 	value   T
@@ -47,6 +60,9 @@ type receivedFrame struct {
 	Error      receivedField[contract.Error] `json:"error"`
 	DeadlineMS receivedField[int64]          `json:"deadlineMs"`
 	Parent     receivedField[string]         `json:"parent"`
+	Stream     receivedField[bool]           `json:"stream"`
+	Window     receivedField[int]            `json:"window"`
+	Credit     receivedField[int]            `json:"credit"`
 }
 
 type Limits struct {
@@ -96,17 +112,32 @@ func readFrame(reader *bufio.Reader, limit int) (Frame, error) {
 	if err := contract.Decode(data, &received); err != nil {
 		return Frame{}, err
 	}
-	frame := Frame{wireBytes: len(data), Schema: received.Schema, Kind: received.Kind, Activation: received.Activation, ID: received.ID, Method: received.Method.value, Payload: received.Payload, DeadlineMS: received.DeadlineMS.value, Parent: received.Parent.value}
+	frame := Frame{wireBytes: len(data), Schema: received.Schema, Kind: received.Kind, Activation: received.Activation, ID: received.ID, Method: received.Method.value, Payload: received.Payload, DeadlineMS: received.DeadlineMS.value, Parent: received.Parent.value,
+		Stream: received.Stream.value, Window: received.Window.value, Credit: received.Credit.value}
 	if received.Error.present {
 		frame.Error = &received.Error.value
 	}
 	if err := validateIdentifiers(frame); err != nil {
 		return Frame{}, err
 	}
+	if frame.Kind != "credit" && received.Credit.present || frame.Kind != "request" && (received.Stream.present || received.Window.present) {
+		return Frame{}, contract.Fail(contract.Invalid, "stream field on a frame that cannot carry it")
+	}
 	switch frame.Kind {
 	case "request":
 		if frame.Method == "" || frame.Error != nil || len(frame.Payload) == 0 || frame.DeadlineMS < 1 || frame.DeadlineMS > 120000 {
 			return Frame{}, contract.Fail(contract.Invalid, "invalid request fields")
+		}
+		if received.Stream.present != received.Window.present || received.Stream.present && (!frame.Stream || frame.Window < 1 || frame.Window > MaxWindow) {
+			return Frame{}, contract.Fail(contract.Invalid, "invalid stream request fields")
+		}
+	case "item":
+		if received.Method.present || received.Error.present || len(frame.Payload) == 0 || received.DeadlineMS.present || received.Parent.present {
+			return Frame{}, contract.Fail(contract.Invalid, "invalid item fields")
+		}
+	case "credit":
+		if received.Method.present || received.Error.present || len(frame.Payload) != 0 || received.DeadlineMS.present || received.Parent.present || frame.Credit < 1 || frame.Credit > MaxWindow {
+			return Frame{}, contract.Fail(contract.Invalid, "invalid credit fields")
 		}
 	case "response":
 		if frame.Method == "" || (frame.Error == nil) == (len(frame.Payload) == 0) || received.Parent.present || received.DeadlineMS.present {
@@ -140,7 +171,7 @@ func validateIdentifiers(frame Frame) error {
 	if frame.Schema != contract.SessionSchema || frame.Activation == "" || len(frame.Activation) > 128 || !utf8.ValidString(frame.Activation) {
 		return contract.Fail(contract.Invalid, "invalid frame activation")
 	}
-	if !validRequestID(frame.ID) || frame.Parent != "" && !validRequestID(frame.Parent) || len(frame.Method) > 256 || !utf8.ValidString(frame.Method) || frame.Kind != "cancel" && frame.Method == "" {
+	if !validRequestID(frame.ID) || frame.Parent != "" && !validRequestID(frame.Parent) || len(frame.Method) > 256 || !utf8.ValidString(frame.Method) || (frame.Kind == "request" || frame.Kind == "response") && frame.Method == "" {
 		return contract.Fail(contract.Invalid, "invalid frame identifiers")
 	}
 	return nil
@@ -170,4 +201,19 @@ type requestReference struct {
 func RequestID(ctx interface{ Value(any) any }) string {
 	ref, _ := ctx.Value(requestKey{}).(requestReference)
 	return ref.id
+}
+
+// WithRequest returns ctx carrying the request that from is handling, so
+// that calls made with ctx belong to that request. A guest uses it for the
+// calls its plugin makes while it starts: they are part of initialize, and
+// the session admits nothing else before initialize has been answered.
+func WithRequest(ctx, from context.Context) context.Context {
+	ref, ok := from.Value(requestKey{}).(requestReference)
+	if !ok {
+		return ctx
+	}
+	if _, has := ctx.Value(requestKey{}).(requestReference); has {
+		return ctx
+	}
+	return context.WithValue(ctx, requestKey{}, ref)
 }

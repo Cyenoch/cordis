@@ -13,13 +13,13 @@ import (
 	"slices"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/hosting"
 	"github.com/Cyenoch/cordis/packagehost"
 )
 
 type devCandidate struct {
-	host       *cordis.Host
+	host       *hosting.Host
 	directory  string
 	generation uint64
 }
@@ -261,7 +261,7 @@ func prepareDevCandidate(ctx context.Context, options devOptions, input devInput
 		trust.DevDigests[pkg.Ref.Digest] = true
 		trust.Publishers[pkg.Manifest.Publisher] = append(trust.Publishers[pkg.Manifest.Publisher], pkg.Ref.ID)
 	}
-	h, err := cordis.Open(cordis.Options{
+	h, err := hosting.Open(hosting.Options{
 		Directory: filepath.Join(dir, "store"), Logger: logger, Trust: trust,
 	})
 	if err != nil {
@@ -282,7 +282,7 @@ func prepareDevCandidate(ctx context.Context, options devOptions, input devInput
 	return candidate, nil
 }
 
-func selectDevPackages(ctx context.Context, h *cordis.Host, packages map[string]packagehost.Package) error {
+func selectDevPackages(ctx context.Context, h *hosting.Host, packages map[string]packagehost.Package) error {
 	states := map[string]uint8{}
 	var selectPackage func(string) error
 	selectPackage = func(id string) error {

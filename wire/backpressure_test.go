@@ -51,7 +51,7 @@ func TestUnreadResponsesBoundRequestWorkAndDoNotPoisonOtherEndpoints(t *testing.
 				write := func(sequence int, method string) error {
 					payload := json.RawMessage(`{}`)
 					if method == "initialize" {
-						payload = json.RawMessage(`{"frameBytes":1048576,"identity":{"activation":"blocked-reader"},"protocol":{"major":1},"definition":"test","config":{}}`)
+						payload = json.RawMessage(`{"frameBytes":1048576,"identity":{"activation":"blocked-reader"},"protocol":{"major":1},"definition":"test","config":{},"services":[],"features":[],"provides":[]}`)
 					}
 					return json.NewEncoder(peer).Encode(wire.Frame{
 						Schema: contract.SessionSchema, Kind: "request", Activation: "blocked-reader",
@@ -133,7 +133,7 @@ func newBackpressureHealthyEndpoint(t *testing.T) *wire.Endpoint {
 		if method == "initialize" {
 			return json.RawMessage(`{"frameBytes":1048576,"minor":0,"features":[],"services":[]}`), nil
 		}
-		if method == "health" {
+		if method == "ping" {
 			return json.RawMessage(`{"ready":true}`), nil
 		}
 		return json.RawMessage(`{}`), nil
@@ -154,7 +154,7 @@ func newBackpressureHealthyEndpoint(t *testing.T) *wire.Endpoint {
 		host.Wait()
 		guest.Wait()
 	})
-	if _, err := host.Call(t.Context(), "initialize", json.RawMessage(`{"frameBytes":1048576,"identity":{"activation":"healthy-neighbor"},"protocol":{"major":1},"definition":"test","config":{}}`)); err != nil {
+	if _, err := host.Call(t.Context(), "initialize", json.RawMessage(`{"frameBytes":1048576,"identity":{"activation":"healthy-neighbor"},"protocol":{"major":1},"definition":"test","config":{},"services":[],"features":[],"provides":[]}`)); err != nil {
 		t.Fatal(err)
 	}
 	return host
@@ -162,7 +162,7 @@ func newBackpressureHealthyEndpoint(t *testing.T) *wire.Endpoint {
 
 func assertBackpressureHealth(t *testing.T, endpoint *wire.Endpoint) {
 	t.Helper()
-	output, err := endpoint.Call(t.Context(), "health", json.RawMessage(`{}`))
+	output, err := endpoint.Call(t.Context(), "ping", json.RawMessage(`{}`))
 	if err != nil || string(output) != `{"ready":true}` {
 		t.Fatalf("independent endpoint health = %s, %v", output, err)
 	}

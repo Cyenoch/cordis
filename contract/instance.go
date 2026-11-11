@@ -13,8 +13,10 @@ type Instance interface {
 	Stop(context.Context) error
 }
 
-// Event carries an explicitly scoped event across a session.
+// Event is a guest's request to run the host's listeners of an event, or
+// its handlers of a query.
 type Event struct {
+	Kind  Kind            `json:"kind"`
 	Name  string          `json:"name"`
 	Input json.RawMessage `json:"input"`
 	Mode  Dispatch        `json:"mode"`

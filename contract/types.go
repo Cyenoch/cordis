@@ -7,11 +7,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"time"
 )
 
 const PackageSchema = "cordis-go.package/v1"
 const SessionSchema = "cordis-go.session/v1"
+
+// ProtocolMajor is the session protocol this module speaks.
+const ProtocolMajor = 1
 
 type Code string
 
@@ -71,7 +75,7 @@ func (p Protocol) Negotiate(other Protocol) (uint32, error) {
 	for _, features := range [][]string{p.RequiredFeatures, other.RequiredFeatures} {
 		for _, feature := range features {
 			switch feature {
-			case "cancel", "parent", "events", "children", "subscriptions":
+			case "cancel", "parent", "events", "children", "subscriptions", "streams", "chains":
 			default:
 				return 0, Fail(Incompatible, "unsupported required session feature: "+feature)
 			}
@@ -210,9 +214,6 @@ type UpdateResult struct {
 	Superseded bool
 }
 
-type Handler func(context.Context, json.RawMessage) (json.RawMessage, error)
-type Cleanup func(context.Context) error
-
 type Dispatch string
 
 const (
@@ -228,26 +229,6 @@ type EventResult struct {
 
 type EventHandler func(context.Context, json.RawMessage) (EventResult, error)
 
-type Scope interface {
-	Identity() Identity
-	Config() json.RawMessage
-	Context() context.Context
-	Defer(Cleanup) error
-	Provide(Service, Handler) error
-	Call(context.Context, Requirement, json.RawMessage) (json.RawMessage, error)
-	On(context.Context, string, SubscriptionOptions, EventHandler) (Subscription, error)
-	Emit(context.Context, string, json.RawMessage, Dispatch) ([]EventResult, error)
-}
-
-type Definition struct {
-	Children []Definition
-	ID       string
-	Requires []Requirement
-	Provides []Service
-	Validate func(json.RawMessage) error
-	Start    func(context.Context, Scope) error
-}
-
 // Entry fixes ownership and service isolation for one registration.
 // Isolate contains complete service keys (name@major). Each key starts a boundary
 // inherited by descendants; other keys retain their nearest ancestor boundary.
@@ -262,18 +243,34 @@ type Entry struct {
 	Isolate    []string        `json:"isolate,omitempty"`
 }
 
+// Invocation is the host's call of one method of a service the guest
+// registered.
 type Invocation struct {
 	Service Service         `json:"service"`
+	Method  string          `json:"method"`
 	Input   json.RawMessage `json:"input"`
-	Cleanup bool            `json:"cleanup"`
 }
 
+// Initialize starts one activation in a guest. Protocol is the host's
+// range; Services are the exact versions bound to the definition's
+// requirements; Features are what the host supports.
 type Initialize struct {
 	FrameBytes int             `json:"frameBytes"`
 	Identity   Identity        `json:"identity"`
 	Protocol   Protocol        `json:"protocol"`
 	Definition string          `json:"definition"`
 	Config     json.RawMessage `json:"config"`
+	Services   []Service       `json:"services"`
+	Features   []string        `json:"features"`
+	// Provides are the services the definition declares; the guest must
+	// have published every one of them when it answers.
+	Provides []Service `json:"provides"`
+}
+
+// Failure is a guest's report that its plugin failed after it had started.
+// The guest closes the session right after sending it.
+type Failure struct {
+	Error Error `json:"error"`
 }
 
 type Registration struct {
@@ -289,12 +286,17 @@ type Session interface {
 	// response: true means queued in session order; false means never sent.
 	// The receipt must return promptly and does not acknowledge peer receipt.
 	CallWithReceipt(context.Context, string, json.RawMessage, func(bool)) (json.RawMessage, error)
+	// Stream calls a method whose results arrive one by one.
+	Stream(context.Context, string, json.RawMessage) iter.Seq2[json.RawMessage, error]
 	Done() <-chan struct{}
 	Err() error
 	Close() error
 }
 
 type SessionHandler func(context.Context, string, json.RawMessage) (json.RawMessage, error)
+
+// SessionStreamHandler serves the stream requests of the peer.
+type SessionStreamHandler func(context.Context, string, json.RawMessage) iter.Seq2[json.RawMessage, error]
 
 const (
 	MinFrameBytes = 4096
@@ -313,6 +315,7 @@ type Launch struct {
 	Directory  string
 	Artifact   string
 	Handle     SessionHandler
+	Stream     SessionStreamHandler
 	FrameBytes int
 	Grace      time.Duration
 	Stderr     func(StderrRecord) error

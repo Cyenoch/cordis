@@ -8,7 +8,7 @@ description: 使用当前代码的 Go benchmarks 记录可复现结果。
 在目标平台执行：
 
 ```sh
-go test -run '^$' -bench . -benchmem ./internal/core ./wire .
+go test -run '^$' -bench . -benchmem ./internal/core ./wire ./hosting
 ```
 
 结果反映当前机器与当前检出。记录 Go 版本、平台、commit 或工作区差异、命令和原始输出；不要把 builtin 调用的时间当作 native 进程启动时间。

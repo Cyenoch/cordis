@@ -48,6 +48,8 @@ type Method struct {
 	Name     string          `json:"name"`
 	Request  json.RawMessage `json:"request"`
 	Response json.RawMessage `json:"response"`
+	// Stream makes the method return a sequence; Response describes one item.
+	Stream bool `json:"stream,omitempty"`
 }
 
 func (s Service) MarshalJSON() ([]byte, error) {
@@ -223,7 +225,7 @@ func (d Definition) normalized() (Definition, error) {
 			if err != nil {
 				return Definition{}, fmt.Errorf("service %s method %s response: %w", s.Name, m.Name, err)
 			}
-			methods = append(methods, Method{Name: m.Name, Request: request, Response: response})
+			methods = append(methods, Method{Name: m.Name, Request: request, Response: response, Stream: m.Stream})
 		}
 		sort.Slice(methods, func(i, j int) bool { return methods[i].Name < methods[j].Name })
 		s.Methods = methods

@@ -10,7 +10,7 @@ Host 连接插件组合状态机和本地包目录。进程内定义使用 `AddB
 ## 打开与启用
 
 ```go
-host, err := cordis.Open(cordis.Options{
+host, err := hosting.Open(hosting.Options{
     Directory: storeDirectory,
     Trust: packagehost.TrustPolicy{
         Keys: map[string]packagehost.TrustedKey{

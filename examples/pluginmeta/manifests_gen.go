@@ -41,3 +41,10 @@ func Consumer() contract.Manifest {
 	}
 	return manifest
 }
+func Feed() contract.Manifest {
+	var manifest contract.Manifest
+	if err := json.Unmarshal([]byte("{\"schema\":\"cordis-go.package/v1\",\"id\":\"example.feed\",\"version\":\"1.0.0\",\"publisher\":\"example.author\",\"protocol\":{\"major\":1,\"minMinor\":0,\"maxMinor\":0,\"requiredFeatures\":[\"streams\"]},\"definitions\":[{\"id\":\"feed\",\"configSchema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"requires\":[],\"provides\":[{\"name\":\"example.feed\",\"major\":1,\"minor\":0}]}],\"defaultDefinition\":\"feed\",\"runtime\":{\"kind\":\"native\",\"artifacts\":[{\"os\":\"darwin\",\"arch\":\"arm64\",\"path\":\"plugin\"}]},\"dependencies\":[],\"optionalDependencies\":[]}"), &manifest); err != nil {
+		panic(err)
+	}
+	return manifest
+}

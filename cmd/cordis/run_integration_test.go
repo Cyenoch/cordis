@@ -27,7 +27,7 @@ func TestRunCallsDeclaredMinorTwoFromIndependentPlugin(t *testing.T) {
 	if out, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build author module: %s: %v", out, err)
 	}
-	manifest := contract.Manifest{Schema: contract.PackageSchema, ID: "example.cli", Version: "1.0.0", Publisher: "example", Protocol: contract.Protocol{Major: 1}, DefaultDefinition: "provider", Definitions: []contract.DefinitionSpec{{ID: "provider", ConfigSchema: json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"}}}`), Requires: []contract.Consumer{}, Provides: []contract.Service{{Name: "chain.a", Major: 1, Minor: 2}}}}, Runtime: contract.RuntimeSpec{Kind: "native", Artifacts: []contract.Artifact{{OS: runtime.GOOS, Arch: runtime.GOARCH, Path: binary}}}}
+	manifest := contract.Manifest{Schema: contract.PackageSchema, ID: "example.cli", Version: "1.0.0", Publisher: "example", Protocol: contract.Protocol{Major: contract.ProtocolMajor}, DefaultDefinition: "provider", Definitions: []contract.DefinitionSpec{{ID: "provider", ConfigSchema: json.RawMessage(`{"type":"object","properties":{"label":{"type":"string"}}}`), Requires: []contract.Consumer{}, Provides: []contract.Service{{Name: "chain.a", Major: 1, Minor: 2}}}}, Runtime: contract.RuntimeSpec{Kind: "native", Artifacts: []contract.Artifact{{OS: runtime.GOOS, Arch: runtime.GOARCH, Path: binary}}}}
 	raw, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)

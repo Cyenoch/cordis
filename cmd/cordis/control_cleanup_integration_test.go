@@ -6,15 +6,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"iter"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	cordis "github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/examples/pluginmeta"
+	"github.com/Cyenoch/cordis/hosting"
 )
 
 type controlBlockedRuntime struct{ entered, release chan struct{} }
@@ -42,6 +43,10 @@ func (s *controlBlockedSession) Call(_ context.Context, method string, _ json.Ra
 	}
 	return json.RawMessage(`{}`), nil
 }
+func (s *controlBlockedSession) Stream(context.Context, string, json.RawMessage) iter.Seq2[json.RawMessage, error] {
+	return contract.FailedStream(contract.Fail(contract.Invalid, "no streams"))
+}
+
 func (s *controlBlockedSession) CallWithReceipt(ctx context.Context, method string, input json.RawMessage, receipt func(bool)) (json.RawMessage, error) {
 	if receipt != nil {
 		receipt(true)
@@ -61,7 +66,7 @@ func TestControlSlowCleanupRemainsQueryableAndCancellationDoesNotUndoStop(t *tes
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
-	h, err := cordis.Open(cordis.Options{Directory: directory, Trust: trust, Runtime: controlBlockedRuntime{entered, release}})
+	h, err := hosting.Open(hosting.Options{Directory: directory, Trust: trust, Runtime: controlBlockedRuntime{entered, release}})
 	if err != nil {
 		t.Fatal(err)
 	}

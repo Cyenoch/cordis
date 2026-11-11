@@ -1,9 +1,11 @@
 ---
+title: 数据契约与代码生成
+description: 跨进程服务的声明格式、受限 Schema、生成的 Go 代码与配置文件解析。
 ---
 
-# 数据契约与 Go 代码生成
+# 数据契约与代码生成
 
-Cordis 跨进程只传 JSON 数据，不反射任意 Go interface。契约源文件使用 `.schema.json`。从[生成服务实操](generated-service.md)可以跑通生成、注册和调用；`schema/testdata/echo.schema.json` 则提供包含两个方法、可选值、nullable、字节和 int64 的完整声明。生成代码只依赖标准库和 `contract`、`schema`，不依赖宿主实现或 SDK。
+跨进程的服务、配置和事件只传 JSON 数据，契约声明把这些数据的形状写成 `.schema.json`，生成器据此产出严格校验的 Go 类型、服务端点和客户端。从[生成服务实操](generated-service.md)可以跑通生成、注册和调用；`schema/testdata/echo.schema.json` 是包含两个方法、可选值、nullable、字节和 int64 的完整声明。生成代码只依赖标准库、根包 `cordis`、`contract` 和 `schema`，不依赖 Host 实现或 SDK。
 
 ## 声明格式
 
@@ -26,11 +28,11 @@ Cordis 跨进程只传 JSON 数据，不反射任意 Go interface。契约源文
 }
 ```
 
-`name` 转成导出的 Go 标识符，`.`、`-`、`_`、`/`、`:` 分隔单词；例如 `example.echo` 生成 `ExampleEchoClient`。作者使用 `version:1` 表示 1.0，或 `version:"1.2"` 表示 1.2；拒绝浮点数、补丁位及旧 `major/minor` 字段。方法和字段转换后的名称发生冲突会报错，而不是重命名或覆盖。声明、方法和数据 schema 的未知字段全部拒绝；不要在声明里写 Go 类型名、函数、闭包、指针、反射规则。本地引用只接受 `#/types/Name` 或 `#/$defs/Name`，不得附加同级约束；网络、文件引用、未解析引用和环均拒绝。
+`name` 转成导出的 Go 标识符，`.`、`-`、`_`、`/`、`:` 分隔单词；例如 `example.echo` 生成 `ExampleEchoClient`。作者使用 `version:1` 表示 1.0，或 `version:"1.2"` 表示 1.2；拒绝浮点数、补丁位和 `major`/`minor` 字段。方法和字段转换后的名称发生冲突会报错，而不是重命名或覆盖。声明、方法和数据 schema 的未知字段全部拒绝；不要在声明里写 Go 类型名、函数、闭包、指针、反射规则。本地引用只接受 `#/types/Name` 或 `#/$defs/Name`，不得附加同级约束；网络、文件引用、未解析引用和环均拒绝。
 
 ## 定义、元数据与指纹
 
-`Definition` 除 `services` 外可包含 `types` 和 `definitions`。例如：
+声明除 `services` 外可包含 `types` 和 `definitions`。例如：
 
 ```json
 {
@@ -56,7 +58,7 @@ _ = fingerprint
 
 `Specs` 按 ID 排序，为每个 definition 返回唯一 `ConfigSchema`、provider 和带方法指纹的 consumer；每次返回独立数据。`Fingerprint` 返回规范声明图的小写十六进制 SHA-256：展开引用，排序类型/服务/方法/定义/无序约束，规范数字写法和默认封闭对象。它不是原文件字节 hash，不替代包完整性或签名，也不证明二进制行为。
 
-生成的 `PanelConfig`、`PanelDefinitionSpec()` 和 `NewPanelDefinition(start)` 共用上述配置与描述。`start` 签名为 `func(context.Context, contract.Scope, PanelConfig) error`；包装在调用前严格解码配置。若 definition 声明消费者 `source`，还生成 `PanelSourceConsumer()`，供 client 和实例登记复用同一对象，而非重新手写范围。
+每个 definition 生成三样东西：`PanelConfig`（严格编解码的配置类型）、`PanelDefinitionSpec()`（Manifest 用的描述）和 `PanelPlugin(start)`。`PanelPlugin` 返回 `cordis.Plugin[PanelConfig]`，`start` 的签名为 `func(context.Context, *cordis.Scope, PanelConfig) error`，`Requires` 来自声明，配置在 `Validate` 阶段严格校验。进程内用它的 `Load` 加载，native 入口用 `sdk.Define(PanelPlugin(start))`。若 definition 声明了消费者 `source`，还生成 `PanelSourceConsumer()`，描述与客户端复用同一个范围，不必手写。
 
 ## 受限 Schema
 
@@ -159,32 +161,56 @@ title = "panel"
 
 `schema/contract.schema.json` 描述作者声明文件，不是业务配置 schema。独立标准验证可在安装了 Python `jsonschema` 的环境运行 `CORDIS_SCHEMA_STANDARD_VALIDATOR=1 go test ./schema -run TestExportIndependentValidator -v`；它检查 Draft 2020-12 metaschema、导出实例向量及作者声明向量，不向 Go module 添加依赖。
 
-## 类型化 client/server
+## 类型化服务
+
+每个服务 `example.echo` 生成下列入口：
 
 ```go
-consumer := echo.ExampleEchoConsumer(1, 3)
-client, err := echo.NewExampleEchoClient(scope, consumer)
+// 键：同一个 key 用于发布和依赖
+var ExampleEchoEndpoint = contract.EndpointKey("example.echo", 1)
+func ExampleEchoRequirement(minMinor, maxMinor uint32) cordis.Requirement
+func ExampleEchoService() contract.Service // 本包生成时的名称与 minor
+func ExampleEchoConsumer(minMinor, maxMinor uint32) contract.Consumer
+
+// 服务接口：提供方实现它
+type ExampleEcho interface {
+    Echo(context.Context, ExampleEchoEchoRequest) (ExampleEchoEchoResponse, error)
+}
+func NewExampleEchoEndpoint(implementation ExampleEcho) contract.Endpoint
+func NewExampleEchoClient(endpoint contract.Endpoint) (ExampleEcho, error)
+```
+
+提供方在 `Start` 里发布端点，消费者取得端点后构造客户端：
+
+```go
+// 提供方
+err := echo.ExampleEchoEndpoint.Provide(s, echo.NewExampleEchoEndpoint(implementation))
+
+// 消费方：definition 的 Requires 已保证它存在
+endpoint, err := echo.ExampleEchoEndpoint.Get(s)
+if err != nil { return err }
+client, err := echo.NewExampleEchoClient(endpoint)
 if err != nil { return err }
 result, err := client.Echo(ctx, request)
-
-// implementation 满足生成的 ExampleEchoServer interface。
-err = echo.RegisterExampleEchoServer(scope, implementation)
 ```
 
-scope 使用公共 `contract.Caller/Registrar`，生成文件不再重复声明接口：
+端点是跨进程能力的统一形状：方法按名称寻址，进出都是校验过的 JSON。提供方在同一进程时，客户端直接调用实现，数据仍在进出两侧校验；提供方在另一个进程时，Host 把调用转给那个进程，对调用方没有区别。`NewExampleEchoClient` 检查端点的服务名和 major，不匹配返回 `incompatible`。
+
+声明为 `"stream": true` 的方法生成 `iter.Seq2[Response, error]`：提供方返回序列，调用方遍历；提前停止遍历会取消提供方，迭代以最后一个非 nil 错误结束（[流的规则](protocol.md#流)）。
+
+版本范围由 `Requirement(min, max)` 表达，它进入 definition 的 `Requires`，Host 只把范围内的 provider 绑给消费者；范围外的 provider 使消费者保持 Waiting。声明里的消费者同时记录本地方法契约的指纹（`Consumer.Contract`）；它标识消费者编译时依赖的方法，包 SemVer、服务版本和会话协议版本相互独立。
+
+事件、查询和中间件链用同样的方式处理跨进程数据，键由作者定义在共享的包里：
 
 ```go
-type Caller interface {
-    Call(context.Context, contract.Requirement, json.RawMessage) (json.RawMessage, error)
-}
-type Registrar interface {
-    Provide(contract.Service, contract.Handler) error
-}
+var (
+    Changed = contract.NewEventKey[ChangedPayload]("example.changed")
+    Lookup  = contract.NewQueryKey[LookupRequest, LookupResponse]("example.lookup")
+    Render  = contract.NewChainKey[string, string]("example.render")
+)
 ```
 
-SDK 和宿主 Scope 都可以实现这两个接口。一个 service 注册一个 handler；多方法通过严格的 `{"method":"echo","input":...}` envelope 路由，响应为该方法的原始 response JSON。未知方法、未知 envelope 字段、缺少 input 和无效 request 均拒绝；业务错误原样返回，不自动重试。client 原样使用传入消费者的闭合 minor 范围，不缩窄、不放宽。构造时检查服务名、major、声明 client minor 是否在范围内及本地方法指纹。指纹来自服务名、major 和规范方法 schema，不包含 provider minor，不强制 provider 的完整指纹相等，也不证明跨 minor 业务语义兼容。同名同 major 但不同方法契约的描述会在调用前拒绝。
-
-类型化事件使用公共 `contract.EventKey[T]`、`contract.Subscribe` 和 `contract.Publish`，middleware 使用 `contract.Chain`；参见[组合与事件](composition.md)。这些入口不要求作者导入 core，也不允许跨会话传递任意 Go 对象。
+`Changed.On(ctx, s, fn)`、`Lookup.Handle(ctx, s, fn)`、`Render.Use(ctx, s, middleware)` 登记，`Emit`、`EmitParallel`、`Ask`、`Do` 触发，语义与进程内的 `Event`、`Query`、`Chain` 相同（见[进程内内核](kernel.md)），区别在于登记和触发是返回 error 的调用，进出数据要满足本页的数据规则，插件在另一个进程时它们经由 Host 路由。Host 应用在 `host.Scope()` 上直接使用同一批键。示例见 `examples/plugins/feed` 与 `examples/plugins/counter`。
 
 `schema/testdata/consumer_test.go.txt` 是独立消费者的真实实现与行为测试。`go test -tags=integration ./schema` 会生成文件到临时独立 module，使用 replace 指向当前框架，再编译并运行 typed client/server、nullable、可选字段、int64、base64、union 和严格 envelope 场景；普通 `go test ./schema` 运行 schema 与生成输入拒绝测试。已执行结果及对应源码修订以 [OpenSpec change 的集成证据](../openspec/changes/archive/2026-10-28-build-go-plugin-framework/tasks.md) 为准，不把本文的复现命令当作新的运行记录。
 
@@ -192,11 +218,13 @@ SDK 和宿主 Scope 都可以实现这两个接口。一个 service 注册一个
 
 `schema/{package,session,integrity,signature}.schema.json` 是独立 Draft 2020-12 envelope schema；受限契约生成器使用上文自己的数据方言。外部环境提供 Python `jsonschema` 后执行 `python3 conformance/validate-schemas.py`，验证四份 metaschema、58 个结构向量和固定签名字节/SHA-256。该脚本明确不执行 codeVectors 或 Ed25519；后者由 `go test ./packagehost -run '^TestIndependentSigningInteroperabilityVector$'` 校验固定 UTF-8 输入、公钥、签名、信任及篡改拒绝。协议方向、状态、比较式语义和 nullable/64 位 codec 由真实 Go 回归验证，不能由 envelope schema 通过推断。
 
-## 手写 typed 数据
+## 手写类型的数据规则
 
-`cordis.Provide/Call`、`sdk.Provide/Call` 和 typed event 共用 `contract.Encode/DecodeData`。非 nullable 标量/struct 拒绝 null，固定数组长度必须精确；匿名嵌入字段遵守 JSON 字段优先级，重复/未知字段仍拒绝。slice/map 的 null 在 typed 数据中也拒绝；显式空值应构造非 nil 容器，显式 null 使用 Nullable。协议 envelope 继续使用 Decode，允许其已声明的可空集合。`schema.Nullable[T]` 的内部值也严格解码，不会吞掉未知字段。
+`contract.Encode`、`contract.DecodeData` 和 `EventKey`、`QueryKey`、`ChainKey`、`Invoke` 使用同一套数据规则。非 nullable 标量/struct 拒绝 null，固定数组长度必须精确；匿名嵌入字段遵守 JSON 字段优先级，重复/未知字段仍拒绝。slice/map 的 null 也拒绝；显式空值应构造非 nil 容器，显式 null 使用 `Nullable`。`schema.Nullable[T]` 的内部值同样严格解码，不会吞掉未知字段。
 
-手写 int/uint 在 64 位宿主也不得超出安全整数范围；int64/uint64 应使用 schema 字符串 codec，而非裸 JSON number。
+手写的 int/uint 在 64 位平台也不得超出安全整数范围；int64/uint64 应使用 schema 字符串 codec，而非裸 JSON number。键的类型参数不符合数据规则（指针、interface、函数、channel、递归类型、裸 int64/uint64、非字符串键的 map）时，登记直接返回错误。
+
+不使用生成器时，可用 `contract.Methods(service, map[string]contract.Handler{...})` 和 `contract.Typed` 组装端点，用 `contract.Invoke` / `contract.InvokeStream` 调用；它们走同一套编码规则。
 
 ## 配置文件解析
 

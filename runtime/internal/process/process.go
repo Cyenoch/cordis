@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,6 +52,10 @@ func (s *Session) Call(ctx context.Context, method string, input json.RawMessage
 		s.expectedStop.Store(true)
 	}
 	return s.endpoint.Call(ctx, method, input)
+}
+
+func (s *Session) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
+	return s.endpoint.Stream(ctx, method, input)
 }
 
 func (s *Session) CallWithReceipt(ctx context.Context, method string, input json.RawMessage, receipt func(bool)) (json.RawMessage, error) {
@@ -211,7 +216,7 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 	// The child owns duplicated handles; parent copies must not hold pipes open.
 	parentCloseErr := errors.Join(stdinR.Close(), stdoutW.Close(), stderrW.Close())
 	transport := &wire.Transport{Reader: stdoutR, Writer: stdinW, Closers: []io.Closer{stdinW, stdoutR}}
-	endpoint, err := wire.New(wire.Options{Transport: transport, Identity: launch.Identity, Handler: wire.Handler(launch.Handle), Limits: options.Limits, FrameBytes: launch.FrameBytes})
+	endpoint, err := wire.New(wire.Options{Transport: transport, Identity: launch.Identity, Handler: wire.Handler(launch.Handle), Stream: wire.StreamHandler(launch.Stream), Limits: options.Limits, FrameBytes: launch.FrameBytes})
 	if err != nil {
 		closed := make(chan error, 1)
 		go func() {

@@ -1,26 +1,30 @@
 ---
 title: 组合实操
-description: 父子定义、显式服务隔离、宿主解析视图与资源清理。
+description: 父子实例、服务隔离、可选依赖与清理顺序的完整程序。
 ---
 
 # 组合实操
 
-这个完整程序演示 builtin 组合：父实例显式隔离两个服务 key，子实例等待本组 provider；宿主通过子实例的 Caller 视图调用，停用父实例时先清理子实例。父子关系本身只表达所有权，未隔离的 key 仍然共享。
+一个完整程序演示实例如何组合：一组插件隔离两个服务，父实例加载的子实例等待本组的 provider，根作用域看不到组内的服务，停止父实例时子实例先清理。父子关系只表达归属，没有隔离的服务仍然共享。
 
-在独立 Go module 中将 `github.com/Cyenoch/cordis` replace 到本地检出，执行 `go mod tidy` 和 `go run .`。项目尚未发布，具体设置见[快速开始](getting-started.md)。
+在独立 Go module 中把 `github.com/Cyenoch/cordis` replace 到本地检出（设置见[快速开始](getting-started.md)），执行 `go mod tidy` 和 `go run .`。
 
 ```go title="main.go"
 package main
 
 import (
     "context"
-    "encoding/json"
+    "errors"
     "fmt"
     "os"
     "time"
 
     "github.com/Cyenoch/cordis"
-    "github.com/Cyenoch/cordis/contract"
+)
+
+var (
+    Base   = cordis.NewService[int]("example.base")
+    Result = cordis.NewService[int]("example.result")
 )
 
 func main() {
@@ -33,81 +37,58 @@ func main() {
 func run() error {
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
     defer cancel()
-    directory, err := os.MkdirTemp("", "cordis-composition-")
-    if err != nil { return err }
-    defer os.RemoveAll(directory)
-    host, err := cordis.Open(cordis.Options{Directory: directory})
-    if err != nil { return err }
-    defer func() {
-        closing, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-        defer cancel()
-        if err := host.Close(closing); err != nil {
-            fmt.Fprintln(os.Stderr, err)
-        }
-    }()
+    app := cordis.New(cordis.Options{})
+    defer app.Close(ctx)
 
-    base := contract.Service{Name: "example.base", Major: 1, Minor: 0}
-    result := contract.Service{Name: "example.result", Major: 1, Minor: 0}
-    need := contract.Requirement{Name: base.Name, Major: base.Major}
-    childReady := make(chan contract.ChildInstance, 1)
-    childDefinition := contract.Definition{
-        ID: "feature",
-        Requires: []contract.Requirement{need},
-        Provides: []contract.Service{result},
-        Start: func(_ context.Context, scope contract.Scope) error {
-            if err := scope.Defer(func(context.Context) error {
+    // 加载在 group 上的插件有自己的 Base 与 Result，其余服务仍与外面共享。
+    group := app.Scope().Isolate(Base, Result)
+
+    feature := cordis.Plugin[struct{}]{
+        Name:     "feature",
+        Requires: []cordis.Requirement{Base},
+        Start: func(_ context.Context, s *cordis.Scope, _ struct{}) error {
+            s.Defer(func(context.Context) error {
                 fmt.Println("child stopped")
                 return nil
-            }); err != nil { return err }
-            return scope.Provide(result, func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
-                return scope.Call(ctx, need, input)
             })
+            base, err := Base.Get(s)
+            if err != nil { return err }
+            return Result.Provide(s, base)
         },
     }
-    parent, err := host.AddBuiltin(ctx, contract.Entry{
-        ID: "parent", Package: "tutorial", Isolate: []string{base.Key(), result.Key()},
-    }, contract.Definition{
-        ID: "parent",
-        Children: []contract.Definition{childDefinition},
-        Start: func(ctx context.Context, scope contract.Scope) error {
-            if err := scope.Defer(func(context.Context) error {
+    var child *cordis.Instance[struct{}]
+    parent := cordis.Plugin[struct{}]{
+        Name: "parent",
+        Start: func(_ context.Context, s *cordis.Scope, _ struct{}) error {
+            s.Defer(func(context.Context) error {
                 fmt.Println("parent stopped")
                 return nil
-            }); err != nil { return err }
-            child, err := contract.CreateChild(ctx, scope, contract.Child{ID: "optional", Definition: "feature"})
-            if err != nil { return err }
-            childReady <- child
+            })
+            // 只加载，不等待：子实例缺依赖时父照常启动。
+            child = feature.Load(s, struct{}{})
             return nil
         },
-    })
-    if err != nil { return err }
+    }.Load(group, struct{}{})
     if err := parent.Wait(ctx); err != nil { return err }
-    child := <-childReady
     fmt.Println("parent ready")
     fmt.Println("child", child.Status().State)
 
-    provider, err := host.AddBuiltin(ctx, contract.Entry{ID: "provider", Parent: "parent", Package: "tutorial"}, contract.Definition{
-        ID: "provider",
-        Provides: []contract.Service{base},
-        Start: func(_ context.Context, scope contract.Scope) error {
-            return scope.Provide(base, func(context.Context, json.RawMessage) (json.RawMessage, error) {
-                return json.RawMessage(`42`), nil
-            })
+    provider := cordis.Plugin[struct{}]{
+        Name: "provider",
+        Start: func(_ context.Context, s *cordis.Scope, _ struct{}) error {
+            return Base.Provide(s, 42)
         },
-    })
-    if err != nil { return err }
+    }.Load(group, struct{}{})
     if err := provider.Wait(ctx); err != nil { return err }
     if err := child.Wait(ctx); err != nil { return err }
-    required := contract.Requirement{Name: result.Name, Major: result.Major}
-    if _, err := host.Call(ctx, required, json.RawMessage(`null`)); contract.ErrorCode(err) != contract.NotReady {
-        return fmt.Errorf("root unexpectedly resolved isolated service: %v", err)
+
+    if _, err := Result.Get(app.Scope()); !errors.Is(err, cordis.ErrUnavailable) {
+        return fmt.Errorf("root unexpectedly resolved an isolated service: %v", err)
     }
-    view, err := host.Caller(child.Status().Identity.Entry)
+    value, err := Result.Get(group)
     if err != nil { return err }
-    value, err := view.Call(ctx, required, json.RawMessage(`null`))
-    if err != nil { return err }
-    fmt.Println("child value", string(value))
-    return host.Disable(ctx, "parent")
+    fmt.Println("child value", value)
+    return parent.Stop(ctx)
 }
 ```
 
@@ -119,8 +100,8 @@ child stopped
 parent stopped
 ```
 
-`Definition.Children` 把可用子定义放在父旁边。CreateChild 在父发布后启动子实例，所以父初始化只登记、不等待。`Defer` 将资源绑定到当前 activation，父停用会等待子清理。
+在父的作用域上 `Load` 的插件是它的子实例：父停止时子实例先清理，`Defer` 的清理按登记的逆序执行。子实例缺依赖只会让它自己等待，不阻塞父启动。
 
-再创建一组不同 entry ID、相同 Isolate 声明的父子树，就能复用这些服务名称；两组只绑定各自的 provider。要共享日志服务，保持日志 key 不在 Isolate 列表中即可。嵌套子项可显式建立更近的边界，缺服务不向外回退。服务隔离不影响事件：事件仍广播到整个 Host。
+再用一个新的 `Isolate` 作用域加载同样的插件，就得到第二组：两组各自绑定本组的 provider。要让两组共用某个服务（例如日志），不把它写进 `Isolate` 即可；多个作用域共用一个空间用 `IsolateIn`。隔离只影响服务的解析，不影响事件的传播；要把事件限定在一棵子树里，用 `Scope.Filter`。
 
-同样的父子 API 可用于 native 插件：在作者契约中声明多个定义，通过 `sdk.Run` 一次提供它们；子实例从相同包版本选择定义，每个 activation 独占进程。仓库 chain 示例的 `optional-parent` 接受 `childIsolate` 配置并传给 `contract.Child.Isolate`；`TestNativeIsolationRestoreAndChildBoundaries` 实际执行两组签名 native 插件、独立更新/停用和重开恢复。完整构建方式见[快速开始](getting-started.md)。
+native 插件使用同一套 API：`start` 收到的也是 `*cordis.Scope`，在其中 `Load` 的子插件与它运行在同一个进程里。需要 Host 管理的同包子实例时，用 `sdk.CreateChild` 申请同包的另一个定义；entry 与 `contract.Child` 的 `Isolate` 声明对应这里的 `Scope.Isolate`，见[编写插件](plugin-author.md#子实例)。
