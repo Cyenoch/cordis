@@ -13,8 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/examples/pluginmeta"
 	"github.com/Cyenoch/cordis/hosting"
@@ -137,6 +140,64 @@ func run(guest string) (result error) {
 		}
 	}
 
+	// Consumers keep reading while the plugin's process is stopped and
+	// started again. A consumer may be told the provider is gone; it is
+	// never left hanging, and the plugin answers again afterwards.
+	entry := contract.Entry{ID: "feed", Package: pkg.Ref.ID}
+	churn, stop := context.WithCancel(ctx)
+	defer stop()
+	var consumers sync.WaitGroup
+	var unexpected atomic.Pointer[error]
+	var delivered atomic.Int64
+	for range 8 {
+		consumers.Go(func() {
+			for churn.Err() == nil {
+				provider, err := contract.EndpointKey("example.feed", 1).Get(host.Scope())
+				if err == nil {
+					for _, itemErr := range contract.InvokeStream[tailRequest, tailItem](ctx, provider, "tail", tailRequest{Count: 50}) {
+						if err = itemErr; err != nil {
+							break
+						}
+						delivered.Add(1)
+					}
+				}
+				_, coded := errors.AsType[*contract.Error](err)
+				if err != nil && !coded && !errors.Is(err, cordis.ErrUnavailable) && !errors.Is(err, cordis.ErrInactive) && !errors.Is(err, context.Canceled) {
+					unexpected.CompareAndSwap(nil, &err)
+					return
+				}
+			}
+		})
+	}
+	for range 6 {
+		if err := host.Disable(ctx, "feed"); err != nil {
+			return fmt.Errorf("disable under load: %w", err)
+		}
+		restarted, err := host.Enable(ctx, entry)
+		if err != nil {
+			return fmt.Errorf("enable under load: %w", err)
+		}
+		if err := restarted.Wait(ctx); err != nil {
+			return fmt.Errorf("start under load: %w", err)
+		}
+	}
+	stop()
+	consumers.Wait()
+	if err := unexpected.Load(); err != nil {
+		return fmt.Errorf("a consumer saw an unclassified error while the plugin restarted: %T: %w", *err, *err)
+	}
+	if ctx.Err() != nil || delivered.Load() == 0 {
+		return fmt.Errorf("streams under restarts: %d items delivered, %v", delivered.Load(), ctx.Err())
+	}
+	if feed, err = contract.EndpointKey("example.feed", 1).Get(host.Scope()); err != nil {
+		return err
+	}
+	for _, err := range contract.InvokeStream[tailRequest, tailItem](ctx, feed, "tail", tailRequest{Count: 3}) {
+		if err != nil {
+			return fmt.Errorf("stream after the restarts: %w", err)
+		}
+	}
+
 	// The plugin's middleware wraps a chain that the host runs.
 	render := contract.NewChainKey[string, string]("example.render")
 	if _, err := render.Use(ctx, host.Scope(), func(ctx context.Context, text string, next func(context.Context, string) (string, error)) (string, error) {
@@ -156,6 +217,6 @@ func run(guest string) (result error) {
 	if err != nil || out != "<hi!>" {
 		return fmt.Errorf("chain after the plugin stopped = %q, %v", out, err)
 	}
-	fmt.Println("Native streams and chains: ordered delivery, early stop and cross-process middleware passed.")
+	fmt.Println("Native streams and chains: ordered delivery, early stop, restarts under load and cross-process middleware passed.")
 	return nil
 }
