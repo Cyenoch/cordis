@@ -7,7 +7,6 @@
 - 调用进行中提供方停止时，调用方得到带分类的错误，而不是传输层的 `EOF`。
 - 会话、schema 校验、严格解码和配置文件解析各有模糊测试；会话的模糊测试扮演任意对端。
 - 会话层和宿主层各有并发压力测试：调用、流与提供方启停交错进行。
-- 测试中的独立模块不再访问校验和数据库，测试不因网络而停住。
 
 ## Capabilities
 
@@ -23,4 +22,3 @@
 
 - `hosting/bridge.go`、`hosting/chain.go` 的错误归类。
 - 新增测试：`wire/soak_test.go`、`hosting/soak_test.go`、`schema/fuzz_test.go`、`contract/fuzz_test.go`、`loader/fuzz_test.go`。
-- 集成测试中运行 `go mod tidy` 的环境。

@@ -35,10 +35,8 @@ func main() {
 }
 `)
 	o := BuildOptions{GoPackage: ".", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
-	// Modules in the cache are verified already; asking the checksum
-	// database stalls on networks that cannot reach it.
 	tidy := exec.CommandContext(t.Context(), "go", "mod", "tidy")
-	tidy.Dir, tidy.Env = dir, append(os.Environ(), "GOSUMDB=off")
+	tidy.Dir = dir
 	if output, err := tidy.CombinedOutput(); err != nil {
 		t.Fatalf("go mod tidy: %v\n%s", err, output)
 	}

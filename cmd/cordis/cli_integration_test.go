@@ -23,11 +23,6 @@ import (
 	"github.com/Cyenoch/cordis/packagehost"
 )
 
-// hermeticGo keeps go mod tidy in a test module from asking the checksum
-// database, which stalls on networks that cannot reach it. Every module the
-// tests need is already in the module cache, verified.
-const hermeticGo = "GOSUMDB=off"
-
 func TestCLIProcesses(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "cordis")
 	if runtime.GOOS == "windows" {
@@ -264,7 +259,6 @@ func TestCLIProcesses(t *testing.T) {
 			t.Helper()
 			command := exec.CommandContext(t.Context(), "go", args...)
 			command.Dir = dir
-			command.Env = append(os.Environ(), hermeticGo)
 			if data, err := command.CombinedOutput(); err != nil {
 				t.Fatalf("go %v: %v\n%s", args, err, data)
 			}

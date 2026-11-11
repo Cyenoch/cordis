@@ -82,7 +82,6 @@ func devSource(t *testing.T) (source, logPath, configFile string) {
 	writeCLIFile(t, configFile, `{"value":1,"gate":"","fail":false}`)
 	command := exec.CommandContext(t.Context(), "go", "mod", "tidy")
 	command.Dir = source
-	command.Env = append(os.Environ(), hermeticGo)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("prepare independent dev module: %v\n%s", err, output)
 	}
