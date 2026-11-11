@@ -374,10 +374,16 @@ func TestStreamThatFinishedSurvivesTheEndOfItsSession(t *testing.T) {
 				break
 			}
 			if len(got) == 0 {
-				// The whole stream is on this side by now; the session goes.
-				time.Sleep(5 * time.Millisecond)
+				// Wait until the whole stream, response included, is on this
+				// side; then the session goes.
+				for deadline := time.Now().Add(10 * time.Second); pendingCount(host) != 0; {
+					if time.Now().After(deadline) {
+						t.Fatal("the stream's response did not arrive")
+					}
+					time.Sleep(time.Millisecond)
+				}
 				guest.Close()
-				time.Sleep(5 * time.Millisecond)
+				<-host.Done()
 			}
 			got = append(got, string(item))
 		}
