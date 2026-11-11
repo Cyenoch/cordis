@@ -48,8 +48,34 @@ func (p *Tree) Wait(cmd *exec.Cmd) error {
 			}
 		}
 		p.settled = err == nil || errors.Is(err, syscall.ESRCH)
+		if p.settled && runtime.GOOS == "linux" {
+			// The kill is asynchronous. The leader's id still stands for
+			// the group, so this is the last moment to see it empty out;
+			// callers rely on nothing of the tree running after Close.
+			if drainErr := p.drain(); drainErr != nil {
+				return errors.Join(drainErr, cmd.Wait())
+			}
+		}
 	}
 	return cmd.Wait()
+}
+
+// drain waits until no member of the group is running.
+func (p *Tree) drain() error {
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		empty, err := groupHasNoLiveMembers(p.pid)
+		if err != nil {
+			return fmt.Errorf("query process group drain: %w", err)
+		}
+		if empty {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return errors.New("process group still has live members after termination")
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func (p *Tree) signal(signal syscall.Signal) error {
@@ -86,23 +112,11 @@ func (p *Tree) Close() error {
 	settled := p.settled
 	p.mu.Unlock()
 	if settled {
-		// Killed before the leader was reaped; its id says nothing now.
+		// Ended and drained before the leader was reaped; its id says
+		// nothing now.
 		return nil
 	}
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		empty, err := groupHasNoLiveMembers(p.pid)
-		if err != nil {
-			return fmt.Errorf("query process group drain: %w", err)
-		}
-		if empty {
-			return nil
-		}
-		if !time.Now().Before(deadline) {
-			return errors.New("process group still has live members after termination")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	return p.drain()
 }
 func (p *Tree) ExpectedExit(err *exec.ExitError) bool {
 	status, ok := err.Sys().(syscall.WaitStatus)

@@ -14,7 +14,7 @@ Go 的插件组合框架，参考 cordiverse/cordis 的组合语义。module 为
 安装 CLI（Go 版本见 `go.mod`）：
 
 ```sh
-go install github.com/Cyenoch/cordis/cmd/cordis@v0.1.0
+go install github.com/Cyenoch/cordis/cmd/cordis@latest
 ```
 
 预编译的归档与校验和见[发布页](https://github.com/Cyenoch/cordis/releases)，提供 Linux amd64/arm64、macOS amd64/arm64、Windows amd64。也可从本地检出构建：

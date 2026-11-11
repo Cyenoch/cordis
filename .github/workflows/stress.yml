@@ -19,6 +19,9 @@ on:
       environment:
         description: Extra NAME=value pairs for the tests, space separated
         default: ''
+      tags:
+        description: Build tags
+        default: ''
 permissions:
   contents: read
 jobs:
@@ -31,4 +34,4 @@ jobs:
         with:
           go-version-file: go.mod
       - shell: bash
-        run: env ${{ inputs.environment }} go test -race -count=${{ inputs.count }} -run '${{ inputs.run }}' -timeout 50m ${{ inputs.packages }}
+        run: env ${{ inputs.environment }} go test -race -tags '${{ inputs.tags }}' -count=${{ inputs.count }} -run '${{ inputs.run }}' -timeout 50m ${{ inputs.packages }}
