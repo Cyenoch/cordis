@@ -508,14 +508,30 @@ func (h *Host) retireOne(ctx context.Context, id string, disable bool) error {
 	h.cancelRecoveryTree(id)
 	stopErr := h.waitOperation(func() error { return instance.retire(ctx) })
 	if !instance.gone() {
+		// The caller gave up waiting, but the stop is submitted and final.
+		// The registration goes when the entry has cleaned up; until then
+		// nothing else can take its place.
+		go func() {
+			<-instance.instance.Done()
+			h.forget(id, instance)
+		}()
 		return errors.Join(stopErr, persistErr)
 	}
+	h.forget(id, instance)
+	return errors.Join(stopErr, persistErr)
+}
+
+// forget drops the registration of a retired entry, unless the id has been
+// registered anew since.
+func (h *Host) forget(id string, instance *hostInstance) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.entries[id] != instance {
+		return
+	}
 	delete(h.entries, id)
 	delete(h.packages, id)
 	delete(h.entrySpecs, id)
-	h.mu.Unlock()
-	return errors.Join(stopErr, persistErr)
 }
 
 func (h *Host) Uninstall(ctx context.Context, ref contract.PackageRef) (packagehost.Removal, error) {

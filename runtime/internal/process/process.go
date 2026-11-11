@@ -283,7 +283,10 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 			outcome.Reason = contract.ExitStopped
 		case <-endpoint.Done():
 			reason = endpoint.Err()
-			if reason != nil && !errors.Is(reason, io.EOF) {
+			// A process that exits while the host writes to it ends the
+			// session with a write error instead of EOF; neither is the
+			// plugin breaking the protocol.
+			if reason != nil && !errors.Is(reason, io.EOF) && !errors.Is(reason, wire.ErrWrite) {
 				outcome.Reason = contract.ExitProtocol
 			}
 		case waitErr = <-exited:

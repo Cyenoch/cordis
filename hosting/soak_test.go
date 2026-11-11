@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -106,16 +107,22 @@ func TestCallsAndStreamsWhileProvidersComeAndGo(t *testing.T) {
 	})
 }
 
-// A caller whose provider stopped under it can tell that from a failure of
-// the call itself: the error always has a code.
-func TestProviderGoneIsACodedError(t *testing.T) {
+// A caller whose provider went away can tell that from a failure the
+// provider answered with: it is not_ready however the entry went, and the
+// reason is in the text.
+func TestProviderGoneIsNotReady(t *testing.T) {
 	r := &run{identity: contract.Identity{Entry: "provider"}}
-	if err := r.gone(io.EOF); !errors.Is(err, contract.Fail(contract.NotReady, "")) {
+	closed := &contract.ClosedError{Err: io.EOF}
+	if err := r.gone(closed); !errors.Is(err, contract.Fail(contract.NotReady, "")) {
 		t.Fatalf("after an ordinary stop: %v", err)
 	}
 	r.failure = contract.Fail(contract.PluginFailed, "crashed")
-	if err := r.gone(io.EOF); !errors.Is(err, contract.Fail(contract.PluginFailed, "")) {
+	if err := r.gone(closed); !errors.Is(err, contract.Fail(contract.NotReady, "")) || !strings.Contains(err.Error(), "crashed") {
 		t.Fatalf("after a failure: %v", err)
+	}
+	answered := contract.Fail(contract.Denied, "no")
+	if err := r.gone(answered); err != answered {
+		t.Fatalf("an error the provider answered with: %v", err)
 	}
 }
 
@@ -229,5 +236,51 @@ func TestCallsAreReportedToTheObserver(t *testing.T) {
 	}
 	if !broken.Stream || broken.Items != 2 || !errors.Is(broken.Err, contract.Fail(contract.Denied, "")) {
 		t.Errorf("failing stream = %+v", broken)
+	}
+}
+
+// A replace its caller gives up on while the old version cleans up does not
+// leave the entry in a state nothing can move it out of: once the cleanup
+// has finished the entry can be restored.
+func TestReplaceGivenUpOnLeavesTheEntryRestorable(t *testing.T) {
+	f := newFixture(t)
+	slow := sdk.Define(cordis.Plugin[struct{}]{Name: "main", Start: func(_ context.Context, s *cordis.Scope, _ struct{}) error {
+		f.log.add("start")
+		s.Defer(func(context.Context) error {
+			f.log.add("stopping")
+			time.Sleep(200 * time.Millisecond)
+			f.log.add("stop")
+			return nil
+		})
+		return nil
+	}})
+	manifest := plainManifest("test.slow")
+	first := f.pack(manifest, slow)
+	manifest.Version = "2.0.0"
+	second := f.pack(manifest, slow)
+	f.open()
+	must(t, f.host.Select(f.ctx(), first))
+	must(t, f.enable(contract.Entry{ID: "slow", Package: "test.slow"}).Wait(f.ctx()))
+
+	impatient, cancel := context.WithCancel(f.ctx())
+	go func() {
+		for f.log.count("stopping") == 0 && impatient.Err() == nil {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	if err := f.host.Replace(impatient, second); err == nil {
+		t.Fatal("a replace its caller gave up on reported success")
+	}
+	eventually(t, "the old version to finish cleaning up", func() bool { return f.log.count("stop") == 1 })
+	eventually(t, "the entry to be restorable", func() bool {
+		if _, err := f.host.Restore(f.ctx()); err != nil {
+			return false
+		}
+		instance, err := f.host.Instance("slow")
+		return err == nil && instance.Status().State == contract.Active
+	})
+	if f.log.count("start") != 2 {
+		t.Fatalf("events = %q", f.log.get())
 	}
 }

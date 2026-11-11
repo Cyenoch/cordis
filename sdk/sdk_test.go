@@ -147,3 +147,40 @@ func TestShutdownAnswersAfterTheCleanups(t *testing.T) {
 		t.Fatalf("run = %v", err)
 	}
 }
+
+// A plugin whose cleanup never returns must not keep its process alive after
+// the host is gone: past the limit the process is ended.
+func TestCleanupThatOutlastsTheLimitEndsTheProcess(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	plugin := cordis.Plugin[settings]{Name: "main", Start: func(_ context.Context, s *cordis.Scope, _ settings) error {
+		s.Defer(func(context.Context) error {
+			<-release // a cleanup that does not come back
+			return nil
+		})
+		return nil
+	}}
+	guestIn, hostOut := io.Pipe()
+	hostIn, guestOut := io.Pipe()
+	guest := &wire.Transport{Reader: guestIn, Writer: guestOut, Closers: []io.Closer{guestIn, guestOut}}
+	host, err := wire.New(wire.Options{FrameBytes: contract.MaxFrameBytes, Identity: contract.Identity{Package: "test", Entry: "entry", Activation: "activation"},
+		Transport: &wire.Transport{Reader: hostIn, Writer: hostOut, Closers: []io.Closer{hostIn, hostOut}},
+		Handler: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+			return nil, contract.Fail(contract.Denied, "no host services")
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := make(chan struct{})
+	go sdk.RunWithLimit(t.Context(), guest, 20*time.Millisecond, func() { close(ended) }, sdk.Define(plugin))
+	if _, err := host.Call(t.Context(), "initialize", initialize(contract.ProtocolMajor, "main", `{"label":"x"}`)); err != nil {
+		t.Fatal(err)
+	}
+	// The host goes away without a word, as a killed process does.
+	host.Close()
+	select {
+	case <-ended:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the plugin went on past the limit")
+	}
+}

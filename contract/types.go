@@ -282,6 +282,14 @@ type Registration struct {
 	Services   []Service `json:"services"`
 }
 
+// ClosedError is what a caller gets when a session ended before its request
+// was answered. Err is why the session ended; io.EOF for an orderly close.
+// It tells "the peer is gone" from an error the peer answered with.
+type ClosedError struct{ Err error }
+
+func (e *ClosedError) Error() string { return "session closed: " + e.Err.Error() }
+func (e *ClosedError) Unwrap() error { return e.Err }
+
 type Session interface {
 	Call(context.Context, string, json.RawMessage) (json.RawMessage, error)
 	// CallWithReceipt invokes a non-nil receipt exactly once before awaiting a

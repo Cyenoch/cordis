@@ -786,7 +786,11 @@ func TestStoreRejectsMissingInstalledSignatureRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	delete(c.Signatures, pkg.Ref.Digest)
-	if err := durableJSON(filepath.Join(root, "catalog.json"), c); err != nil {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := durableBytes(filepath.Join(root, "catalog.json"), raw); err != nil {
 		t.Fatal(err)
 	}
 	opened, err := Open(root, trust)

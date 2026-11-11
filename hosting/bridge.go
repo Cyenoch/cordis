@@ -170,16 +170,16 @@ func (r *run) reported(err error) error {
 	return err
 }
 
-// gone is what a caller sees when the entry went away during its call: the
-// reason the entry failed, or, after an ordinary stop, that it is not there.
-// Either way the error has a code, so callers can tell it from a call the
-// provider answered with a failure of its own.
+// gone turns the error of a request the session ended under into what its
+// caller sees: not_ready, with the reason the entry went away. One code for
+// every way of going away lets a caller tell "try again when it is back"
+// from a failure the provider answered with. Other errors pass unchanged.
 func (r *run) gone(err error) error {
-	cause := r.reported(err)
-	if _, coded := errors.AsType[*contract.Error](cause); coded {
-		return fmt.Errorf("entry %q: %w", r.identity.Entry, cause)
+	closed, ok := errors.AsType[*contract.ClosedError](err)
+	if !ok {
+		return err
 	}
-	return &contract.Error{Code: contract.NotReady, Message: fmt.Sprintf("entry %q stopped during the call: %v", r.identity.Entry, cause)}
+	return &contract.Error{Code: contract.NotReady, Message: fmt.Sprintf("entry %q stopped during the call: %v", r.identity.Entry, r.reported(closed.Err))}
 }
 
 func (r *run) call(ctx context.Context, method string, input, output any) error {
@@ -290,12 +290,7 @@ func (e *guestEndpoint) Call(ctx context.Context, method string, input json.RawM
 	}
 	defer release()
 	if err = e.run.call(ctx, "call", contract.Invocation{Service: e.service, Method: method, Input: input}, &output); err != nil {
-		// Tell a provider that went away from one that failed the call.
-		select {
-		case <-e.run.session.Done():
-			err = e.run.gone(err)
-		default:
-		}
+		err = e.run.gone(err)
 	}
 	return output, err
 }
@@ -322,12 +317,7 @@ func (e *guestEndpoint) Stream(ctx context.Context, method string, input json.Ra
 		defer release()
 		for item, err := range e.run.session.Stream(ctx, "call", data) {
 			if err != nil {
-				// Tell a provider that went away from one that failed the call.
-				select {
-				case <-e.run.session.Done():
-					err = e.run.gone(err)
-				default:
-				}
+				err = e.run.gone(err)
 				failure = err
 				yield(nil, err)
 				return
@@ -565,7 +555,9 @@ func (r *run) deliver(ctx context.Context, spec contract.SubscriptionSpec, l *li
 		var data []byte
 		if data, err = json.Marshal(contract.EventDelivery{ID: spec.ID, Input: input}); err != nil {
 			settle(false)
-		} else if data, err = r.session.CallWithReceipt(ctx, "event", data, settle); err == nil {
+		} else if data, err = r.session.CallWithReceipt(ctx, "event", data, settle); err != nil {
+			err = r.gone(err)
+		} else {
 			var answer struct {
 				Handled *bool           `json:"handled"`
 				Value   json.RawMessage `json:"value"`

@@ -29,3 +29,19 @@ macOS 15 arm64，Go 1.27.3：
 - `bash conformance/run.sh` 通过。CI 只运行模糊测试的种子。
 - 此前偶发的本地测试卡死（`go` 子进程零 CPU 停住）原因未查明。曾推断是 `go mod tidy` 访问校验和数据库，实验否定了它：切断网络后该命令照常完成并写出 `go.sum`。为此加过的环境设置已撤回。
 - 五平台 CI（ubuntu-24.04、ubuntu-24.04-arm、macos-15、macos-15-intel、windows-2025，另有 contracts）：提交 `3190432` 全部通过，https://github.com/Cyenoch/cordis/actions/runs/43032432852 。此前两轮各有一个平台失败，都是依赖机器速度的既有测试（`hosting` 的停用超时、`loader` 的连续编辑），已改为不依赖时序。
+
+## 独立审查（运行时）
+
+非作者审查真实进程运行时、恢复与替换的竞态和本变更：1 项阻断，5 项应修。
+
+| 意见 | 处理 |
+|---|---|
+| 真实进程上调用方仍收到不带分类的传输错误（原判断依赖进程收尾信号，只在内存运行时成立） | 会话层以 `contract.ClosedError` 标出“会话在回答前结束”，宿主按类型归类；验收程序新增真实进程的“负载下崩溃”与“负载下重启” |
+| 负载下崩溃被记为 `protocol_failure` | 写入端失败归为对端离开；验收程序检查运行记录为 `unexpected_exit` |
+| 放弃等待的 Replace 留下无法恢复的登记 | 清理结束后自动撤销登记；`TestReplaceGivenUpOnLeavesTheEntryRestorable` |
+| 宿主被杀后，不响应 stdin 关闭的插件继续运行（Unix） | SDK 在会话结束后至多再运行 `sdk.CleanupLimit`（10 秒）即退出；`TestCleanupThatOutlastsTheLimitEndsTheProcess` |
+| Windows 上插件与宿主共用控制台，Ctrl+C 直达插件 | 插件进程建在独立进程组；本机无法运行 Windows，仅由 CI 的 Windows 验收覆盖不回退 |
+| 提供方协议失败以其分类到达无关调用方 | 一律 `not_ready` |
+| 事件投递绕过归类 | 已归类 |
+
+未处理，记录在案：领头进程回收后才向进程组发信号（需 pid 回绕才会误伤）；`noexec` 的临时目录下插件无法启动（需设置 `TMPDIR`）；请求的响应入队后，沿用该请求 context 的迟到调用会结束会话；`FuzzPeer` 的两个在途请求先后次序不确定；若干既有测试仍含固定时长等待（`wire/stream_test.go:302`、`hosting/chain_test.go:104`、`wire/session_test.go:162`、`hosting/management_test.go:205,228`、`hosting/boundary_test.go:190`）。

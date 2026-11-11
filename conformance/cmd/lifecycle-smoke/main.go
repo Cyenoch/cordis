@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/examples/pluginmeta"
 	"github.com/Cyenoch/cordis/hosting"
@@ -167,14 +168,55 @@ func run(guest, badGuest string) (result error) {
 	if _, err := invoke(ctx, host, "chain.a", "stats"); err != nil {
 		return err
 	}
-	if err := host.Disable(ctx, "recovery"); err != nil {
+	if err := crashUnderLoad(ctx, host); err != nil {
 		return err
 	}
 	if err := optionalChild(ctx, host, pkg.Ref.ID); err != nil {
 		return err
 	}
-	fmt.Println("Native lifecycle: dependency cleanup, update, cancellation, restore, failed-version recovery and owned children passed.")
+	fmt.Println("Native lifecycle: dependency cleanup, update, cancellation, restore, failed-version recovery, a crash under load and owned children passed.")
 	return nil
+}
+
+// crashUnderLoad kills the provider's process while callers wait in it. Each
+// caller is told the provider is not there, and the exit is recorded as the
+// process going away, not as the plugin breaking the protocol.
+func crashUnderLoad(ctx context.Context, host *hosting.Host) error {
+	const callers = 24
+	results := make(chan error, callers)
+	for range callers {
+		go func() {
+			_, err := invoke(ctx, host, "chain.a", "wait")
+			results <- err
+		}()
+	}
+	// Some callers are in the plugin by now, some still on their way.
+	time.Sleep(50 * time.Millisecond)
+	if _, err := invoke(ctx, host, "chain.a", "crash"); err == nil {
+		return errors.New("a call that crashed the plugin succeeded")
+	}
+	for range callers {
+		err := <-results
+		if !errors.Is(err, contract.Fail(contract.NotReady, "")) && !errors.Is(err, cordis.ErrUnavailable) {
+			return fmt.Errorf("a caller of a crashed plugin got %T: %w", err, err)
+		}
+	}
+	// The entry failed; disabling it reports that failure.
+	_ = host.Disable(ctx, "recovery")
+	runs, err := host.Store().Runs()
+	if err != nil {
+		return err
+	}
+	for n := len(runs) - 1; n >= 0; n-- {
+		if runs[n].Owner.Entry != "recovery" {
+			continue
+		}
+		if reason := runs[n].Outcome.Reason; reason != contract.ExitUnexpected {
+			return fmt.Errorf("a crashed plugin was recorded as %q, exit code %v", reason, runs[n].Outcome.ExitCode)
+		}
+		return nil
+	}
+	return errors.New("no run record of the crashed plugin")
 }
 
 func optionalChild(ctx context.Context, host *hosting.Host, packageID string) error {

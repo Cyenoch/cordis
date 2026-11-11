@@ -95,12 +95,7 @@ func (r *run) invokeChain(ctx context.Context, id string, input json.RawMessage,
 	r.chains.mu.Unlock()
 	call.pending.Wait()
 	if err != nil {
-		select {
-		case <-r.session.Done():
-			err = r.gone(err)
-		default:
-		}
-		return nil, err
+		return nil, r.gone(err)
 	}
 	return output, nil
 }

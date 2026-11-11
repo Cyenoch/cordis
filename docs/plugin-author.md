@@ -63,7 +63,7 @@ func start(ctx context.Context, s *cordis.Scope, config Config) error {
 
 `Message` 可以是导入包里的接口，也可以是本包声明的、只含自己调用的方法的接口，Host 按方法指纹匹配（示例见 `examples/plugins/consumer`）。
 
-调用另一个进程里的服务与调用本进程的服务写法一致，经由 Host 路由，数据按契约校验。`Start` 内可以发出这类请求，也可以登记事件、查询和中间件；这些请求以初始化为父，在初始化成功后才对外生效。
+调用另一个进程里的服务与调用本进程的服务写法一致，经由 Host 路由，数据按契约校验。提供方在调用期间停止或崩溃时，调用方得到 `not_ready`，文本带原因；这与提供方自己回答的失败不同，等它回来后可以重试。`Start` 内可以发出这类请求，也可以登记事件、查询和中间件；这些请求以初始化为父，在初始化成功后才对外生效。
 
 ## 事件、查询与中间件
 
@@ -97,6 +97,8 @@ s.Defer(func(context.Context) error { return resource.Close() })
 ```
 
 停止 provider 时，Host 先让所有消费者完成清理，再结束 provider 的进程，所以消费者的清理仍然可以调用 provider。不要缓存跨激活的 `Scope`。
+
+会话结束后（Host 关闭它，或 Host 进程消失），插件进程最多再运行 `sdk.CleanupLimit`（10 秒）让清理和在途工作收尾，到时不论是否完成都退出：插件不应比被杀掉的 Host 活得更久。
 
 ## 子实例
 

@@ -2,6 +2,9 @@
 # errcheck is left out: what it reports here is best-effort cleanup and
 # writes to in-memory hashes.
 version: "2"
+run:
+  build-tags:
+    - integration
 linters:
   default: none
   enable:

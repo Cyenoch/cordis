@@ -137,7 +137,7 @@ func (e *Endpoint) Stream(ctx context.Context, method string, input json.RawMess
 					}
 				default:
 					e.removePending(id, false)
-					yield(nil, e.Err())
+					yield(nil, e.closed())
 				}
 				return
 			}
@@ -155,7 +155,7 @@ func (e *Endpoint) issueStream(ctx context.Context, method string, input json.Ra
 	case <-ctx.Done():
 		return "", nil, "", ctx.Err()
 	case <-e.done:
-		return "", nil, "", e.Err()
+		return "", nil, "", e.closed()
 	}
 	defer func() { <-e.issue }()
 	e.mu.Lock()

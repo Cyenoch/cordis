@@ -155,6 +155,13 @@ func (e *Endpoint) SetInflight(limit int) {
 	e.limits.Inflight = min(e.limits.Inflight, limit)
 }
 func (e *Endpoint) Err() error   { e.mu.Lock(); defer e.mu.Unlock(); return e.err }
+
+// ErrWrite marks a session that ended because the peer no longer took what
+// was written to it: the peer went away, it did not break the protocol.
+var ErrWrite = errors.New("write session")
+
+// closed is what a request gets that the session ended under.
+func (e *Endpoint) closed() error { return &contract.ClosedError{Err: e.Err()} }
 func (e *Endpoint) Close() error { e.shutdown(io.EOF); return nil }
 func (e *Endpoint) Wait()        { e.wg.Wait() }
 
@@ -213,7 +220,7 @@ func (e *Endpoint) CallWithReceipt(ctx context.Context, method string, input jso
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-e.done:
-		return nil, e.Err()
+		return nil, e.closed()
 	}
 	if err := ctx.Err(); err != nil {
 		<-e.issue
@@ -296,7 +303,7 @@ func (e *Endpoint) CallWithReceipt(ctx context.Context, method string, input jso
 		default:
 		}
 		e.removePending(id, false)
-		return nil, e.Err()
+		return nil, e.closed()
 	}
 }
 
@@ -353,7 +360,7 @@ func (e *Endpoint) enqueue(ctx context.Context, message outbound) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-e.done:
-		return e.Err()
+		return e.closed()
 	}
 }
 
@@ -472,7 +479,7 @@ func (e *Endpoint) sendResponse(ctx, deliveryCtx context.Context, response Frame
 		case <-deliveryCtx.Done():
 			return deliveryCtx.Err()
 		case <-e.done:
-			return e.Err()
+			return e.closed()
 		}
 	}
 }
@@ -494,7 +501,7 @@ func (e *Endpoint) writeLoop() {
 			for len(data) > 0 {
 				n, err := e.transport.Write(data)
 				if err != nil {
-					e.shutdown(fmt.Errorf("write session: %w", err))
+					e.shutdown(fmt.Errorf("%w: %w", ErrWrite, err))
 					return
 				}
 				if n == 0 {

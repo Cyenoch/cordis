@@ -15,7 +15,10 @@ package sdk
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"os"
+	"time"
 
 	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
@@ -61,10 +64,16 @@ func Define[C any](plugin cordis.Plugin[C]) Definition {
 	}}
 }
 
+// CleanupLimit is how long the process started by Run goes on after its
+// session ended, for cleanups and work in flight to finish. A plugin must
+// not outlive a host that was killed: when the limit passes the process
+// exits, whatever is still running.
+const CleanupLimit = 10 * time.Second
+
 // Run serves the definitions on standard input and output until the host
 // shuts the plugin down, the context is canceled or a termination signal
-// arrives. Registered cleanups have run when it returns; the caller decides
-// what to do with the error.
+// arrives. Registered cleanups have run when it returns, unless they took
+// longer than CleanupLimit; the caller decides what to do with the error.
 func Run(ctx context.Context, definitions ...Definition) error {
 	ctx, stop := processContext(ctx)
 	defer stop()
@@ -72,11 +81,21 @@ func Run(ctx context.Context, definitions ...Definition) error {
 	if err != nil {
 		return err
 	}
-	return RunTransport(ctx, transport, definitions...)
+	return run(ctx, transport, CleanupLimit, func() {
+		fmt.Fprintln(os.Stderr, "cordis: cleanup did not finish within", CleanupLimit, "of the session ending; exiting")
+		os.Exit(1)
+	}, definitions...)
 }
 
-// RunTransport is Run over a stream the caller owns, for tests.
+// RunTransport is Run over a stream the caller owns, for tests. It leaves
+// the process alone however long cleanups take.
 func RunTransport(ctx context.Context, transport io.ReadWriteCloser, definitions ...Definition) error {
+	return run(ctx, transport, 0, nil, definitions...)
+}
+
+// run serves the definitions. With a limit, overdue is called when the
+// plugin is still cleaning up that long after its session ended.
+func run(ctx context.Context, transport io.ReadWriteCloser, limit time.Duration, overdue func(), definitions ...Definition) error {
 	byID := make(map[string]Definition, len(definitions))
 	for _, definition := range definitions {
 		if _, duplicate := byID[definition.ID]; definition.ID == "" || definition.load == nil || duplicate {
@@ -87,7 +106,7 @@ func RunTransport(ctx context.Context, transport io.ReadWriteCloser, definitions
 	if len(byID) == 0 {
 		return contract.Fail(contract.Invalid, "at least one SDK definition required")
 	}
-	return serve(ctx, byID, transport)
+	return serve(ctx, byID, transport, limit, overdue)
 }
 
 // Identity returns the identity of the activation that s runs in. It

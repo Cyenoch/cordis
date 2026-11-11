@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
@@ -52,7 +53,7 @@ type subscription struct {
 	handler contract.EventHandler
 }
 
-func serve(ctx context.Context, definitions map[string]Definition, transport io.ReadWriteCloser) error {
+func serve(ctx context.Context, definitions map[string]Definition, transport io.ReadWriteCloser, limit time.Duration, overdue func()) error {
 	// The host announces the session's limit in initialize; until then the
 	// guest accepts whatever a host may choose.
 	limits := wire.DefaultLimits()
@@ -71,7 +72,10 @@ func serve(ctx context.Context, definitions map[string]Definition, transport io.
 	case <-endpoint.Done():
 	}
 	// Whatever ended the session, the plugin's cleanups run before the
-	// process goes away.
+	// process goes away, within a limit when the process is ours to end.
+	if overdue != nil {
+		defer time.AfterFunc(limit, overdue).Stop()
+	}
 	cleanupErr := g.stop(context.WithoutCancel(ctx))
 	endpoint.Close()
 	endpoint.Wait()
