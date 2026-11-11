@@ -41,4 +41,4 @@
 ## 实际运行
 
 - macOS 15 arm64，Go 1.27.3：`bash conformance/run.sh` 通过（含 `-race` 全量集成测试与三段 native 验收）。
-- 五平台 CI：见提交后的运行记录。
+- 五平台 CI（ubuntu-24.04、ubuntu-24.04-arm、macos-15、macos-15-intel、windows-2025，另有 contracts）：提交 `3190432` 全部通过，https://github.com/Cyenoch/cordis/actions/runs/43032432852 。此前两轮各有一个平台失败，都是依赖机器速度的既有测试（`hosting` 的停用超时、`loader` 的连续编辑），已改为不依赖时序。
