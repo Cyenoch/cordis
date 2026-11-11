@@ -50,6 +50,7 @@ type node struct {
 	kind          string
 	nullable      bool
 	properties    map[string]*node
+	additional    *node // set for a map: the schema of every value
 	required      map[string]bool
 	requiredNames []string
 	items         *node
@@ -192,7 +193,18 @@ func compile(raw json.RawMessage, path string, depth int) (*node, error) {
 			allowed["properties"], allowed["required"], allowed["additionalProperties"] = true, true, true
 			n.properties, n.required = map[string]*node{}, map[string]bool{}
 			if v, ok := obj["additionalProperties"]; ok && string(bytes.TrimSpace(v)) != "false" {
-				return nil, field(pointer(path, "additionalProperties"), "additionalProperties", "only false is supported; objects are closed")
+				// A schema here makes the object a map: any key, every
+				// value held to that schema.
+				_, properties := obj["properties"]
+				_, required := obj["required"]
+				if properties || required {
+					return nil, field(pointer(path, "additionalProperties"), "additionalProperties", "a map cannot also declare properties")
+				}
+				child, err := compile(v, pointer(path, "additionalProperties"), depth+1)
+				if err != nil {
+					return nil, err
+				}
+				n.additional = child
 			}
 			if v, ok := obj["properties"]; ok {
 				var props map[string]json.RawMessage
@@ -419,6 +431,9 @@ func (n *node) validate(raw json.RawMessage, path string) error {
 			}
 			for _, name := range sortedKeys(value) {
 				child, ok := n.properties[name]
+				if n.additional != nil {
+					child, ok = n.additional, true
+				}
 				if !ok {
 					return field(pointer(path, name), "additionalProperties", "unknown property")
 				}

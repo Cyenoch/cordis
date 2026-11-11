@@ -57,7 +57,7 @@ var commandUsage = map[string]string{
 	"keygen":    "keygen PRIVATE_KEY_FILE",
 	"inspect":   "inspect ARCHIVE.zip",
 	"validate":  "validate ARCHIVE.zip",
-	"generate":  "generate -output FILE|- [-package NAME] [-format FORMAT] CONTRACT...",
+	"generate":  "generate [DIRECTORY] | generate -output FILE|- [-package NAME] [-format FORMAT] CONTRACT...",
 	"run":       "run -dev-unsigned [FLAGS] ARCHIVE.zip",
 	"version":   "version",
 	"list":      "list -store DIR",
@@ -135,7 +135,7 @@ func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 	case "build":
 		return buildCommand(ctx, flags, parse, out)
 	case "generate":
-		return generateCommand(flags, parse, out)
+		return generateCommand(ctx, flags, parse, out)
 	case "run":
 		return runCommand(ctx, flags, parse, in, out, errOut)
 	case "list", "install", "select", "enable", "disable", "remove", "uninstall", "status":

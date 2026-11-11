@@ -39,11 +39,11 @@ if err := instance.Wait(ctx); err != nil { return err }
 
 ```go
 provider := cordis.Plugin[struct{}]{Name: "store", Start: func(_ context.Context, s *cordis.Scope, _ struct{}) error {
-    return ExampleStoreEndpoint.Provide(s, NewExampleStoreEndpoint(store))
+    return ProvideStore(s, store)
 }}.Load(host.Scope(), struct{}{})
 ```
 
-native entry 依赖 `example.store` 时，进程内 provider 一发布它就启动；provider 停止时，依赖它的 native 实例先清理再等待。反过来，进程内插件用 `ExampleCounterEndpoint.Get(host.Scope())` 取得 native 提供的端点，再构造客户端。这些插件不写入包目录，随 Host 关闭而停止。
+native entry 依赖 `example.store` 时，进程内 provider 一发布它就启动；provider 停止时，依赖它的 native 实例先清理再等待。反过来，进程内插件用 `GetCounter(host.Scope())` 取得 native 提供的服务的客户端。这些插件不写入包目录，随 Host 关闭而停止。`ProvideStore`、`GetCounter` 由声明了对应服务接口的包经 `cordis generate` 生成。
 
 `host.ProvideParent(s, id)` 让进程内插件成为持久 entry 的父：`Entry.Parent` 指向这个 `id` 的 entry 在它 Active 后启动，在它停止前先清理。同一个 `id` 同时只能有一个提供者。
 

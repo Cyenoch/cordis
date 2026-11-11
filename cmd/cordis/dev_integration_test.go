@@ -28,7 +28,13 @@ import ("context"; "fmt"; "os"; "time"
  "github.com/Cyenoch/cordis/sdk")
 const version = %q
 const logPath = %q
-func start(_ context.Context, scope *cordis.Scope, config MainConfig) error {
+type Config struct {
+ Value int    ` + "`json:\"value\"`" + `
+ Gate  string ` + "`json:\"gate\"`" + `
+ Fail  bool   ` + "`json:\"fail\"`" + `
+}
+//cordis:plugin main
+func start(_ context.Context, scope *cordis.Scope, config Config) error {
  mark := func(event string) error {
   file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
   if err != nil { return err }
@@ -51,7 +57,7 @@ func start(_ context.Context, scope *cordis.Scope, config MainConfig) error {
  return nil
 }
 func main() {
- if err := sdk.Run(context.Background(), sdk.Define(MainPlugin(start))); err != nil {
+ if err := sdk.Run(context.Background(), sdk.Define(MainPlugin)); err != nil {
   fmt.Fprintln(os.Stderr, err); os.Exit(1)
  }
 }
@@ -70,15 +76,13 @@ func devSource(t *testing.T) (source, logPath, configFile string) {
 	writeCLIFile(t, filepath.Join(source, "plugin.json"), fmt.Sprintf(`{
  "id":"dev.test","version":"0.1.0","publisher":"example",
  "resources":["linked-resource"],
- "runtime":{"kind":"native","artifacts":[{"os":%q,"arch":%q,"path":"plugin"}]},
- "contract":{"definitions":[{"id":"main","config":{"type":"object",
- "properties":{"value":{"type":"integer"},"gate":{"type":"string"},"fail":{"type":"boolean"}},
- "required":["value","gate","fail"],"additionalProperties":false}}]}}`, runtime.GOOS, runtime.GOARCH))
+ "runtime":{"kind":"native","artifacts":[{"os":%q,"arch":%q,"path":"plugin"}]}}`, runtime.GOOS, runtime.GOARCH))
 	writeCLIFile(t, filepath.Join(source, "main.go"), fmt.Sprintf(devPlugin, "a", logPath))
 	writeCLIFile(t, filepath.Join(source, "linked-resource"), "resource")
 	writeCLIFile(t, configFile, `{"value":1,"gate":"","fail":false}`)
 	command := exec.CommandContext(t.Context(), "go", "mod", "tidy")
 	command.Dir = source
+	command.Env = append(os.Environ(), hermeticGo)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("prepare independent dev module: %v\n%s", err, output)
 	}

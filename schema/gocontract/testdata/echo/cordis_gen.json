@@ -1,0 +1,222 @@
+{
+  "schema": "cordis-go.contract/v1",
+  "services": [
+    {
+      "name": "example.clock",
+      "version": "1.2",
+      "methods": [
+        {
+          "name": "now",
+          "request": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "response": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "name": "example.echo",
+      "version": "1.0",
+      "methods": [
+        {
+          "name": "count",
+          "request": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "response": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        {
+          "name": "put",
+          "request": {
+            "additionalProperties": false,
+            "properties": {
+              "line": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "line"
+            ],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          }
+        },
+        {
+          "name": "reset",
+          "request": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          }
+        },
+        {
+          "name": "say",
+          "request": {
+            "additionalProperties": false,
+            "properties": {
+              "big": {
+                "format": "int64",
+                "type": "string"
+              },
+              "code": {
+                "pattern": "^[a-z]{1,3}$",
+                "type": "string"
+              },
+              "labels": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "nullable": true,
+                "type": "object"
+              },
+              "mode": {
+                "enum": [
+                  "loud",
+                  "quiet"
+                ],
+                "type": "string"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 2,
+                "nullable": true,
+                "type": "array"
+              },
+              "text": {
+                "maxLength": 16,
+                "minLength": 1,
+                "type": "string"
+              },
+              "times": {
+                "maximum": 3,
+                "minimum": 1,
+                "nullable": true,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {
+              "length": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "length",
+              "text"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "name": "tail",
+          "request": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "count"
+            ],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {
+              "line": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "line"
+            ],
+            "type": "object"
+          },
+          "stream": true
+        },
+        {
+          "name": "ticks",
+          "request": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "response": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "stream": true
+        }
+      ]
+    }
+  ],
+  "definitions": [
+    {
+      "id": "echo",
+      "config": {
+        "additionalProperties": false,
+        "properties": {
+          "prefix": {
+            "maxLength": 8,
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "provides": [
+        "example.echo"
+      ],
+      "requires": [
+        {
+          "name": "Clock",
+          "service": "example.clock",
+          "minMinor": 0,
+          "maxMinor": 2
+        }
+      ]
+    }
+  ]
+}

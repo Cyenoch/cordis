@@ -1,7 +1,6 @@
 id = "example.counter"
 version = "1.0.0"
 publisher = "example.author"
-contracts = ["contract.toml"]
 
 [runtime]
 kind = "native"

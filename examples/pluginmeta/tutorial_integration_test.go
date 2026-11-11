@@ -63,20 +63,13 @@ func TestGettingStarted(t *testing.T) {
 	run(root, "", cli, "init", "-module", "example.net/cordis-hello", "-sdk-version", "v0.0.0",
 		"-id", "example.hello", "-publisher", "example.author", dir)
 	run(dir, "", "go", "mod", "edit", "-replace=github.com/Cyenoch/cordis="+root)
-	path := filepath.Join(dir, "plugin.toml")
-	declaration, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	declaration = bytes.Split(declaration, []byte("[[contract.definitions]]"))[0]
-	declaration = bytes.Replace(declaration, []byte("[runtime]"), append(block("toml", "plugin.toml（添加到顶层）"), []byte("\n[runtime]")...), 1)
-	write(path, declaration)
 	for _, file := range []struct{ language, name string }{
-		{"go", "main.go"}, {"toml", "contract.toml"}, {"toml", "config.toml"}, {"toml", "input.toml"},
+		{"go", "main.go"}, {"toml", "config.toml"}, {"toml", "input.toml"},
 	} {
 		write(filepath.Join(dir, file.name), block(file.language, file.name))
 	}
 	run(dir, "", "go", "mod", "tidy")
+	run(dir, "", cli, "generate")
 	goos, goarch := runtime.GOOS, runtime.GOARCH
 	run(dir, "", cli, "build", "-go-package", ".", "-goos", goos, "-goarch", goarch, ".")
 	run(dir, "", "go", "test", ".")

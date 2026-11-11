@@ -1,13 +1,179 @@
 ---
 title: 生成服务实操
-description: 从一份受限 JSON 契约生成 Go 端点与客户端，在内核作用域上发布和调用。
+description: 从 Go 类型生成服务端点与客户端，在内核作用域上发布和调用；声明式契约是第二种写法。
 ---
 
 # 生成服务实操
 
-一份契约声明同时生成配置类型、插件构造函数、服务端点与客户端，以及 Manifest 需要的 definition 描述。本页从声明到一次真实调用走完全程；字段规则见[数据契约](contracts.md)。
+`cordis generate` 从 Go 类型推导契约，并生成服务端点、客户端和插件值。本页从声明到一次真实调用走完全程；类型映射与约束规则见[数据契约](contracts.md)。
 
-## 建立独立项目
+## 从 Go 类型生成
+
+在独立 module（go.mod 的 replace 设置见[快速开始](getting-started.md#初始化独立-module)）里放下面的 `echo.go`：服务接口、请求、响应、配置，以及提供方和消费方两个插件。
+
+```go title="echo.go"
+package main
+
+import (
+    "context"
+    "errors"
+    "fmt"
+    "iter"
+    "os"
+    "strings"
+    "time"
+
+    "github.com/Cyenoch/cordis"
+)
+
+// Echo 重复收到的文字。
+//
+//cordis:service example.echo 1.1
+type Echo interface {
+    Echo(ctx context.Context, request EchoRequest) (EchoResponse, error)
+    Repeat(ctx context.Context, request RepeatRequest) iter.Seq2[EchoResponse, error]
+}
+
+type EchoRequest struct {
+    Text string `json:"text" cordis:"minLength=1"`
+}
+
+type EchoResponse struct {
+    Text string `json:"text"`
+}
+
+type RepeatRequest struct {
+    Text  string `json:"text" cordis:"minLength=1"`
+    Count int    `json:"count" cordis:"minimum=1,maximum=5"`
+}
+
+type Config struct {
+    Prefix string `json:"prefix,omitempty"`
+}
+
+type echoServer struct{ prefix string }
+
+func (s echoServer) Echo(_ context.Context, request EchoRequest) (EchoResponse, error) {
+    return EchoResponse{Text: s.prefix + strings.ToUpper(request.Text)}, nil
+}
+
+func (s echoServer) Repeat(_ context.Context, request RepeatRequest) iter.Seq2[EchoResponse, error] {
+    return func(yield func(EchoResponse, error) bool) {
+        for range request.Count {
+            if !yield(EchoResponse{Text: s.prefix + request.Text}, nil) {
+                return
+            }
+        }
+    }
+}
+
+//cordis:plugin echo
+//cordis:provides Echo
+func startEcho(_ context.Context, s *cordis.Scope, config Config) error {
+    return ProvideEcho(s, echoServer{prefix: config.Prefix})
+}
+
+//cordis:plugin client
+//cordis:requires Echo 1-3
+func startClient(ctx context.Context, s *cordis.Scope, _ struct{}) error {
+    client, err := GetEcho(s)
+    if err != nil {
+        return err
+    }
+    output, err := client.Echo(ctx, EchoRequest{Text: "hello"})
+    if err != nil {
+        return err
+    }
+    fmt.Println("echo:", output.Text)
+    for line, err := range client.Repeat(ctx, RepeatRequest{Text: "hi", Count: 2}) {
+        if err != nil {
+            return err
+        }
+        fmt.Println("repeat:", line.Text)
+    }
+    if _, err := client.Echo(ctx, EchoRequest{}); err == nil {
+        return errors.New("empty text should fail validation")
+    }
+    fmt.Println("empty text rejected")
+    return nil
+}
+
+func main() {
+    if err := run(); err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(1)
+    }
+}
+
+func run() error {
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    app := cordis.New(cordis.Options{})
+    defer app.Close(ctx)
+    root := app.Scope()
+    if err := EchoPlugin.Load(root, Config{Prefix: "> "}).Wait(ctx); err != nil {
+        return err
+    }
+    return ClientPlugin.Load(root, struct{}{}).Wait(ctx)
+}
+```
+
+在 module 目录运行：
+
+```sh
+go mod tidy
+"$CORDIS" generate
+go run .
+```
+
+```text
+echo: > HELLO
+repeat: > hi
+repeat: > hi
+empty text rejected
+```
+
+`generate` 写出 `cordis_gen.go` 与 `cordis_gen.json`。`echo.go` 没有重复声明任何类型：请求和响应原样用在生成的端点和客户端里。
+
+### 生成了什么
+
+每个服务 `X`（接口名）生成：
+
+| 名称 | 作用 |
+| --- | --- |
+| `ProvideX(s, impl)` | 在作用域 `s` 上发布实现 |
+| `GetX(s)` | 取得类型化客户端，提供方在本进程或另一个进程都一样 |
+| `XEndpoint` | 发布与依赖共用的端点键 |
+| `XRequirement(min, max)` | 内核依赖，范围外的 provider 使消费者保持 Waiting |
+| `XService()`、`XConsumer(min, max)` | 服务名与 minor、带方法指纹的消费者描述 |
+| `NewXEndpoint(impl)`、`NewXClient(endpoint)` | 端点适配器与客户端；`NewXClient` 检查服务名和 major，不匹配返回错误 |
+
+每个插件 id `p`（导出形式 `P`，`echo` 为 `Echo`）生成 `PPlugin` 和 `PDefinitionSpec()`。`PPlugin` 是 `cordis.Plugin[Config]` 的值，进程内用 `Load` 加载，native 入口用 `sdk.Define(PPlugin)`；`PDefinitionSpec()` 是 Manifest 的 definition 描述。
+
+客户端在发送前校验请求，端点在分派前校验收到的数据，这是两个信任边界，都不补默认值；同进程调用也一样。未知方法、坏响应及失败的业务调用均明确返回错误。
+
+### 流式方法
+
+返回 `iter.Seq2[R, error]` 的方法是流式方法，`Repeat` 即是：
+
+- 提供方返回一个迭代器并在其中 `yield` 各项；`yield` 返回 false 表示调用方已停止，应当立即返回。
+- 调用方 `for item, err := range client.Repeat(ctx, request)`；`err` 非空是最后一次迭代。请求在开始迭代时才发出。
+- 同一进程内客户端直接返回实现方的迭代器，输入照常校验，结果与跨进程时相同。
+- 声明了流式方法的包，manifest 会把 `streams` 列为必需的会话特性。
+
+完整的插件见 [`examples/plugins/feed`](https://github.com/Cyenoch/cordis/blob/main/examples/plugins/feed/main.go)；跨进程时的窗口、额度和期限见[流的规则](protocol.md#流)。
+
+### 消费者范围
+
+`//cordis:requires Echo 1-3` 声明接受 minor 1 到 3 的 provider，不写范围时只接受 `Echo` 声明的 minor。范围进入 `ClientDefinitionSpec()` 的 `Requires` 和 `ClientPlugin` 的依赖：客户端不会把范围缩窄成生成时的 1.1，实际 provider 为 1.2 时仍可调用。服务版本、包 SemVer 与会话协议版本相互独立。
+
+端点在内核里就是一个普通服务：进程内的消费者、Host 应用的 `host.Scope()` 和另一个进程里的插件，都用 `GetEcho(scope)` 取得它。消费方可以导入提供方包里的接口（`//cordis:requires api.Echo`），也可以在本包声明自己用到的那部分方法，Host 按方法指纹匹配。
+
+## 从声明式契约生成
+
+Go 类型表达不了的形状（标记联合）和与非 Go 实现共享的契约，手写契约文件并生成 Go 类型。下面的完整项目使用公开库 `schema.GenerateMany`；命令行为 `cordis generate -output`。
+
+### 建立独立项目
 
 从 Cordis 仓库根执行：
 
@@ -22,7 +188,7 @@ go mod edit -replace="github.com/Cyenoch/cordis=$CORDIS_ROOT"
 
 Windows 使用空目录，并将 replace 指向本地检出的绝对路径。
 
-## 写契约并生成
+### 写契约并生成
 
 ```json title="echo.schema.json"
 {
@@ -105,7 +271,7 @@ go run generate.go
 
 生成前统一检查符号并运行 gofmt；失败不会写半份生成内容。这里的 `os.WriteFile` 是教程的本地写文件步骤，不提供原子替换保证。多个声明可一起传给 `GenerateMany`；独立调用 `Generate` 的文件也可放在同包。指纹常量按 definition/service 命名，分次调用 `GenerateMany`（包括 CLI generate）也不会引入固定公共常量；完整声明可通过 `declaration.Fingerprint()` 取得。
 
-## 注册和调用
+### 注册和调用
 
 ```go title="main.go"
 package main
@@ -143,14 +309,12 @@ func run() error {
     root := app.Scope()
 
     provider := echo.EchoPlugin(func(_ context.Context, s *cordis.Scope, cfg echo.EchoConfig) error {
-        return echo.ExampleEchoEndpoint.Provide(s, echo.NewExampleEchoEndpoint(echoServer{prefix: cfg.Prefix}))
+        return echo.ProvideExampleEcho(s, echoServer{prefix: cfg.Prefix})
     }).Load(root, echo.EchoConfig{Prefix: "> "})
     if err := provider.Wait(ctx); err != nil { return err }
 
     consumer := echo.ClientPlugin(func(ctx context.Context, s *cordis.Scope, _ echo.ClientConfig) error {
-        endpoint, err := echo.ExampleEchoEndpoint.Get(s)
-        if err != nil { return err }
-        client, err := echo.NewExampleEchoClient(endpoint)
+        client, err := echo.GetExampleEcho(s)
         if err != nil { return err }
         output, err := client.Echo(ctx, echo.ExampleEchoEchoRequest{Text: "hello"})
         if err != nil { return err }
@@ -179,7 +343,7 @@ empty text rejected
 
 客户端在发送前校验请求，端点在分派前校验收到的数据，这是两个信任边界，都不补默认值。未知字段、未知方法、坏响应及失败的业务调用均明确返回错误。
 
-## 流式方法
+### 声明流式方法与消费者范围
 
 方法声明里加 `stream`，`response` 描述的就是序列里的一项：
 
@@ -191,30 +355,11 @@ request = { type = "object", properties = { count = { type = "integer", minimum 
 response = { type = "object", properties = { line = { type = "string" } }, required = ["line"] }
 ```
 
-生成的接口方法返回 `iter.Seq2`：
+生成的接口方法返回 `iter.Seq2[ExampleFeedTailResponse, error]`，规则同[流式方法](#流式方法)。
 
-```go
-type ExampleFeed interface {
-    Tail(context.Context, ExampleFeedTailRequest) iter.Seq2[ExampleFeedTailResponse, error]
-}
-```
+`ClientSourceConsumer()` 的范围是声明里的 1.1–1.3，它进入 `ClientDefinitionSpec()` 的 `Requires`，也就是 `ClientPlugin` 的依赖；代码里需要显式范围时用 `ExampleEchoRequirement(1, 3)`。其余规则同[消费者范围](#消费者范围)，`GetExampleEcho(scope)` 取得客户端。
 
-- 提供方返回一个迭代器并在其中 `yield` 各项；`yield` 返回 false 表示调用方已停止，应当立即返回。
-- 调用方 `for item, err := range client.Tail(ctx, request)`；`err` 非空是最后一次迭代。请求在开始迭代时才发出。
-- 同一进程内客户端直接返回实现方的迭代器，输入照常校验，结果与跨进程时相同。
-- 声明了流式方法的包，manifest 会把 `streams` 列为必需的会话特性。
-
-完整的插件见 [`examples/plugins/feed`](https://github.com/Cyenoch/cordis/blob/main/examples/plugins/feed/main.go)；跨进程时的窗口、额度和期限见[流的规则](protocol.md#流)。
-
-## 消费者范围
-
-`ClientSourceConsumer()` 的范围是声明里的 1.1–1.3，它进入 `ClientDefinitionSpec()` 的 `Requires`，也就是 `ClientPlugin` 的依赖：只有 minor 落在范围内的 provider 才会绑定，范围外的 provider 使消费者保持 Waiting。客户端不会把范围缩窄成生成时的 1.1，实际 provider 为 1.2 时仍可调用。代码里需要显式范围时用 `ExampleEchoRequirement(1, 3)`。
-
-`NewExampleEchoClient(endpoint)` 检查端点的服务名和 major，不匹配时返回错误。服务版本、包 SemVer 与会话协议版本相互独立。
-
-端点在内核里就是一个普通服务：进程内的消费者、Host 应用的 `host.Scope()` 和另一个进程里的插件，都用 `ExampleEchoEndpoint.Get(scope)` 取得它，再构造客户端。
-
-## 可选、null 与联合
+### 可选、null 与联合
 
 普通叶子直接使用 `string/bool/schema.Int64/schema.Uint64/json.Number/[]byte`；跨方法传递普通字符串不必强制转换。`Optional[T]` 表示是否出现，`Nullable[T]` 表示显式 null：`schema.Some(false)` 不等于省略，`schema.NonNull("")` 不等于 null。显式具名约束根保留独立 codec，父对象编码也保留所有叶子约束。
 

@@ -21,14 +21,15 @@ go build -o ./bin/cordis ./cmd/cordis
 
 | 命令 | 作用 |
 | --- | --- |
-| `init -module MODULE [FLAGS] DIRECTORY` | 创建作者源、业务入口、业务测试与独立 go.mod，不覆盖已有文件 |
-| `build -go-package PACKAGE -goos OS -goarch ARCH [FLAGS] DIRECTORY` | 从作者源生成代码、构建明确目标，写入 build.json |
+| `init -module MODULE [FLAGS] DIRECTORY` | 创建作者源、业务入口、业务测试、生成物与独立 go.mod，不覆盖已有文件 |
+| `build -go-package PACKAGE -goos OS -goarch ARCH [FLAGS] DIRECTORY` | 重新生成、构建明确目标，写入 build.json |
 | `pack DIRECTORY ARCHIVE.zip` | 校验声明和构建描述，生成 ZIP 和完整性表 |
 | `keygen PRIVATE_KEY_FILE` | 创建 Ed25519 私钥文件，只向 stdout 输出公钥 |
 | `sign ARCHIVE.zip KEY_ID PRIVATE_KEY_FILE` | 为归档签名 |
 | `inspect ARCHIVE.zip` | 查看包引用和 Manifest，不授权执行 |
 | `validate ARCHIVE.zip` | 检查归档格式与完整性，不评估宿主信任 |
-| `generate -output FILE\|- [-package NAME] [-format FORMAT] CONTRACT...` | 合并检查多个契约，生成已格式化的 Go 源码 |
+| `generate [DIRECTORY]` | 从 Go 类型推导契约，写出 `cordis_gen.go` 与 `cordis_gen.json` |
+| `generate -output FILE\|- [-package NAME] [-format FORMAT] CONTRACT...` | 从声明式契约文件生成已格式化的 Go 源码 |
 | `run -dev-unsigned [FLAGS] ARCHIVE.zip` | 在临时宿主内运行自己的本地开发产物 |
 | `list -store DIRECTORY` | 列出已安装包、选中版本和持久 entry |
 | `install -store DIRECTORY -trust FILE ARCHIVE.zip` | 验证并安装签名包 |
@@ -51,7 +52,7 @@ go build -o ./bin/cordis ./cmd/cordis
 
 工作区 CLI 没有可用的发布 module 版本时，须用 `-sdk-version` 指定实际要依赖的 Cordis 版本，不会回退到 `latest`。`-id` 默认 `example.plugin`，`-publisher` 默认 `example`；发行版本只写在 `plugin.toml`，不复制到业务 Go。
 
-默认创建 `plugin.toml`、`main.go`、`main_test.go` 和 `go.mod`。作者源是对象型 TOML，内联最小 `main` definition，未声明的配置是严格空对象。业务入口用 `sdk.Run(ctx, sdk.Define(MainPlugin(start)))`（`MainPlugin` 是生成的构造函数），测试使用 `plugintest`。不会生成另一套构建脚本，也不写入开发信任或 native 执行许可。
+默认创建 `plugin.toml`、`main.go`、`main_test.go`、`go.mod` 和生成物 `cordis_gen.go`、`cordis_gen.json`，所以 `go mod tidy && go test ./...` 立即可用。作者源是对象型 TOML，只含发行身份和运行目标，不写契约；`main.go` 用 `//cordis:plugin main` 声明插件，空的 `Config` 是严格空对象。业务入口用 `sdk.Run(ctx, sdk.Define(MainPlugin))`（`MainPlugin` 是生成的 `cordis.Plugin` 值），测试使用 `plugintest`。不会生成另一套构建脚本，也不写入开发信任或 native 执行许可。
 
 默认声明当前系统的 native 目标。构建必须显式指定 `-goos` 和 `-goarch`，值须与作者源中的 artifact 一致。`build` 调用 `packagehost.Build`，不运行产物探测能力。
 
@@ -60,8 +61,8 @@ go build -o ./bin/cordis ./cmd/cordis
 | `-go-package PACKAGE` | 必填，明确的 Go 构建包，例如 `.` |
 | `-goos OS` / `-goarch ARCH` | 必填，原生 Go 构建目标 |
 | `-output PATH` | 相对作者目录的产物路径；默认取声明目标，显式值必须与声明一致 |
-| `-generated-package NAME` | 生成代码包名，默认 `main` |
-| `-generated-output PATH` | 相对作者目录的生成文件，默认 `cordis_gen.go` |
+| `-generated-package NAME` | 声明式契约的生成代码包名，默认 `main` |
+| `-generated-output PATH` | 声明式契约的生成文件，相对作者目录，默认 `cordis_gen.go` |
 
 `build.json` 记录声明指纹、生成摘要、实际选用的 SDK module 版本/能力、目标和产物 hash，并作为 JSON 结果输出。它由工具维护，不是第三份手写 Manifest。打包会检查声明漂移、生成代码过期及产物不一致；外部流水线使用 `packagehost.PrepareBuild` 和 `packagehost.WriteBuildDescriptor` 显式提供同样证据，不能用 CLI 版本代替实际 SDK 能力。描述能防止意外漂移，不证明恶意二进制行为。
 
@@ -176,13 +177,21 @@ printf '%s' '{"method":"execute","input":{"operation":"get","delta":0}}' | ./bin
 
 应用服务可通过[宿主公开 API](host-guide.md)组合。已签名但未被信任的包不会由 `-dev-unsigned` 绕过坏信任；正式签名包由宿主 TrustPolicy 加载。Native 仍拥有用户权限，不是沙箱；初始化和构建不会额外授权执行。
 
-## 生成 Go 契约
+## 生成
+
+```sh
+./bin/cordis generate ./my-plugin
+```
+
+分析目录里的 Go 包（缺省为当前目录），在源码旁写出 `cordis_gen.go`（绑定）和 `cordis_gen.json`（推导出的契约，随源码提交）。指令、类型映射和约束标签见[数据契约](contracts.md#用-go-类型写契约)。声明不合法时命令失败，错误指出源码位置，不写任何文件。`build` 与 `dev` 先重新生成，平时不必单独运行；要先看契约变化或让编辑器看到新绑定时运行它。
+
+### 从声明式契约生成
 
 ```sh
 ./bin/cordis generate -package pluginapi -output ./api.gen.go ./echo.schema.toml ./settings.schema.yaml
 ```
 
-输入使用 Cordis 的[受限数据契约](contracts.md)，不接受任意 JSON Schema。所有输入由 `schema.GenerateMany` 一次检查输出符号；通过完整解析、冲突检查、生成和 gofmt 后，才用同目录临时文件替换目标。生成或写入失败保留原文件；不会先截断目标，也不要求再次运行 gofmt。
+输入使用 Cordis 的[受限数据契约](contracts.md#声明式契约文件)，不接受任意 JSON Schema。所有输入由 `schema.GenerateMany` 一次检查输出符号；通过完整解析、冲突检查、生成和 gofmt 后，才用同目录临时文件替换目标。生成或写入失败保留原文件；不会先截断目标，也不要求再次运行 gofmt。
 
 `-output` 必填；只有显式 `-output -` 才向 stdout 写代码。文件格式由扩展名确定，`-format toml|yaml|json` 可显式指定全部输入的格式。输出含配置类型、插件构造函数、服务端点与客户端和严格 codec，未知的 schema 特性报错。
 
@@ -190,7 +199,7 @@ printf '%s' '{"method":"execute","input":{"operation":"get","delta":0}}' | ./bin
 ./bin/cordis generate -package pluginapi -output - ./echo.schema.json
 ```
 
-不要用 shell 重定向覆盖已有生成文件：shell 在命令执行前就可能截断目标，CLI 无法保护这种截断。完整项目见[生成服务实操](generated-service.md)。
+不要用 shell 重定向覆盖已有生成文件：shell 在命令执行前就可能截断目标，CLI 无法保护这种截断。完整项目见[生成服务实操](generated-service.md#从声明式契约生成)。
 
 ## 退出码
 

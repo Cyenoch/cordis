@@ -86,7 +86,9 @@ func runCommand(t *testing.T, directory, name string, args ...string) string {
 	t.Helper()
 	command := exec.CommandContext(t.Context(), name, args...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GOWORK=off")
+	// The checksum database is not needed for modules already in the cache,
+	// and asking it stalls on networks that cannot reach it.
+	command.Env = append(os.Environ(), "GOWORK=off", "GOSUMDB=off")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %v: %v\n%s", name, args, err, output)

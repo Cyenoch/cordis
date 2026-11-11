@@ -3,6 +3,7 @@ package schema_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Cyenoch/cordis/schema"
@@ -126,5 +127,57 @@ func TestCompileRejectsUnsupportedSchemas(t *testing.T) {
 				t.Fatal("invalid schema accepted")
 			}
 		})
+	}
+}
+
+// An object whose additionalProperties is a schema is a map: any key, every
+// value held to that schema.
+func TestMaps(t *testing.T) {
+	const source = `{"type":"object","additionalProperties":{"type":"array","items":{"type":"integer","minimum":0}},"nullable":true}`
+	compiled, err := schema.Compile(json.RawMessage(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for value, valid := range map[string]bool{
+		`{}`:                 true,
+		`{"a":[1,2],"b":[]}`: true,
+		`null`:               true,
+		`{"a":[-1]}`:         false,
+		`{"a":1}`:            false,
+		`{"a":null}`:         false,
+		`[]`:                 false,
+		`{"a":[1],"a":[2]}`:  false,
+	} {
+		if err := compiled.Validate(json.RawMessage(value)); (err == nil) != valid {
+			t.Errorf("Validate(%s) = %v, want valid=%v", value, err, valid)
+		}
+	}
+	exported, err := schema.Export(json.RawMessage(source))
+	if err != nil || !strings.Contains(string(exported), `"additionalProperties":{`) {
+		t.Fatalf("Export = %s, %v", exported, err)
+	}
+	for name, invalid := range map[string]string{
+		"with properties": `{"type":"object","properties":{"a":{"type":"string"}},"additionalProperties":{"type":"string"}}`,
+		"with required":   `{"type":"object","required":[],"additionalProperties":{"type":"string"}}`,
+		"open":            `{"type":"object","additionalProperties":true}`,
+		"invalid values":  `{"type":"object","additionalProperties":{"type":"nothing"}}`,
+	} {
+		if err := schema.Check(json.RawMessage(invalid)); err == nil {
+			t.Errorf("%s: accepted %s", name, invalid)
+		}
+	}
+	// Two spellings of one map have one fingerprint.
+	a, err := schema.Parse([]byte(`{"schema":"cordis-go.contract/v1","definitions":[{"id":"main","config":{"type":"object","properties":{"m":{"type":"object","additionalProperties":{"type":"string","nullable":false}}}}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := schema.Parse([]byte(`{"schema":"cordis-go.contract/v1","definitions":[{"id":"main","config":{"properties":{"m":{"additionalProperties":{"type":"string"},"type":"object"}},"type":"object"}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := a.Fingerprint()
+	second, _ := b.Fingerprint()
+	if first != second {
+		t.Fatal("equal maps have different fingerprints")
 	}
 }

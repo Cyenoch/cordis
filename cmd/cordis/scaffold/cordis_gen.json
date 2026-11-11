@@ -1,0 +1,14 @@
+{
+  "schema": "cordis-go.contract/v1",
+  "definitions": [
+    {
+      "id": "main",
+      "config": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    }
+  ]
+}

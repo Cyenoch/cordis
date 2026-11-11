@@ -3,7 +3,6 @@ package hosting
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"sync"
 
@@ -98,7 +97,7 @@ func (r *run) invokeChain(ctx context.Context, id string, input json.RawMessage,
 	if err != nil {
 		select {
 		case <-r.session.Done():
-			err = fmt.Errorf("entry %q: %w", r.identity.Entry, r.reported(err))
+			err = r.gone(err)
 		default:
 		}
 		return nil, err

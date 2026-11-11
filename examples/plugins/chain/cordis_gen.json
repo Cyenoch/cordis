@@ -1,0 +1,253 @@
+{
+  "schema": "cordis-go.contract/v1",
+  "services": [
+    {
+      "name": "chain.a",
+      "version": "1.2",
+      "methods": [
+        {
+          "name": "execute",
+          "request": {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {
+              "acquired": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "label": {
+                "type": "string"
+              },
+              "live": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "released": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "acquired",
+              "label",
+              "live",
+              "released"
+            ],
+            "type": "object"
+          }
+        }
+      ]
+    },
+    {
+      "name": "chain.b",
+      "version": "1.2",
+      "methods": [
+        {
+          "name": "execute",
+          "request": {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {
+              "acquired": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "label": {
+                "type": "string"
+              },
+              "live": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "released": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "acquired",
+              "label",
+              "live",
+              "released"
+            ],
+            "type": "object"
+          }
+        }
+      ]
+    },
+    {
+      "name": "chain.c",
+      "version": "1.2",
+      "methods": [
+        {
+          "name": "execute",
+          "request": {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {
+              "acquired": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "label": {
+                "type": "string"
+              },
+              "live": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "released": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "acquired",
+              "label",
+              "live",
+              "released"
+            ],
+            "type": "object"
+          }
+        }
+      ]
+    }
+  ],
+  "definitions": [
+    {
+      "id": "consumer",
+      "config": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "provides": [
+        "chain.c"
+      ],
+      "requires": [
+        {
+          "name": "ChainB",
+          "service": "chain.b",
+          "minMinor": 1,
+          "maxMinor": 3
+        }
+      ]
+    },
+    {
+      "id": "middle",
+      "config": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "provides": [
+        "chain.b"
+      ],
+      "requires": [
+        {
+          "name": "ChainA",
+          "service": "chain.a",
+          "minMinor": 1,
+          "maxMinor": 3
+        }
+      ]
+    },
+    {
+      "id": "optional-parent",
+      "config": {
+        "additionalProperties": false,
+        "properties": {
+          "childIsolate": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "id": "provider",
+      "config": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "provides": [
+        "chain.a"
+      ]
+    }
+  ]
+}

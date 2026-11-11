@@ -15,9 +15,10 @@ description: 按包列出公开入口，并指向各自的说明页。
 | `timer` | `AfterFunc`、`Every`、`Sleep`、`Ticks`、`Throttle`、`Debounce` | [定时辅助](timers.md) |
 | `sdk` | `Run`、`Define`、`CreateChild`、`Identity`、`RunTransport` | [编写插件](plugin-author.md) |
 | `contract` | `EndpointKey`、`Require`、`EventKey`、`QueryKey`、`ChainKey`、`Endpoint`、`Entry`、`Child`、`Manifest`、`Status`、`Instance` | [数据契约](contracts.md) |
+| `schema/gocontract` | `Generate`、`Load`：从 Go 包推导契约，生成绑定 | [数据契约](contracts.md#用-go-类型写契约) |
 | `plugintest` | `Start`、`Options`、`Harness` | [编写插件](plugin-author.md#测试) |
 | `hosting` | `Open`、`Host`、`Options` | [接入宿主](host-guide.md) |
-| `schema` | `Parse`、`Generate`、`GenerateMany`、`Compile`、`Validate`、`Check`、`Export`、`Definition` | [数据契约](contracts.md) |
+| `schema` | `Codec`、`Parse`、`Generate`、`GenerateMany`、`Compile`、`Validate`、`Check`、`Export`、`Definition` | [数据契约](contracts.md) |
 | `config` | `Load`、`Parse`、`Document` | [数据契约](contracts.md#配置文件解析) |
 | `packagehost` | `Pack`、`Sign`、`Inspect`、`LoadAuthor`、`Build`、`Store`、`TrustPolicy` | [包格式](packages.md) |
 | `runtime/native` | `New`：启动并回收标准协议的 native 进程 | [native 运行时](runtimes.md) |
@@ -25,7 +26,7 @@ description: 按包列出公开入口，并指向各自的说明页。
 
 ## 作用域与实例
 
-插件只有一种形状：`cordis.Plugin[C]`，`Start` 收到 `*cordis.Scope`。`Scope` 提供 `Defer`（清理）、`Go`（随激活的后台工作）、`Sub`、`When`、`Isolate`、`IsolateIn`、`Filter`、`Info` 等；`Plugin.Load(scope, config)` 返回 `Instance[C]`，提供 `Status`、`Wait`、`Update`、`Restart`、`Stop`、`Done`。native 入口是 `sdk.Run(ctx, sdk.Define(<Def>Plugin(start)))`，Host 应用用 `Load` 把同样的插件加载到 `host.Scope()`。
+插件只有一种形状：`cordis.Plugin[C]`，`Start` 收到 `*cordis.Scope`。`Scope` 提供 `Defer`（清理）、`Go`（随激活的后台工作）、`Sub`、`When`、`Isolate`、`IsolateIn`、`Filter`、`Info` 等；`Plugin.Load(scope, config)` 返回 `Instance[C]`，提供 `Status`、`Wait`、`Update`、`Restart`、`Stop`、`Done`。native 入口是 `sdk.Run(ctx, sdk.Define(<P>Plugin))`，`<P>Plugin` 是生成的 `cordis.Plugin[Config]` 值，Host 应用用 `Load` 把同样的插件加载到 `host.Scope()`。
 
 Host 管理的实例用 `contract.Instance`：`Status`、`Wait`、`Update`（返回 `UpdateResult`，含 revision、Applied、Superseded）、`Stop`。取消等待只结束等待，不撤销已提交的操作。远端子实例（`sdk.CreateChild` 返回的 `contract.ChildInstance`）的 `Status` 是最后收到的快照，`Refresh(ctx)` 获取当前状态。
 
@@ -35,7 +36,7 @@ Host 管理的实例用 `contract.Instance`：`Status`、`Wait`、`Update`（返
 
 | 能力 | 进程内 | 跨进程 |
 |---|---|---|
-| 服务 | `cordis.Service[T]` | `contract.EndpointKey(name, major)` + `contract.Require(key, min, max)`；生成的 `<Svc>Endpoint`、`New<Svc>Endpoint`、`New<Svc>Client` |
+| 服务 | `cordis.Service[T]` | `contract.EndpointKey(name, major)` + `contract.Require(key, min, max)`；生成的 `Provide<Svc>`、`Get<Svc>`、`<Svc>Endpoint`、`New<Svc>Endpoint`、`New<Svc>Client` |
 | 事件 | `cordis.Event[T]` | `contract.EventKey[T]` |
 | 查询 | `cordis.Query[In,Out]` | `contract.QueryKey[In,Out]` |
 | 中间件链 | `cordis.Chain[In,Out]` | `contract.ChainKey[In,Out]` |

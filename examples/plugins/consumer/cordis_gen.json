@@ -1,0 +1,48 @@
+{
+  "schema": "cordis-go.contract/v1",
+  "services": [
+    {
+      "name": "example.message",
+      "version": "1.0",
+      "methods": [
+        {
+          "name": "read",
+          "request": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "response": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  ],
+  "definitions": [
+    {
+      "id": "main",
+      "config": {
+        "additionalProperties": false,
+        "properties": {
+          "output": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "output"
+        ],
+        "type": "object"
+      },
+      "requires": [
+        {
+          "name": "Message",
+          "service": "example.message",
+          "minMinor": 0,
+          "maxMinor": 0
+        }
+      ]
+    }
+  ]
+}

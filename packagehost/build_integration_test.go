@@ -5,6 +5,7 @@ package packagehost
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -34,8 +35,12 @@ func main() {
 }
 `)
 	o := BuildOptions{GoPackage: ".", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
-	if _, err := runGo(context.Background(), dir, o, "mod", "tidy"); err != nil {
-		t.Fatal(err)
+	// Modules in the cache are verified already; asking the checksum
+	// database stalls on networks that cannot reach it.
+	tidy := exec.CommandContext(t.Context(), "go", "mod", "tidy")
+	tidy.Dir, tidy.Env = dir, append(os.Environ(), "GOSUMDB=off")
+	if output, err := tidy.CombinedOutput(); err != nil {
+		t.Fatalf("go mod tidy: %v\n%s", err, output)
 	}
 	d, err := Build(context.Background(), dir, o)
 	if err != nil {

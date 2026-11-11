@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Cyenoch/cordis/packagehost"
+	"github.com/Cyenoch/cordis/schema/gocontract"
 )
 
 func initCommand(flags *flag.FlagSet, parse func() (bool, error), out io.Writer) error {
@@ -47,15 +49,13 @@ func initCommand(flags *flag.FlagSet, parse func() (bool, error), out io.Writer)
 		artifact += ".exe"
 	}
 	runtimeSource := fmt.Sprintf("[runtime]\nkind = \"native\"\n\n[[runtime.artifacts]]\nos = %q\narch = %q\npath = %q\n", runtime.GOOS, runtime.GOARCH, artifact)
-	manifest := "id = " + strconv.Quote(*id) + "\nversion = \"0.1.0\"\npublisher = " + strconv.Quote(*publisher) + "\n\n" + runtimeSource + "\n[[contract.definitions]]\nid = \"main\"\n"
+	manifest := "id = " + strconv.Quote(*id) + "\nversion = \"0.1.0\"\npublisher = " + strconv.Quote(*publisher) + "\n\n" + runtimeSource
 	files := []struct{ name, content string }{
 		{"plugin.toml", manifest},
-		{"main.go", scaffoldMain},
-		{"main_test.go", scaffoldTest},
 		{"go.mod", "module " + strconv.Quote(*module) + "\n\ngo " + goVersion + "\n\nrequire " + sdkModule + " " + *sdkVersion + "\n"},
 	}
 	dir := flags.Arg(0)
-	for _, name := range []string{"plugin.toml", "plugin.yaml", "plugin.yml", "plugin.json", "main.go", "main_test.go", "go.mod", "cordis_gen.go"} {
+	for _, name := range []string{"plugin.toml", "plugin.yaml", "plugin.yml", "plugin.json", "main.go", "main_test.go", "go.mod", gocontract.GoFile, gocontract.ContractFile} {
 		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
 			return fmt.Errorf("init: refusing existing file %q", filepath.Join(dir, name))
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -70,8 +70,19 @@ func initCommand(flags *flag.FlagSet, parse func() (bool, error), out io.Writer)
 	if err := os.WriteFile(filepath.Join(stage, "plugin.toml"), []byte(manifest), 0600); err != nil {
 		return err
 	}
-	_, err = packagehost.LoadAuthor(stage)
-	if err != nil {
+	for _, name := range []string{"main.go", "main_test.go", gocontract.GoFile, gocontract.ContractFile} {
+		content, err := scaffold.ReadFile("scaffold/" + name)
+		if err != nil {
+			return err
+		}
+		files = append(files, struct{ name, content string }{name, string(content)})
+		if name == gocontract.ContractFile {
+			if err := os.WriteFile(filepath.Join(stage, name), content, 0600); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err = packagehost.LoadAuthor(stage); err != nil {
 		return fmt.Errorf("init declaration: %w", err)
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -90,53 +101,8 @@ func initCommand(flags *flag.FlagSet, parse func() (bool, error), out io.Writer)
 	return writeJSON(out, map[string]string{"directory": dir, "source": "plugin.toml"})
 }
 
-const scaffoldMain = `package main
-
-import (
-	"context"
-	"fmt"
-	"os"
-
-	"github.com/Cyenoch/cordis"
-	"github.com/Cyenoch/cordis/sdk"
-)
-
-// start runs when the entry starts. Register cleanups, background work and
-// the services the plugin provides on s; they end with the entry.
-func start(ctx context.Context, s *cordis.Scope, config MainConfig) error {
-	return nil
-}
-
-func main() {
-	if err := sdk.Run(context.Background(), sdk.Define(MainPlugin(start))); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-}
-`
-
-const scaffoldTest = `package main
-
-import (
-	"context"
-	"testing"
-	"time"
-
-	"github.com/Cyenoch/cordis/plugintest"
-	"github.com/Cyenoch/cordis/sdk"
-)
-
-func TestStart(t *testing.T) {
-	harness, err := plugintest.Start(t.Context(), MainDefinitionSpec(), sdk.Define(MainPlugin(start)), plugintest.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := harness.Close(ctx); err != nil {
-			t.Error(err)
-		}
-	})
-}
-`
+// The scaffold is a package of this module, so it is compiled and tested
+// with it; init copies it out, generated bindings included.
+//
+//go:embed scaffold/main.go scaffold/main_test.go scaffold/cordis_gen.go scaffold/cordis_gen.json
+var scaffold embed.FS

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Cyenoch/cordis/schema/gocontract"
 )
 
 func TestAtomicOutputKeepsExistingFileOnUnwritableDirectory(t *testing.T) {
@@ -30,5 +32,27 @@ func TestAtomicOutputKeepsExistingFileOnUnwritableDirectory(t *testing.T) {
 	got, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(got, old) {
 		t.Fatalf("old output changed: %q, %v", got, err)
+	}
+}
+
+// init copies the scaffold's bindings out as they are committed, so they must
+// be what generating from the scaffold's source gives.
+func TestScaffoldBindingsAreCurrent(t *testing.T) {
+	p, err := gocontract.Load(t.Context(), "scaffold")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := p.Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared, err := p.Contract()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string][]byte{gocontract.GoFile: source, gocontract.ContractFile: declared} {
+		if got, err := os.ReadFile(filepath.Join("scaffold", name)); err != nil || !bytes.Equal(got, want) {
+			t.Errorf("scaffold/%s is stale (%v); run cordis generate cmd/cordis/scaffold", name, err)
+		}
 	}
 }

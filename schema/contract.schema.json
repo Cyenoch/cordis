@@ -106,7 +106,14 @@
           "uniqueItems": true
         },
         "additionalProperties": {
-          "const": false
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "$ref": "#/$defs/data"
+            }
+          ]
         },
         "items": {
           "$ref": "#/$defs/data"
@@ -266,7 +273,14 @@
           "uniqueItems": true
         },
         "additionalProperties": {
-          "const": false
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "$ref": "#/$defs/data"
+            }
+          ]
         },
         "items": {
           "$ref": "#/$defs/data"

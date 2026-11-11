@@ -26,6 +26,10 @@ func exportNode(n *node) map[string]any {
 	delete(obj, "discriminator")
 	switch n.kind {
 	case "object":
+		if n.additional != nil {
+			obj["additionalProperties"] = exportNode(n.additional)
+			break
+		}
 		props := map[string]any{}
 		for _, key := range sortedKeys(n.properties) {
 			props[key] = exportNode(n.properties[key])

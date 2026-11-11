@@ -2,7 +2,6 @@ id = "example.chain"
 version = "1.0.0"
 publisher = "independent-author"
 defaultDefinition = "provider"
-contracts = ["contract.toml"]
 
 [runtime]
 kind = "native"

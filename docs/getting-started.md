@@ -1,11 +1,11 @@
 ---
 title: 快速开始
-description: 从 TOML 声明生成独立插件，完成构建、调用、持续开发和签名包前台运行。
+description: 用 Go 类型声明独立插件，完成生成、构建、调用、持续开发和签名包前台运行。
 ---
 
 # 快速开始
 
-本页用一份 TOML 声明生成配置类型、插件构造函数和服务端点，业务只写 Go，随后构建、调用、持续开发并以签名包运行。依赖使用本地 Cordis 检出；项目尚未发布，没有 `@latest` 或可下载的 SDK 版本。
+本页只写 Go：服务、请求、响应和配置是普通类型，`cordis generate` 从它们推导契约并生成适配代码；随后构建、调用、持续开发并以签名包运行。依赖使用本地 Cordis 检出；项目尚未发布，没有 `@latest` 或可下载的 SDK 版本。
 
 ## 准备工具
 
@@ -31,33 +31,9 @@ cd "$PLUGIN"
 go mod edit -replace="github.com/Cyenoch/cordis=$CORDIS_ROOT"
 ```
 
-`v0.0.0` 只是本地 module 占位，实际依赖由 `replace` 指向刚才的真实检出；不是可下载安装的发行版。`init` 写入 `plugin.toml`、独立 `go.mod`、业务入口和启动测试，不覆盖已有文件，也不授予原生执行信任。
+`v0.0.0` 只是本地 module 占位，实际依赖由 `replace` 指向刚才的真实检出；不是可下载安装的发行版。`init` 写入 `plugin.toml`、独立 `go.mod`、业务入口、启动测试和生成物 `cordis_gen.go`、`cordis_gen.json`，不覆盖已有文件，也不授予原生执行信任。`plugin.toml` 只保存发行身份和原生运行目标；原生目标使用当前 `GOOS/GOARCH`，交叉编译时需同时修改声明和构建参数。
 
-## 声明契约
-
-保留 `plugin.toml` 中生成的发行身份和原生运行目标。在第一个 `[runtime]` 前加入下面一行，并删除文件末尾原有的 `[[contract.definitions]]` 及其 `id` 行：
-
-```toml title="plugin.toml（添加到顶层）"
-contracts = ["contract.toml"]
-```
-
-包发行版本只在 `plugin.toml` 维护；服务版本只在下面的契约维护，不复制进业务 Go 或机器 Manifest。原生目标使用 `init` 写入的当前 `GOOS/GOARCH`，交叉编译时需同时修改声明和构建参数。
-
-```toml title="contract.toml"
-[[definitions]]
-id = "main"
-provides = ["example.echo"]
-config = { type = "object", properties = { prefix = { type = "string" } } }
-
-[[services]]
-name = "example.echo"
-version = "1.1"
-
-[[services.methods]]
-name = "echo"
-request = { type = "object", properties = { text = { type = "string", minLength = 1 } }, required = ["text"] }
-response = { type = "object", properties = { text = { type = "string" } }, required = ["text"] }
-```
+## 声明服务
 
 替换 `main.go`，保留 `init` 生成的 `main_test.go`：
 
@@ -73,43 +49,73 @@ import (
     "github.com/Cyenoch/cordis/sdk"
 )
 
-type echo struct { prefix string }
-
-func (e echo) Echo(_ context.Context, input ExampleEchoEchoRequest) (ExampleEchoEchoResponse, error) {
-    return ExampleEchoEchoResponse{Text: e.prefix + input.Text}, nil
+// Echo 是插件提供的服务。
+//
+//cordis:service example.echo 1.1
+type Echo interface {
+    Echo(ctx context.Context, request EchoRequest) (EchoResponse, error)
 }
 
-func start(_ context.Context, s *cordis.Scope, config MainConfig) error {
-    prefix := "hello, "
-    if config.Prefix.Present {
-        prefix = config.Prefix.Value
-    }
-    return ExampleEchoEndpoint.Provide(s, NewExampleEchoEndpoint(echo{prefix: prefix}))
+type EchoRequest struct {
+    Text string `json:"text" cordis:"minLength=1"`
+}
+
+type EchoResponse struct {
+    Text string `json:"text"`
+}
+
+type Config struct {
+    Prefix string `json:"prefix,omitempty"`
+}
+
+type echo struct{ prefix string }
+
+func (e echo) Echo(_ context.Context, request EchoRequest) (EchoResponse, error) {
+    return EchoResponse{Text: e.prefix + request.Text}, nil
+}
+
+//cordis:plugin main
+//cordis:provides Echo
+func start(_ context.Context, s *cordis.Scope, config Config) error {
+    return ProvideEcho(s, echo{prefix: config.Prefix})
 }
 
 func main() {
-    if err := sdk.Run(context.Background(), sdk.Define(MainPlugin(start))); err != nil {
+    if err := sdk.Run(context.Background(), sdk.Define(MainPlugin)); err != nil {
         fmt.Fprintln(os.Stderr, err)
         os.Exit(1)
     }
 }
 ```
 
-配置校验和解码由生成的 `MainConfig` 与 `MainPlugin` 完成；`start` 收到的 `*cordis.Scope` 与[进程内内核](kernel.md)里的相同，清理、后台工作和服务都登记在它上面。`sdk.Run` 处理协议、信号和清理，错误交给 main，stdout 留给协议。服务方法可能被并发调用，实现需要自行保证并发安全。
+- `//cordis:service example.echo 1.1` 把接口声明为服务 `example.echo`，版本 1.1；方法在线上叫 `echo`（Go 方法名首字母小写）。服务版本只在这里维护，包发行版本只在 `plugin.toml`。
+- 请求、响应和配置就是自己的结构体。`json` 标签决定字段名，没有 `omitempty` 的字段必填；`cordis` 标签写约束，这里要求 `text` 非空。规则见[数据契约](contracts.md#用-go-类型写契约)。
+- `//cordis:plugin main` 声明插件 `main`，`//cordis:provides Echo` 声明它提供 `Echo`。`start` 收到的 `*cordis.Scope` 与[进程内内核](kernel.md)里的相同，清理、后台工作和服务都登记在它上面；`ProvideEcho` 在它上发布服务。
+- `sdk.Run` 处理协议、信号和清理，错误交给 main，stdout 留给协议。服务方法可能被并发调用，实现需要自行保证并发安全。
+
+`plugin.toml` 不写契约：契约由这些类型推导。
+
+## 生成
+
+```sh
+go mod tidy
+"$CORDIS" generate
+```
+
+`generate` 分析当前目录的包，写出 `cordis_gen.go`（`ProvideEcho`、`GetEcho`、`MainPlugin` 等绑定）和 `cordis_gen.json`（推导出的契约）。两个文件都随源码提交：契约的变化会出现在评审的 diff 里。源码有不合法的声明时，生成失败并指出位置，不写任何文件。
 
 ## 构建、测试、打包
 
 仍在独立插件目录运行：
 
 ```sh
-go mod tidy
 "$CORDIS" build -go-package . -goos "$(go env GOOS)" -goarch "$(go env GOARCH)" .
 go test .
 "$CORDIS" pack . "$PLUGIN.zip"
 "$CORDIS" inspect "$PLUGIN.zip"
 ```
 
-`build` 先生成 `cordis_gen.go`，再编译明确目标，并记录实际 SDK、声明和产物摘要到 `build.json`。`pack` 验证这些记录，在私有 staging 生成机器 `plugin.json`；不要手写或复制它回作者目录。修改契约或业务代码后重新执行 `build`、`test`、`pack`。
+`build` 先重新生成，再编译明确目标，并记录实际 SDK、声明和产物摘要到 `build.json`。`pack` 验证这些记录，在私有 staging 生成机器 `plugin.json`；不要手写或复制它回作者目录。修改类型或业务代码后重新执行 `build`、`test`、`pack`。
 
 ## 调用
 
@@ -140,7 +146,7 @@ text = "Cordis"
 `-dev-unsigned` 只许可本次归档的精确摘要，不建立全局信任。Native 插件具有当前用户权限，不是沙箱；不要运行不受信任代码。正式交付需要签名和宿主 TrustPolicy。
 :::
 
-TOML 没有 null，也不能表达非对象根。契约需要显式 null、数组或标量根时改用 YAML 文件，再由 `-config-file` / `-input-file` 读取；省略字段、空字符串和字符串 `"null"` 都不是 null。JSON 适合工具交换，内联参数始终是 JSON：
+TOML 没有 null，也不能表达非对象根。请求需要显式 null、数组或标量根时改用 YAML 文件，再由 `-config-file` / `-input-file` 读取；省略字段、空字符串和字符串 `"null"` 都不是 null。JSON 适合工具交换，内联参数始终是 JSON：
 
 ```sh
 "$CORDIS" run -dev-unsigned -service example.echo -config '{"prefix":"hello, "}' -input '{"method":"echo","input":{"text":"Cordis"}}' "$PLUGIN.zip"
@@ -187,6 +193,6 @@ Ctrl+C 退出后再查询：
 
 - [组合实操](composition-tutorial.md)：父子实例、依赖激活与资源清理。
 - [插件作者](plugin-author.md)、[宿主接入](host-guide.md)：运行 native 插件和可靠关闭。
-- [数据契约](contracts.md)、[生成服务](generated-service.md)：配置类型、服务范围和编辑器 schema。
+- [数据契约](contracts.md)、[生成服务](generated-service.md)：类型映射、约束标签、生成的绑定和服务范围。
 
-仓库示例 `examples/plugins` 下的每个插件各自是独立 module。`go generate ./examples/pluginmeta` 同时更新示例契约与 Host 元数据；`bash conformance/run.sh` 验证真实 native 进程，Windows 使用 `conformance/run.ps1`。
+仓库示例 `examples/plugins` 下的每个插件各自是独立 module。`go generate ./examples/pluginmeta` 重新生成示例的契约与绑定，并更新 Host 元数据；`bash conformance/run.sh` 验证真实 native 进程，Windows 使用 `conformance/run.ps1`。

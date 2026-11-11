@@ -62,7 +62,7 @@ func generate(w io.Writer, packageName string, definitions ...Definition) error 
 		for _, s := range d.Services {
 			g.origin = fmt.Sprintf("input %d service %s", i+1, s.Name)
 			name, _ := exportedName(s.Name)
-			for _, symbol := range []string{name, name + "Endpoint", name + "Service", name + "Consumer", name + "Requirement", "New" + name + "Client", "New" + name + "Endpoint"} {
+			for _, symbol := range []string{name, name + "Endpoint", name + "Service", name + "Consumer", name + "Requirement", "New" + name + "Client", "New" + name + "Endpoint", "Provide" + name, "Get" + name} {
 				g.reserve(symbol)
 			}
 		}
@@ -177,14 +177,16 @@ func (g *generator) emitType(name string, n *node) {
 		g.line("func (v *%s) UnmarshalJSON(data []byte) error { if v == nil { return fmt.Errorf(\"decode %s: nil receiver\") }; if err := validate%s(data); err != nil { return err }; var value schema.Nullable[%sValue]; if err := json.Unmarshal(data,&value); err != nil { return err }; v.Nullable = value; return nil }", name, name, name, name)
 		return
 	}
-	switch n.kind {
-	case "object":
+	switch {
+	case n.kind == "object" && n.additional == nil:
 		g.emitObject(name, n)
-	case "union":
+	case n.kind == "union":
 		g.emitUnion(name, n)
 	default:
 		underlying := ""
 		switch n.kind {
+		case "object":
+			underlying = "map[string]" + g.fieldType(name+"Value", n.additional)
 		case "array":
 			underlying = "[]" + g.fieldType(name+"Item", n.items)
 		case "string":
@@ -337,7 +339,11 @@ func (g *generator) emitService(name string, s Service) {
 	g.line("var %sEndpoint = contract.EndpointKey(%q,%d)", name, s.Name, s.Major)
 	g.line("// %sRequirement requires the service with a minor in [minMinor, maxMinor].", name)
 	g.line("func %sRequirement(minMinor,maxMinor uint32) cordis.Requirement { return contract.Require(%sEndpoint,minMinor,maxMinor) }", name, name)
-	g.line("// %s is the service. Providers implement it; consumers receive it from New%sClient.", name, name)
+	g.line("// Provide%s provides implementation on s for as long as s lives.", name)
+	g.line("func Provide%s(s *cordis.Scope, implementation %s) error { return %sEndpoint.Provide(s, New%sEndpoint(implementation)) }", name, name, name, name)
+	g.line("// Get%s returns a client for the service visible from s.", name)
+	g.line("func Get%s(s *cordis.Scope) (%s, error) { endpoint, err := %sEndpoint.Get(s); if err != nil { return nil, err }; return New%sClient(endpoint) }", name, name, name, name)
+	g.line("// %s is the service. Providers implement it; consumers receive it from Get%s.", name, name)
 	g.line("type %s interface {", name)
 	for _, method := range s.Methods {
 		mn, err := exportedName(method.Name)
@@ -428,6 +434,9 @@ func (g *generator) fieldType(name string, n *node) string {
 	case "array":
 		return "[]" + g.fieldType(name+"Item", n.items)
 	default:
+		if n.additional != nil {
+			return "map[string]" + g.fieldType(name+"Value", n.additional)
+		}
 		g.emitType(name, n)
 		return name
 	}

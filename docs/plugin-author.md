@@ -9,25 +9,39 @@ native 插件是独立 Go module 里的一个进程：它声明提供和依赖�
 
 ## 最小插件
 
-作者维护 `plugin.toml`、契约声明（[数据契约](contracts.md)）和业务代码。生成的 `<Def>Plugin(start)` 返回 `cordis.Plugin[<Def>Config]`，`sdk.Define` 把它变成可运行的定义：
+作者维护 `plugin.toml` 和业务 Go。服务、请求、响应和配置是 Go 类型，用 `//cordis:` 指令声明，`cordis generate` 推导契约并生成绑定（[数据契约](contracts.md#用-go-类型写契约)）。生成的 `CounterPlugin` 是 `cordis.Plugin[Config]` 的值，`sdk.Define` 把它变成可运行的定义：
 
 ```go
-func main() {
-    if err := sdk.Run(context.Background(), sdk.Define(CounterPlugin(start))); err != nil {
-        fmt.Fprintln(os.Stderr, err)
-        os.Exit(1)
-    }
+// Counter 是插件提供的服务。
+//
+//cordis:service example.counter 1
+type Counter interface {
+    Execute(ctx context.Context, request Request) (Response, error)
 }
 
-func start(ctx context.Context, s *cordis.Scope, config CounterConfig) error {
+type Config struct {
+    Initial int64 `json:"initial,omitempty"`
+}
+
+//cordis:plugin counter
+//cordis:provides Counter
+func start(ctx context.Context, s *cordis.Scope, config Config) error {
     c := &counter{}
+    c.value.Store(config.Initial)
     if _, err := changed.On(ctx, s, func(context.Context, struct{}) error {
         c.events.Add(1)
         return nil
     }); err != nil {
         return err
     }
-    return ExampleCounterEndpoint.Provide(s, NewExampleCounterEndpoint(c))
+    return ProvideCounter(s, c)
+}
+
+func main() {
+    if err := sdk.Run(context.Background(), sdk.Define(CounterPlugin)); err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(1)
+    }
 }
 ```
 
@@ -35,14 +49,19 @@ func start(ctx context.Context, s *cordis.Scope, config CounterConfig) error {
 
 ## 依赖
 
-在契约里声明依赖，Host 在所有依赖就绪后才启动进程，并把绑定的服务交给 `start`：
+用 `//cordis:requires` 声明依赖，Host 在所有依赖就绪后才启动进程，并把绑定的服务交给 `start`：
 
 ```go
-endpoint, err := ExampleMessageEndpoint.Get(s)
-if err != nil { return err }
-client, err := NewExampleMessageClient(endpoint)
-if err != nil { return err }
+//cordis:plugin main
+//cordis:requires Message
+func start(ctx context.Context, s *cordis.Scope, config Config) error {
+    client, err := GetMessage(s)
+    if err != nil { return err }
+    ...
+}
 ```
+
+`Message` 可以是导入包里的接口，也可以是本包声明的、只含自己调用的方法的接口，Host 按方法指纹匹配（示例见 `examples/plugins/consumer`）。
 
 调用另一个进程里的服务与调用本进程的服务写法一致，经由 Host 路由，数据按契约校验。`Start` 内可以发出这类请求，也可以登记事件、查询和中间件；这些请求以初始化为父，在初始化成功后才对外生效。
 
@@ -121,20 +140,19 @@ s.Defer(func(context.Context) error { return resource.Close() })
 cordis dev -dev-unsigned -go-package . -config-file ../development.toml .
 ```
 
-保存 Go、契约、资源或配置文件会构建并重启；模块外的依赖用 `-watch` 显式加入。编译或配置失败时保留旧实例，修复后自动重建。同时开发 provider 和 consumer 等多个本地包时用 `-project FILE`，见[多插件联合开发](multi-package-dev.md)；参数与边界见 [CLI](cli.md#编辑后自动重启)。
+保存 Go、资源或配置文件会重新生成、构建并重启；模块外的依赖用 `-watch` 显式加入。编译或配置失败时保留旧实例，修复后自动重建。同时开发 provider 和 consumer 等多个本地包时用 `-project FILE`，见[多插件联合开发](multi-package-dev.md)；参数与边界见 [CLI](cli.md#编辑后自动重启)。
 
 ## 测试
 
 `plugintest.Start` 用真实的 Host、真实的 SDK 初始化、生成的 codec 和清理运行一个定义，不需要进程：
 
 ```go
-h, err := plugintest.Start(t.Context(), CounterDefinitionSpec(), sdk.Define(CounterPlugin(start)),
+h, err := plugintest.Start(t.Context(), CounterDefinitionSpec(), sdk.Define(CounterPlugin),
     plugintest.Options{Config: json.RawMessage(`{"initial":10}`)})
 if err != nil { t.Fatal(err) }
 defer h.Close(t.Context())
 
-endpoint, err := ExampleCounterEndpoint.Get(h.Scope())
-client, err := NewExampleCounterClient(endpoint)
+client, err := GetCounter(h.Scope())
 ```
 
 `Options.Setup` 在插件启动前往根作用域加载提供依赖的进程内插件，`Options.Children` 提供同包的其他定义；`h.Scope()` 是 Host 的根作用域，在它上面触发事件、调用服务即可观察插件。进程、信号和安装行为由 native 集成测试验证。

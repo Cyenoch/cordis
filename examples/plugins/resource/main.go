@@ -11,25 +11,34 @@ import (
 )
 
 func main() {
-	if err := sdk.Run(context.Background(), sdk.Define(MainPlugin(start))); err != nil {
+	if err := sdk.Run(context.Background(), sdk.Define(MainPlugin)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func start(_ context.Context, s *cordis.Scope, _ MainConfig) error {
+// Resource reads a file the package ships.
+//
+//cordis:service example.resource 1
+type Resource interface {
+	Read(ctx context.Context) (string, error)
+}
+
+//cordis:plugin main
+//cordis:provides Resource
+func start(_ context.Context, s *cordis.Scope, _ struct{}) error {
 	directory := os.Getenv("CORDIS_PACKAGE_DIR")
 	if directory == "" {
 		return fmt.Errorf("missing package resource directory")
 	}
-	return ExampleResourceEndpoint.Provide(s, NewExampleResourceEndpoint(resource{directory: directory}))
+	return ProvideResource(s, resource{directory: directory})
 }
 
 type resource struct {
 	directory string
 }
 
-func (r resource) Read(context.Context, ExampleResourceReadRequest) (ExampleResourceReadResponse, error) {
+func (r resource) Read(context.Context) (string, error) {
 	content, err := os.ReadFile(filepath.Join(r.directory, "assets", "message.txt"))
-	return ExampleResourceReadResponse(content), err
+	return string(content), err
 }

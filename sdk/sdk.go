@@ -53,7 +53,7 @@ func Define[C any](plugin cordis.Plugin[C]) Definition {
 	}
 	return Definition{ID: plugin.Name, load: func(s *cordis.Scope, raw json.RawMessage) (running, error) {
 		var config C
-		if err := contract.DecodeData(raw, &config); err != nil {
+		if err := contract.Decode(raw, &config); err != nil {
 			// The host needs the field the configuration fails on.
 			return nil, &contract.Error{Code: contract.Invalid, Message: "config: " + err.Error()}
 		}

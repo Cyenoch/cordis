@@ -1,0 +1,23 @@
+{
+  "schema": "cordis-go.contract/v1",
+  "services": [
+    {
+      "name": "example.clock",
+      "version": "1.2",
+      "methods": [
+        {
+          "name": "now",
+          "request": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "response": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  ]
+}

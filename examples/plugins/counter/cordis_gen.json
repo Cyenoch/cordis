@@ -1,0 +1,72 @@
+{
+  "schema": "cordis-go.contract/v1",
+  "services": [
+    {
+      "name": "example.counter",
+      "version": "1.0",
+      "methods": [
+        {
+          "name": "execute",
+          "request": {
+            "additionalProperties": false,
+            "properties": {
+              "delta": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "operation": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "delta",
+              "operation"
+            ],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {
+              "events": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "value": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "events",
+              "value"
+            ],
+            "type": "object"
+          }
+        }
+      ]
+    }
+  ],
+  "definitions": [
+    {
+      "id": "counter",
+      "config": {
+        "additionalProperties": false,
+        "properties": {
+          "initial": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "provides": [
+        "example.counter"
+      ]
+    }
+  ]
+}

@@ -30,16 +30,3 @@ path = "bin/darwin-arm64"
 os = "windows"
 arch = "amd64"
 path = "bin/windows-amd64.exe"
-
-[[contract.services]]
-name = "example.resource"
-version = 1
-
-[[contract.services.methods]]
-name = "read"
-request = { type = "object", properties = {} }
-response = { type = "string" }
-
-[[contract.definitions]]
-id = "main"
-provides = ["example.resource"]

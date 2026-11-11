@@ -16,6 +16,7 @@ import (
 	"github.com/Cyenoch/cordis/config"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/packagehost"
+	"github.com/Cyenoch/cordis/schema/gocontract"
 )
 
 type devPackage struct {
@@ -118,7 +119,9 @@ func (o devOptions) plan() (*devPlan, error) {
 		if err != nil {
 			return nil, err
 		}
-		author, err := packagehost.LoadAuthor(directory)
+		// The plan needs identity, targets and inputs; the build derives the
+		// contract, so a package that has never been built is fine here.
+		author, err := packagehost.OutlineAuthor(directory)
 		if err != nil {
 			return nil, err
 		}
@@ -139,7 +142,7 @@ func (o devOptions) plan() (*devPlan, error) {
 		for _, name := range append(author.Inputs(), author.Manifest.Resources...) {
 			plan.explicit[filepath.Join(directory, filepath.FromSlash(name))] = true
 		}
-		for _, name := range []string{"cordis_gen.go", packagehost.BuildDescriptorFile, targets[0].Path} {
+		for _, name := range []string{gocontract.GoFile, gocontract.ContractFile, packagehost.BuildDescriptorFile, targets[0].Path} {
 			path := filepath.Join(directory, filepath.FromSlash(name))
 			plan.outputs[path] = true
 			delete(plan.explicit, path)

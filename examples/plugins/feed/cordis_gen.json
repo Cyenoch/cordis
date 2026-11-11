@@ -1,0 +1,55 @@
+{
+  "schema": "cordis-go.contract/v1",
+  "services": [
+    {
+      "name": "example.feed",
+      "version": "1.0",
+      "methods": [
+        {
+          "name": "tail",
+          "request": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "count"
+            ],
+            "type": "object"
+          },
+          "response": {
+            "additionalProperties": false,
+            "properties": {
+              "line": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "line"
+            ],
+            "type": "object"
+          },
+          "stream": true
+        }
+      ]
+    }
+  ],
+  "definitions": [
+    {
+      "id": "feed",
+      "config": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "provides": [
+        "example.feed"
+      ]
+    }
+  ]
+}

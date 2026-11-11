@@ -167,6 +167,18 @@ func (r *run) reported(err error) error {
 	return err
 }
 
+// gone is what a caller sees when the entry went away during its call: the
+// reason the entry failed, or, after an ordinary stop, that it is not there.
+// Either way the error has a code, so callers can tell it from a call the
+// provider answered with a failure of its own.
+func (r *run) gone(err error) error {
+	cause := r.reported(err)
+	if _, coded := errors.AsType[*contract.Error](cause); coded {
+		return fmt.Errorf("entry %q: %w", r.identity.Entry, cause)
+	}
+	return &contract.Error{Code: contract.NotReady, Message: fmt.Sprintf("entry %q stopped during the call: %v", r.identity.Entry, cause)}
+}
+
 func (r *run) call(ctx context.Context, method string, input, output any) error {
 	data, err := json.Marshal(input)
 	if err != nil {
@@ -270,7 +282,7 @@ func (e *guestEndpoint) Call(ctx context.Context, method string, input json.RawM
 		// Tell a provider that went away from one that failed the call.
 		select {
 		case <-e.run.session.Done():
-			err = fmt.Errorf("entry %q: %w", e.run.identity.Entry, e.run.reported(err))
+			err = e.run.gone(err)
 		default:
 		}
 	}
@@ -297,7 +309,7 @@ func (e *guestEndpoint) Stream(ctx context.Context, method string, input json.Ra
 				// Tell a provider that went away from one that failed the call.
 				select {
 				case <-e.run.session.Done():
-					err = fmt.Errorf("entry %q: %w", e.run.identity.Entry, e.run.reported(err))
+					err = e.run.gone(err)
 				default:
 				}
 				yield(nil, err)

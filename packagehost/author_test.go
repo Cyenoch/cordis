@@ -3,11 +3,16 @@ package packagehost
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Cyenoch/cordis/schema/gocontract"
 )
 
 func writeAuthorFile(t *testing.T, dir, name, data string) {
@@ -198,5 +203,39 @@ func TestLoadAuthorConsumerRequiresExplicitClosedRange(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A declaration without contract keys takes the contract derived from its Go
+// source; until that exists only its outline can be read.
+func TestLoadAuthorDerivedContract(t *testing.T) {
+	dir := t.TempDir()
+	const header = "id = \"example.derived\"\nversion = \"1.0.0\"\npublisher = \"example\"\n[runtime]\nkind = \"native\"\n[[runtime.artifacts]]\nos = \"linux\"\narch = \"amd64\"\npath = \"plugin\"\n"
+	writeAuthorFile(t, dir, "plugin.toml", header)
+	if _, err := LoadAuthor(dir); !errors.Is(err, ErrNotGenerated) {
+		t.Fatalf("LoadAuthor before generation = %v, want ErrNotGenerated", err)
+	}
+	outline, err := OutlineAuthor(dir)
+	if err != nil || outline.Manifest.ID != "example.derived" || len(outline.Manifest.Definitions) != 0 || !outline.Derived {
+		t.Fatalf("OutlineAuthor = %+v, %v", outline, err)
+	}
+	writeAuthorFile(t, dir, gocontract.ContractFile, `{"schema":"cordis-go.contract/v1","definitions":[{"id":"main","config":{"type":"object","properties":{"name":{"type":"string"}}}}]}`)
+	author, err := LoadAuthor(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !author.Derived || author.Manifest.DefaultDefinition != "main" || !slices.Contains(author.Inputs(), gocontract.ContractFile) {
+		t.Fatalf("author = %+v, inputs %v", author, author.Inputs())
+	}
+	if err := author.Generate(io.Discard, "main"); err == nil {
+		t.Fatal("types were generated from a contract that is itself derived from Go types")
+	}
+	// The outline is the full declaration once the contract exists.
+	if outline, err = OutlineAuthor(dir); err != nil || outline.Fingerprint != author.Fingerprint {
+		t.Fatalf("OutlineAuthor after generation = %+v, %v", outline, err)
+	}
+	writeAuthorFile(t, dir, "plugin.toml", header+"contracts = []\n")
+	if _, err := LoadAuthor(dir); err == nil {
+		t.Fatal("an empty contracts list was accepted")
 	}
 }

@@ -21,5 +21,6 @@
     "schema": {"type":"object","properties":{"id":{"type":"string","format":"int64"},"bytes":{"type":"string","contentEncoding":"base64"},"name":{"type":"string","pattern":"\\A[a-z]+\\z"}},"required":["id","bytes","name"]},
     "valid": [{"id":"9223372036854775807","bytes":"YQ==","name":"hello"}],
     "invalid": [{"id":"+1","bytes":"YQ==","name":"ok"},{"id":"0","bytes":"?","name":"ok"}]
-  }
+  },
+  {"schema":{"type":"object","additionalProperties":{"type":"integer","minimum":0},"nullable":true},"valid":[{},{"a":1,"b":0},null],"invalid":[{"a":-1},{"a":"x"},[]]}
 ]

@@ -1,13 +1,124 @@
 ---
 title: 数据契约与代码生成
-description: 跨进程服务的声明格式、受限 Schema、生成的 Go 代码与配置文件解析。
+description: 用 Go 类型声明跨进程服务与配置，推导受限 Schema 并生成适配代码；声明式契约文件用于 Go 类型表达不了的形状。
 ---
 
 # 数据契约与代码生成
 
-跨进程的服务、配置和事件只传 JSON 数据，契约声明把这些数据的形状写成 `.schema.json`，生成器据此产出严格校验的 Go 类型、服务端点和客户端。从[生成服务实操](generated-service.md)可以跑通生成、注册和调用；`schema/testdata/echo.schema.json` 是包含两个方法、可选值、nullable、字节和 int64 的完整声明。生成代码只依赖标准库、根包 `cordis`、`contract` 和 `schema`，不依赖 Host 实现或 SDK。
+跨进程的服务、配置和事件只传 JSON 数据，契约把这些数据的形状固定下来：生成的客户端、端点和 Host 都按它校验。契约有两种写法，一个包只用一种：
 
-## 声明格式
+- **Go 类型**：接口、结构体和少量 `//cordis:` 指令就是契约，`cordis generate` 推导 Schema 并生成适配代码。
+- **声明式契约文件**：手写 TOML、YAML 或 JSON，用于 Go 类型表达不了的形状（标记联合）和与非 Go 实现共享的契约。
+
+两者共用同一种受限 Schema 和同一套服务入口。从[生成服务实操](generated-service.md)可以跑通生成、注册和调用；生成代码只依赖标准库、根包 `cordis`、`contract` 和 `schema`，不依赖 Host 实现或 SDK。
+
+## 用 Go 类型写契约
+
+```go
+// Echo 是服务。
+//
+//cordis:service example.echo 1.1
+type Echo interface {
+    Echo(ctx context.Context, request EchoRequest) (EchoResponse, error)
+}
+
+type EchoRequest struct {
+    Text string `json:"text" cordis:"minLength=1"`
+}
+
+type Config struct {
+    Prefix string `json:"prefix,omitempty"`
+}
+
+//cordis:plugin main
+//cordis:provides Echo
+func start(ctx context.Context, s *cordis.Scope, config Config) error {
+    return ProvideEcho(s, echo{prefix: config.Prefix})
+}
+```
+
+`plugin.toml` 不写 `contract`、`contracts` 即采用这种写法。
+
+### 服务与插件
+
+`//cordis:service <name> <major>[.<minor>]` 把接口声明为服务；省略 minor 为 0。方法的第一个参数是 `context.Context`，至多再有一个请求参数，形状如下：
+
+| 方法 | 含义 |
+| --- | --- |
+| `(ctx) error` | 无请求、无结果 |
+| `(ctx, request T) error` | 只有请求 |
+| `(ctx) (R, error)` | 只有结果 |
+| `(ctx, request T) (R, error)` | 请求与结果 |
+| `(ctx[, request T]) iter.Seq2[R, error]` | 流式：每次迭代产出一项 `R` |
+
+线上方法名是 Go 方法名首字母小写，`Echo` 即 `echo`。没有请求或结果的一侧是空对象。
+
+`//cordis:plugin <id>` 加在包级函数 `func(context.Context, *cordis.Scope, C) error` 上，`C` 必须是结构体，它的 Schema 就是配置 Schema。同一注释里的指令声明依赖关系：
+
+- `//cordis:provides <Interface>...`：插件提供的服务。
+- `//cordis:requires <Interface> [<min>-<max>]`：插件需要的服务和可接受的 minor 闭区间；省略区间时只接受该服务声明的 minor。
+
+接口可以来自导入的包（`//cordis:requires api.Clock 0-2`），该包须先运行过 `cordis generate`。签名不符、类型无法表达和未知的 `//cordis:` 指令都使生成失败，错误带源码位置。
+
+### 类型映射
+
+映射跟随 `encoding/json`，Schema 描述的就是这些类型实际编码出的 JSON：
+
+| Go | Schema |
+| --- | --- |
+| `bool`、`string` | `boolean`、`string` |
+| `float32`、`float64`、`json.Number` | `number` |
+| 整数 | `integer`，范围取类型范围与 ±(2^53-1) 的交集 |
+| `int64`、`uint64`，带 `json:",string"` | `string`，`format` 为 `int64`、`uint64`，完整范围 |
+| `[]T` | `array`，可为 null |
+| `[N]T` | `array`，长度恰为 N |
+| `[]byte` | base64 `string`，可为 null |
+| `*T` | `T`，可为 null |
+| 结构体 | 封闭 `object`，未知字段拒绝；匿名嵌入的结构体展开为外层字段 |
+| `time.Time` | `string` |
+
+- 没有 `omitempty`、`omitzero` 的字段必填；`json:"-"` 与未导出字段不在契约里。
+- 切片和指针可为 null：`encoding/json` 把 nil 切片编码为 null，写窄会让合法的 Go 值在边界上失败。
+- `int64` 与 `uint64` 是限于 JSON 安全整数范围（±(2^53-1)）的 `integer`，因为 JSON 数字常被对端按 float64 解析，更大的值会悄悄丢精度；超出范围的值在边界上校验失败，而不是被截断。需要完整范围时加 `json:",string"`，值以十进制字符串传输。
+
+以下类型无法表达，生成失败并指出源码位置：`map`、`any` 与其他接口、自带 `MarshalJSON` / `MarshalText` 的类型（`time.Time` 除外）、递归类型、嵌入的指针。标记联合同样不能由 Go 类型推导，改用[声明式契约文件](#声明式契约文件)。
+
+### 约束标签
+
+`cordis` 标签给字段加约束，多个约束用逗号分隔：
+
+```go
+Name string `json:"name" cordis:"minLength=1,maxLength=64"`
+```
+
+| 约束 | 适用 |
+| --- | --- |
+| `minLength`、`maxLength` | 字符串，按 Unicode 码点计 |
+| `minItems`、`maxItems` | 数组、切片 |
+| `minimum`、`maximum` | 整数、数值 |
+| `enum=a\|b` | 字符串、整数、数值 |
+| `pattern=^x` | 字符串，Go RE2；不自动加 `^` 或 `$` |
+
+`enum` 的候选值用竖线分隔。`pattern` 必须写在最后，其后的内容（包括逗号）都属于正则。约束不适用于字段类型时生成失败。
+
+### 边界校验
+
+跨边界的每个值都在编码后、解码前按契约校验，同进程的调用也不例外，所以进程内与 native 的行为一致。违反契约的请求以 `contract.Invalid` 错误到达调用方，错误带原因。整数字段只接受整数字面量：`10` 合法，`10.0` 与 `1e1` 会被 Go 的解码器拒绝。
+
+### 生成
+
+`cordis generate [DIRECTORY]` 分析目录里的 Go 包（缺省为当前目录），在源码旁写出两个文件：
+
+- `cordis_gen.go`：适配代码，内容见[类型化服务](#类型化服务)。
+- `cordis_gen.json`：推导出的契约，格式即下文的声明式契约。随源码提交，契约的变化会出现在评审的 diff 里。
+
+对同一份源码重复生成得到逐字节相同的文件。`cordis build` 与 `cordis dev` 先重新生成；`pack` 校验声明指纹，改了源码没重新构建会被拒绝。打包和检查只读 `cordis_gen.json`，不运行 Go 分析；缺少该文件时报错并提示先生成。生成需要 `go` 命令和能编译的依赖。
+
+## 声明式契约文件
+
+标记联合和与非 Go 实现共享的契约，Go 类型表达不了。这时手写契约文件：`plugin.toml` 用 `contract`（内联）或 `contracts`（文件列表）选用它，`cordis generate -output FILE CONTRACT...` 从文件生成 Go 类型（[CLI](cli.md#从声明式契约生成)）。声明式契约生成的配置类型、`<Def>Plugin(start)` 和服务入口见下，`cordis_gen.json` 也是这种格式。
+
+### 声明格式
 
 ```json
 {
@@ -28,9 +139,9 @@ description: 跨进程服务的声明格式、受限 Schema、生成的 Go 代�
 }
 ```
 
-`name` 转成导出的 Go 标识符，`.`、`-`、`_`、`/`、`:` 分隔单词；例如 `example.echo` 生成 `ExampleEchoClient`。作者使用 `version:1` 表示 1.0，或 `version:"1.2"` 表示 1.2；拒绝浮点数、补丁位和 `major`/`minor` 字段。方法和字段转换后的名称发生冲突会报错，而不是重命名或覆盖。声明、方法和数据 schema 的未知字段全部拒绝；不要在声明里写 Go 类型名、函数、闭包、指针、反射规则。本地引用只接受 `#/types/Name` 或 `#/$defs/Name`，不得附加同级约束；网络、文件引用、未解析引用和环均拒绝。
+`name` 转成导出的 Go 标识符，`.`、`-`、`_`、`/`、`:` 分隔单词；例如 `example.echo` 生成接口 `ExampleEcho` 与 `NewExampleEchoClient`。作者使用 `version:1` 表示 1.0，或 `version:"1.2"` 表示 1.2；拒绝浮点数、补丁位和 `major`/`minor` 字段。方法和字段转换后的名称发生冲突会报错，而不是重命名或覆盖。声明、方法和数据 schema 的未知字段全部拒绝；不要在声明里写 Go 类型名、函数、闭包、指针、反射规则。本地引用只接受 `#/types/Name` 或 `#/$defs/Name`，不得附加同级约束；网络、文件引用、未解析引用和环均拒绝。
 
-## 定义、元数据与指纹
+### 定义、元数据与指纹
 
 声明除 `services` 外可包含 `types` 和 `definitions`。例如：
 
@@ -60,9 +171,32 @@ _ = fingerprint
 
 每个 definition 生成三样东西：`PanelConfig`（严格编解码的配置类型）、`PanelDefinitionSpec()`（Manifest 用的描述）和 `PanelPlugin(start)`。`PanelPlugin` 返回 `cordis.Plugin[PanelConfig]`，`start` 的签名为 `func(context.Context, *cordis.Scope, PanelConfig) error`，`Requires` 来自声明，配置在 `Validate` 阶段严格校验。进程内用它的 `Load` 加载，native 入口用 `sdk.Define(PanelPlugin(start))`。若 definition 声明了消费者 `source`，还生成 `PanelSourceConsumer()`，描述与客户端复用同一个范围，不必手写。
 
+### 调用生成器
+
+```go
+definition, err := schema.Parse(sourceJSON)
+if err != nil { return err }
+if err := schema.Generate(destinationWriter, "echo", definition); err != nil { return err }
+```
+
+`Generate(io.Writer, string, schema.Definition) error` 也允许 SDK/CLI 直接构造声明。生成前检查整个声明与 Go 名称冲突；无效输入不会写出半份文件。写入失败、短写均向调用方返回。生成器使用标准库 `go/format`，在完整校验及 gofmt 成功后才调用 writer，不启动外部进程。writer 的原子替换仍由调用方负责；不能保护调用前已被 shell 重定向截断的文件。
+
+生成的每个方法有导出 request/response 根类型，例如 `ExampleEchoEchoRequest`，字段有原始 JSON 名的 tag，并生成严格的 `MarshalJSON`/`UnmarshalJSON`。生成器为每种类型缓存已编译 schema；编码、解码两侧都校验，不依赖宿主再次发现坏值。失败的解码不改写接收者。
+
+- 可选字段为 `schema.Optional[T]`，通过 `schema.Some(value)` 设置出现，`Present:false` 完全省略；因此 `false`、0、空串仍能是明确存在的值。
+- nullable 字段使用 `schema.Nullable[T]`，`Valid:false` 输出 null，`schema.NonNull(value)` 输出非 null；nullable 对象/数组同样适用，不暴露 Go 指针 ABI。
+- 普通 number/integer 叶子使用 `json.Number`，例如 `json.Number("2")`；显式 integer 根使用安全范围的命名 int64 codec。
+- 普通字符串、布尔、int64/uint64、字节叶子分别使用 `string`、`bool`、`schema.Int64/Uint64`、`[]byte`；数组使用 typed slice。叶子约束由父 codec 完整保留。`types` 中显式具名根仍生成独立严格 codec。
+- union 是拥有多个 `schema.Optional[VariantType]` 字段的具体结构。通过 `New<Union>Variant<Tag>(value)` 构造时自动填充 tag；编码必须恰有一个分支，`json.Unmarshal` 自动按 tag 设置对应分支。零个或多个分支都拒绝。
+- 非 nullable slice/字节的 nil 值不会自动变成空数组/空字节：它们编码为 null，因而被 schema 拒绝。需要空值时应显式构造非 nil 空 slice。
+
+多个输入用 `schema.GenerateMany(writer, "api", first, second)` 一次检查整个输出包的符号，碰撞在写入前失败；输入顺序不改变输出。`Generate`、`GenerateMany` 和 CLI 分次生成的不同文件均可共处一包；指纹使用 `<Name>ServiceDeclarationFingerprint` / `<Name>DefinitionDeclarationFingerprint`，不生成固定包级同名常量。显式具名类型由作者避免跨文件重复，真实冲突应通过 `GenerateMany` 在写入前检查。
+
+`schema/testdata/consumer_test.go.txt` 是独立消费者的行为测试。`go test -tags=integration ./schema` 把生成的文件与它写入临时独立 module，用 replace 指向当前检出，再编译并运行：类型化往返、union 与严格服务端、客户端拒绝不匹配的端点。普通 `go test ./schema` 运行 schema 与生成输入的拒绝测试。
+
 ## 受限 Schema
 
-这里使用受限数据方言，不是完整 JSON Schema。`$schema`、`$id`、`default`、`allOf`、`anyOf`、条件 schema、自定义扩展和未知 format 均拒绝，不会静默忽略。根可包含 `$defs`，其中所有定义（包括未使用的定义）均校验；引用在编译前展开。支持如下字段：
+两种写法共用受限数据方言，不是完整 JSON Schema。`$schema`、`$id`、`default`、`allOf`、`anyOf`、条件 schema、自定义扩展和未知 format 均拒绝，不会静默忽略。根可包含 `$defs`，其中所有定义（包括未使用的定义）均校验；引用在编译前展开。支持如下字段：
 
 | 数据 | 必需字段 | 可选约束 |
 | --- | --- | --- |
@@ -77,9 +211,9 @@ _ = fingerprint
 
 对象始终封闭：即使未写 `additionalProperties`，未知属性仍拒绝。字段缺失与 `null` 不等价；允许 null 必须显式写 `nullable:true`，不能使用 `type:["string","null"]` 或隐式指针。`required` 只控制字段是否必须出现。字符串长度按 Unicode 码点计算；pattern 不会自动加 `^` 或 `$`。
 
-数值必须可表示为有限 float64，溢出和非零下溢拒绝。整数的绝对值不得超过 `9007199254740991`，包括以指数或小数形式书写的数学整数。生成的 number 使用 `json.Number` 保留词法值，避免成功解码的 const/minimum 在重编码时因舍入失败；普通手写 float64 类型仍遵循 float64 语义；如需十进制定点精度，应自行用受约束的字符串表达，而非 number。minimum/maximum 比较使用输入数字的精确有理数，避免校验阶段先舍入。
+数值必须可表示为有限 float64，溢出和非零下溢拒绝。整数的绝对值不得超过 `9007199254740991`，包括以指数或小数形式书写的数学整数。声明式契约生成的 number 使用 `json.Number` 保留词法值，避免成功解码的 const/minimum 在重编码时因舍入失败；Go 类型的 `float64` 遵循 float64 语义；如需十进制定点精度，应自行用受约束的字符串表达，而非 number。minimum/maximum 比较使用输入数字的精确有理数，避免校验阶段先舍入。
 
-64 位整数必须是字符串：`{"type":"string","format":"int64"}` 或 `uint64`，使用完整类型范围内的规范十进制，不允许前导 `+`、前导零或 `-0`。字节用 `{"type":"string","contentEncoding":"base64"}`（也接受 `format:"byte"`），要求标准、带 padding 的规范 base64，拒绝换行和非规范尾位。
+完整范围的 64 位整数用字符串：`{"type":"string","format":"int64"}` 或 `uint64`，使用完整类型范围内的规范十进制，不允许前导 `+`、前导零或 `-0`。字节用 `{"type":"string","contentEncoding":"base64"}`（也接受 `format:"byte"`），要求标准、带 padding 的规范 base64，拒绝换行和非规范尾位。
 
 联合的每个分支必须是不可 nullable 的封闭对象，在 required 中包含 discriminator 属性，该属性必须是带非空字符串 `const` 的不可 nullable 字符串；各分支 tag 唯一。例如：
 
@@ -107,31 +241,10 @@ if err := compiled.Validate(configJSON); err != nil { return err }
 
 错误通过 `errors.As(err, &fieldError)` 读取 `*schema.FieldError`：`Path` 是 JSON Pointer（根为 `""`），`Keyword` 为 `required`、`minimum`、`nullable`、`discriminator` 等，`Message` 提供原因。schema 自身错误使用 `/schema` 前缀。调用方可据此定位配置字段，不必解析错误字符串。
 
-## 调用生成器
-
-```go
-definition, err := schema.Parse(sourceJSON)
-if err != nil { return err }
-if err := schema.Generate(destinationWriter, "echo", definition); err != nil { return err }
-```
-
-`Generate(io.Writer, string, schema.Definition) error` 也允许 SDK/CLI 直接构造声明。生成前检查整个声明与 Go 名称冲突；无效输入不会写出半份文件。写入失败、短写均向调用方返回。生成器使用标准库 `go/format`，在完整校验及 gofmt 成功后才调用 writer，不启动外部进程。writer 的原子替换仍由调用方负责；不能保护调用前已被 shell 重定向截断的文件。
-
-生成的每个方法有导出 request/response 根类型，例如 `ExampleEchoEchoRequest`，字段有原始 JSON 名的 tag，并生成严格的 `MarshalJSON`/`UnmarshalJSON`。生成器为每种类型缓存已编译 schema；编码、解码两侧都校验，不依赖宿主再次发现坏值。失败的解码不改写接收者。
-
-- 可选字段为 `schema.Optional[T]`，通过 `schema.Some(value)` 设置出现，`Present:false` 完全省略；因此 `false`、0、空串仍能是明确存在的值。
-- nullable 字段使用 `schema.Nullable[T]`，`Valid:false` 输出 null，`schema.NonNull(value)` 输出非 null；nullable 对象/数组同样适用，不暴露 Go 指针 ABI。
-- 普通 number/integer 叶子使用 `json.Number`，例如 `json.Number("2")`；显式 integer 根使用安全范围的命名 int64 codec。
-- 普通字符串、布尔、int64/uint64、字节叶子分别使用 `string`、`bool`、`schema.Int64/Uint64`、`[]byte`；数组使用 typed slice。叶子约束由父 codec 完整保留。`types` 中显式具名根仍生成独立严格 codec。
-- union 是拥有多个 `schema.Optional[VariantType]` 字段的具体结构。通过 `New<Union>Variant<Tag>(value)` 构造时自动填充 tag；编码必须恰有一个分支，`json.Unmarshal` 自动按 tag 设置对应分支。零个或多个分支都拒绝。
-- 非 nullable slice/字节的 nil 值不会自动变成空数组/空字节：它们编码为 null，因而被 schema 拒绝。需要空值时应显式构造非 nil 空 slice。
-
-多个输入用 `schema.GenerateMany(writer, "api", first, second)` 一次检查整个输出包的符号，碰撞在写入前失败；输入顺序不改变输出。`Generate`、`GenerateMany` 和 CLI 分次生成的不同文件均可共处一包；指纹使用 `<Name>ServiceDeclarationFingerprint` / `<Name>DefinitionDeclarationFingerprint`，不生成固定包级同名常量。显式具名类型由作者避免跨文件重复，真实冲突应通过 `GenerateMany` 在写入前检查。
-
 ## 标准编辑器 Schema
 
 ```go
-standard, err := schema.Export(specs[0].ConfigSchema)
+standard, err := schema.Export(specs[0].ConfigSchema) // Go 类型：MainDefinitionSpec().ConfigSchema
 if err != nil { return err }
 // standard 是 JSON Schema 2020-12；写到 panel.editor.schema.json。
 _ = standard
@@ -163,42 +276,43 @@ title = "panel"
 
 ## 类型化服务
 
-每个服务 `example.echo` 生成下列入口：
+每个服务 `Echo`（Go 里是接口名，声明式契约由服务名转成标识符，`example.echo` 为 `ExampleEcho`）生成下列入口：
 
 ```go
 // 键：同一个 key 用于发布和依赖
-var ExampleEchoEndpoint = contract.EndpointKey("example.echo", 1)
-func ExampleEchoRequirement(minMinor, maxMinor uint32) cordis.Requirement
-func ExampleEchoService() contract.Service // 本包生成时的名称与 minor
-func ExampleEchoConsumer(minMinor, maxMinor uint32) contract.Consumer
+var EchoEndpoint = contract.EndpointKey("example.echo", 1)
+func EchoRequirement(minMinor, maxMinor uint32) cordis.Requirement
+func EchoService() contract.Service // 本包生成时的名称与 minor
+func EchoConsumer(minMinor, maxMinor uint32) contract.Consumer
 
-// 服务接口：提供方实现它
-type ExampleEcho interface {
-    Echo(context.Context, ExampleEchoEchoRequest) (ExampleEchoEchoResponse, error)
-}
-func NewExampleEchoEndpoint(implementation ExampleEcho) contract.Endpoint
-func NewExampleEchoClient(endpoint contract.Endpoint) (ExampleEcho, error)
+// 一步发布与取得
+func ProvideEcho(s *cordis.Scope, implementation Echo) error
+func GetEcho(s *cordis.Scope) (Echo, error)
+
+// 端点与客户端
+func NewEchoEndpoint(implementation Echo) contract.Endpoint
+func NewEchoClient(endpoint contract.Endpoint) (Echo, error)
 ```
 
-提供方在 `Start` 里发布端点，消费者取得端点后构造客户端：
+插件 `main` 另生成 `MainPlugin`（`cordis.Plugin[Config]` 的值）和 `MainDefinitionSpec()`（Manifest 用的描述）。完整名单与流式方法见[生成服务](generated-service.md)。
+
+提供方在 `Start` 里发布，消费者取得客户端：
 
 ```go
 // 提供方
-err := echo.ExampleEchoEndpoint.Provide(s, echo.NewExampleEchoEndpoint(implementation))
+err := ProvideEcho(s, implementation)
 
-// 消费方：definition 的 Requires 已保证它存在
-endpoint, err := echo.ExampleEchoEndpoint.Get(s)
-if err != nil { return err }
-client, err := echo.NewExampleEchoClient(endpoint)
+// 消费方：插件声明了 requires，Host 保证它存在
+client, err := GetEcho(s)
 if err != nil { return err }
 result, err := client.Echo(ctx, request)
 ```
 
-端点是跨进程能力的统一形状：方法按名称寻址，进出都是校验过的 JSON。提供方在同一进程时，客户端直接调用实现，数据仍在进出两侧校验；提供方在另一个进程时，Host 把调用转给那个进程，对调用方没有区别。`NewExampleEchoClient` 检查端点的服务名和 major，不匹配返回 `incompatible`。
+端点是跨进程能力的统一形状：方法按名称寻址，进出都是校验过的 JSON。提供方在同一进程时，客户端直接调用实现，数据仍在进出两侧校验；提供方在另一个进程时，Host 把调用转给那个进程，对调用方没有区别。`NewEchoClient` 检查端点的服务名和 major，不匹配返回 `incompatible`。
 
-声明为 `"stream": true` 的方法生成 `iter.Seq2[Response, error]`：提供方返回序列，调用方遍历；提前停止遍历会取消提供方，迭代以最后一个非 nil 错误结束（[流的规则](protocol.md#流)）。
+返回 `iter.Seq2[R, error]` 的方法是流式方法：提供方返回序列，调用方遍历；提前停止遍历会取消提供方，迭代以最后一个非 nil 错误结束（[流的规则](protocol.md#流)）。
 
-版本范围由 `Requirement(min, max)` 表达，它进入 definition 的 `Requires`，Host 只把范围内的 provider 绑给消费者；范围外的 provider 使消费者保持 Waiting。声明里的消费者同时记录本地方法契约的指纹（`Consumer.Contract`）；它标识消费者编译时依赖的方法，包 SemVer、服务版本和会话协议版本相互独立。
+版本范围由 `EchoRequirement(min, max)` 表达，它进入插件的 `Requires`，Host 只把范围内的 provider 绑给消费者；范围外的 provider 使消费者保持 Waiting。契约里的消费者同时记录本地方法契约的指纹（`Consumer.Contract`）；它标识消费者编译时依赖的方法，包 SemVer、服务版本和会话协议版本相互独立。
 
 事件、查询和中间件链用同样的方式处理跨进程数据，键由作者定义在共享的包里：
 
@@ -211,8 +325,6 @@ var (
 ```
 
 `Changed.On(ctx, s, fn)`、`Lookup.Handle(ctx, s, fn)`、`Render.Use(ctx, s, middleware)` 登记，`Emit`、`EmitParallel`、`Ask`、`Do` 触发，语义与进程内的 `Event`、`Query`、`Chain` 相同（见[进程内内核](kernel.md)），区别在于登记和触发是返回 error 的调用，进出数据要满足本页的数据规则，插件在另一个进程时它们经由 Host 路由。Host 应用在 `host.Scope()` 上直接使用同一批键。示例见 `examples/plugins/feed` 与 `examples/plugins/counter`。
-
-`schema/testdata/consumer_test.go.txt` 是独立消费者的行为测试。`go test -tags=integration ./schema` 把生成的文件与它写入临时独立 module，用 replace 指向当前检出，再编译并运行：类型化往返、union 与严格服务端、客户端拒绝不匹配的端点。普通 `go test ./schema` 运行 schema 与生成输入的拒绝测试。
 
 ## 互操作向量
 

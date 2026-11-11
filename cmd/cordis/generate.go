@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,16 +12,30 @@ import (
 
 	"github.com/Cyenoch/cordis/config"
 	"github.com/Cyenoch/cordis/schema"
+	"github.com/Cyenoch/cordis/schema/gocontract"
 )
 
-func generateCommand(flags *flag.FlagSet, parse func() (bool, error), out io.Writer) error {
-	name := flags.String("package", "pluginapi", "generated Go package")
-	output := flags.String("output", "", "Go output path; - explicitly selects stdout")
+// generateCommand derives the contract of a Go package from its source, or,
+// with -output, generates Go types from contract files.
+func generateCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, error), out io.Writer) error {
+	name := flags.String("package", "pluginapi", "generated Go package, with -output")
+	output := flags.String("output", "", "generate from contract files into this Go file; - selects stdout")
 	inputFormat := flags.String("format", "", "contract format: toml, yaml or json (default: extension)")
 	if done, err := parse(); done {
 		return err
 	}
-	if flags.NArg() == 0 || *output == "" {
+	if *output == "" {
+		if flags.NArg() > 1 {
+			return &usageError{message: commandUsage["generate"]}
+		}
+		dir := "."
+		if flags.NArg() == 1 {
+			dir = flags.Arg(0)
+		}
+		_, err := gocontract.Generate(ctx, dir)
+		return err
+	}
+	if flags.NArg() == 0 {
 		return &usageError{message: commandUsage["generate"]}
 	}
 	if err := checkFormat(*inputFormat); err != nil {

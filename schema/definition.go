@@ -312,7 +312,7 @@ func (d Definition) specs() []contract.DefinitionSpec {
 		}
 		for _, c := range pd.Requires {
 			s := services[c.Service]
-			spec.Requires = append(spec.Requires, s.consumer(c.MinMinor, c.MaxMinor))
+			spec.Requires = append(spec.Requires, s.Consumer(c.MinMinor, c.MaxMinor))
 		}
 		specs = append(specs, spec)
 	}
@@ -341,7 +341,9 @@ func (s Service) methodFingerprint() string {
 	return fingerprint(raw)
 }
 
-func (s Service) consumer(minMinor, maxMinor uint32) contract.Consumer {
+// Consumer is the requirement a package declares on a service of a canonical
+// declaration, with the fingerprint of the methods it was built against.
+func (s Service) Consumer(minMinor, maxMinor uint32) contract.Consumer {
 	return contract.Consumer{Requirement: contract.Requirement{Name: s.Name, Major: s.Major, MinMinor: minMinor, MaxMinor: maxMinor}, Contract: s.methodFingerprint()}
 }
 
@@ -372,3 +374,7 @@ func exportedName(value string) (string, error) {
 	}
 	return name, nil
 }
+
+// Normalized returns the declaration in its canonical form: schemas expanded
+// and spelled one way, lists sorted. It is what the fingerprint covers.
+func (d Definition) Normalized() (Definition, error) { return d.normalized() }

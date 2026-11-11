@@ -1,6 +1,7 @@
 package packagehost
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,7 +16,12 @@ import (
 	"github.com/Cyenoch/cordis/config"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/schema"
+	"github.com/Cyenoch/cordis/schema/gocontract"
 )
+
+// ErrNotGenerated reports a declaration whose contract comes from its Go
+// source and has not been derived yet.
+var ErrNotGenerated = errors.New("the contract has not been derived from the Go source; run cordis generate")
 
 var authorCandidates = []string{"plugin.toml", "plugin.yaml", "plugin.yml", ManifestFile}
 
@@ -26,7 +32,10 @@ type Author struct {
 	Contracts   []schema.Definition
 	Fingerprint string
 	Source      string
-	sources     []string
+	// Derived reports a contract derived from the Go source of the package
+	// rather than written by the author.
+	Derived bool
+	sources []string
 }
 
 // Inputs returns the author and contract files read to produce this declaration.
@@ -48,7 +57,27 @@ type authorSource struct {
 
 // LoadAuthor loads exactly one candidate, even when source names a file.
 // It never falls back from an invalid current machine Manifest to author syntax.
-func LoadAuthor(sourceDir string) (*Author, error) {
+// A declaration without contract or contracts takes the contract derived from
+// its Go source, as last written by GenerateAuthor or cordis generate.
+func LoadAuthor(sourceDir string) (*Author, error) { return loadAuthor(sourceDir, nil, false) }
+
+// OutlineAuthor is LoadAuthor for a tool that runs before the first build.
+// Where LoadAuthor fails with ErrNotGenerated it returns the declaration
+// without definitions: identity, targets and resources are all there is to
+// know until the Go source has been analyzed.
+func OutlineAuthor(sourceDir string) (*Author, error) { return loadAuthor(sourceDir, nil, true) }
+
+// GenerateAuthor is LoadAuthor after deriving the contract and its bindings
+// from the Go source again. It is LoadAuthor for a declaration that writes
+// its contract itself.
+func GenerateAuthor(ctx context.Context, sourceDir string) (*Author, error) {
+	return loadAuthor(sourceDir, func(dir string) error {
+		_, err := gocontract.Generate(ctx, dir)
+		return err
+	}, false)
+}
+
+func loadAuthor(sourceDir string, derive func(dir string) error, outline bool) (*Author, error) {
 	dir, source, err := authorSourcePath(sourceDir)
 	if err != nil {
 		return nil, err
@@ -91,11 +120,25 @@ func LoadAuthor(sourceDir string) (*Author, error) {
 	}
 	_, inline := fields["contract"]
 	_, references := fields["contracts"]
-	if inline == references || references && len(input.Contracts) == 0 {
-		return nil, fmt.Errorf("%s: provide exactly one of contract or nonempty contracts", source)
+	if inline && references || references && len(input.Contracts) == 0 {
+		return nil, fmt.Errorf("%s: provide at most one of contract or nonempty contracts", source)
 	}
 	loader.active[source] = true
-	if inline {
+	if a.Derived = !inline && !references; a.Derived {
+		if derive != nil {
+			if err := derive(dir); err != nil {
+				return nil, err
+			}
+		}
+		if err := loader.load(gocontract.ContractFile, 0); errors.Is(err, os.ErrNotExist) {
+			if !outline {
+				return nil, fmt.Errorf("%s: %w", source, ErrNotGenerated)
+			}
+		} else if err != nil {
+			return nil, fmt.Errorf("%s: %w", source, err)
+		}
+		a.Contracts = loader.contracts
+	} else if inline {
 		d, err := parseAuthorContract(input.Contract)
 		if err != nil {
 			return nil, fmt.Errorf("%s contract: %w", source, err)
@@ -143,7 +186,13 @@ func LoadAuthor(sourceDir string) (*Author, error) {
 	if m.DefaultDefinition == "" && len(m.Definitions) == 1 {
 		m.DefaultDefinition = m.Definitions[0].ID
 	}
-	if err := ValidateManifest(m); err != nil {
+	checked := m
+	if a.Derived && len(a.Contracts) == 0 {
+		// An outline: everything but the definitions can be checked.
+		checked.Definitions = []contract.DefinitionSpec{{ID: "outline", ConfigSchema: json.RawMessage(`{"type":"object"}`)}}
+		checked.DefaultDefinition = "outline"
+	}
+	if err := ValidateManifest(checked); err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
 	a.Manifest = m
@@ -152,9 +201,14 @@ func LoadAuthor(sourceDir string) (*Author, error) {
 }
 
 // Generate validates all declarations before writing a formatted Go file.
+// A derived contract has no types to generate: its bindings come from the Go
+// source, through GenerateAuthor.
 func (a *Author) Generate(w io.Writer, pkg string) error {
 	if len(a.Contracts) == 0 {
 		return fmt.Errorf("%s: machine Manifest has no author contracts", a.Source)
+	}
+	if a.Derived {
+		return fmt.Errorf("%s: bindings of a derived contract are generated from the Go source", a.Source)
 	}
 	return schema.GenerateMany(w, pkg, a.Contracts...)
 }

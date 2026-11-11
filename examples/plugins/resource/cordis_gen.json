@@ -1,0 +1,37 @@
+{
+  "schema": "cordis-go.contract/v1",
+  "services": [
+    {
+      "name": "example.resource",
+      "version": "1.0",
+      "methods": [
+        {
+          "name": "read",
+          "request": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "response": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  ],
+  "definitions": [
+    {
+      "id": "main",
+      "config": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "provides": [
+        "example.resource"
+      ]
+    }
+  ]
+}

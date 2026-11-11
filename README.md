@@ -19,7 +19,7 @@ Go 版本见 `go.mod`。也可从本地检出构建 CLI：
 go build -o ./bin/cordis ./cmd/cordis
 ```
 
-作者通过 `cordis init` 创建独立 module，用一份契约生成配置类型、`<Def>Plugin(start)` 和类型化服务，再执行 `build`、业务测试、`pack`。完整可运行步骤见[快速开始](docs/getting-started.md)。
+作者通过 `cordis init` 创建独立 module，用 Go 接口和结构体声明服务与配置，`cordis generate` 推导契约并生成类型化绑定，再执行 `build`、业务测试、`pack`。完整可运行步骤见[快速开始](docs/getting-started.md)。
 
 `cordis dev` 监视单包源码，也可用 project 清单联合开发多个包；整组构建和预检通过后再重启。使用者可通过 CLI 签名、离线 install/select/enable，再用 `cordis host` 前台恢复运行；显式开启本机控制后，可在线查看状态和启停实例。参数见 [CLI](docs/cli.md)。
 
@@ -48,10 +48,10 @@ if err := instance.Wait(ctx); err != nil { return err }
 - 依赖就绪后启动实例，provider 退役时先清理消费者；新 provider 发布后重新绑定。
 - 服务默认共享；`Scope.Isolate`、`Entry.Isolate`、`Child.Isolate` 为指定服务建立子树边界，`Host.Caller` 选择某个 entry 的解析视图。
 - `sdk.CreateChild` 创建归属于当前父激活的同包子实例；Host 可枚举、查询及控制动态子树。
-- 事件、查询和中间件链的登记返回取消句柄，支持 `Once`、`Prepend`；事件在 Host 内广播。流方法在契约里声明，生成 `iter.Seq2`。
+- 事件、查询和中间件链的登记返回取消句柄，支持 `Once`、`Prepend`；事件在 Host 内广播。流方法是返回 `iter.Seq2` 的接口方法。
 - `Scope.Defer` 绑定清理，按逆序执行；`Scope.Go` 管理随激活取消的后台工作。
 - `Instance.Update` 校验并更新配置；`Host.Retry` 保持配置重试已清理的静态 Failed 实例。自动恢复默认关闭，可按持久 native 实例配置有限退避重试。
-- native 插件入口是 `sdk.Run(ctx, sdk.Define(<Def>Plugin(start)))`。每次激活独占一个进程，标准协议处理调用、取消和清理。
+- native 插件入口是 `sdk.Run(ctx, sdk.Define(<P>Plugin))`，`<P>Plugin` 由 `cordis generate` 生成。每次激活独占一个进程，标准协议处理调用、取消和清理。
 
 包管理只保存代码、配置意图和运行记录。授权、任务、业务存储、贡献和脱敏由应用实现。native 插件具有启动用户权限，签名证明来源与完整性；资源清理不会回滚业务副作用。
 

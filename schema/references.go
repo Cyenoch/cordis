@@ -181,12 +181,16 @@ func (r *resolver) expand(raw json.RawMessage, depth int) (json.RawMessage, erro
 			return nil, err
 		}
 	}
-	if value, exists := obj["items"]; exists {
+	for _, keyword := range []string{"items", "additionalProperties"} {
+		value, exists := obj[keyword]
+		if !exists || keyword == "additionalProperties" && string(bytes.TrimSpace(value)) == "false" {
+			continue
+		}
 		child, err := r.expand(value, depth+1)
 		if err != nil {
 			return nil, err
 		}
-		obj["items"] = child
+		obj[keyword] = child
 	}
 	if value, exists := obj["oneOf"]; exists {
 		var children []json.RawMessage

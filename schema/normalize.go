@@ -21,6 +21,13 @@ func normalizeNode(n *node) error {
 	}
 	switch n.kind {
 	case "object":
+		if n.additional != nil {
+			if err := normalizeNode(n.additional); err != nil {
+				return err
+			}
+			obj["additionalProperties"] = n.additional.raw
+			break
+		}
 		props := map[string]json.RawMessage{}
 		for _, key := range sortedKeys(n.properties) {
 			child := n.properties[key]
