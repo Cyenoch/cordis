@@ -204,6 +204,9 @@ func FuzzPeer(f *testing.F) {
 		})
 		peer.SetWriteDeadline(time.Now().Add(2 * time.Second))
 		peer.Write([]byte(input))
+		// Stop the deadline's timer: left armed it fires during a later
+		// test, where its goroutine would be counted.
+		peer.SetWriteDeadline(time.Time{})
 		peer.Close()
 
 		finished := make(chan struct{})

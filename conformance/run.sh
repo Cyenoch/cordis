@@ -5,7 +5,7 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/cordis-conformance.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 printf 'Platform: '
 go env GOOS GOARCH GOVERSION
-go test -tags=integration -race ./... -timeout 5m
+go test -tags=integration -race ./... -timeout 10m
 go build -o "$work/basic-host" ./examples/basic-host
 go build -o "$work/lifecycle-smoke" ./conformance/cmd/lifecycle-smoke
 go build -o "$work/stream-smoke" ./conformance/cmd/stream-smoke

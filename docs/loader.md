@@ -76,7 +76,7 @@ logging.Plugin.Load(root, logging.Config{Output: io.Discard})
 loader.Plugin.Load(root, loader.Config{File: file, Registry: registry})
 ```
 
-别的插件通过 `loader.Service` 取得 `*loader.Loader`。要等全部条目稳定后再启动，把 `loader.Ready` 写进 `Requires`：它只是启动门，已经启动的实例不会因为之后的编辑而停止。因缺少依赖而等待的条目不算“未稳定”。
+别的插件通过 `loader.Service` 取得 `*loader.Loader`。要等全部条目稳定后再启动，把 `loader.Ready` 写进 `Requires`：条目第一次全部稳定后它即满足，此后一直满足，所以已经启动的实例不会因为之后的编辑而停止，稳定之后才加载的实例也不再等待。因缺少依赖而等待的条目不算“未稳定”。
 
 ```go
 cordis.Plugin[struct{}]{

@@ -36,11 +36,14 @@ type Config struct {
 // Service is the key under which Plugin provides the loader.
 var Service = cordis.NewService[*Loader]("loader")
 
-// Ready is a requirement satisfied once no entry is starting or stopping.
-// It gates the start only: an instance that has started is not stopped when
-// entries become busy again.
+// Ready is a requirement satisfied once the entries have settled for the
+// first time: none is starting or stopping. It stays satisfied from then on,
+// so an instance that started because of it is not stopped when a later
+// edit makes entries busy again.
 var Ready = Service.Where(func(l *Loader) error {
-	if !l.stable() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.reached {
 		return errors.New("loader: entries are still starting or stopping")
 	}
 	return nil
@@ -130,6 +133,7 @@ type Loader struct {
 
 	activity   uint64 // bumped whenever something may have started or stopped
 	steady     bool   // stability has been announced to Ready consumers
+	reached    bool   // the entries have settled at least once; never reset
 	confirming bool   // a confirmation of stability is under way
 }
 
@@ -584,12 +588,6 @@ func (e *entry) forget(context.Context) {
 
 // stable reports whether nothing is starting or stopping. Entries that wait
 // for a missing service count as stable.
-func (l *Loader) stable() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.stableLocked()
-}
-
 func (l *Loader) stableLocked() bool {
 	if l.driving {
 		return false
@@ -672,9 +670,14 @@ func (l *Loader) confirm(ctx context.Context) {
 			return
 		}
 		if seen == l.activity {
-			l.confirming, l.steady = false, true
+			first := !l.reached
+			l.confirming, l.steady, l.reached = false, true, true
 			l.mu.Unlock()
-			Service.Changed(l.scope)
+			// Ready is decided by reached, which only changes once: there is
+			// nothing to tell its consumers after that.
+			if first {
+				Service.Changed(l.scope)
+			}
 			return
 		}
 		l.mu.Unlock()

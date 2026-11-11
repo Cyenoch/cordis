@@ -8,7 +8,7 @@ function Run-Go {
 }
 try {
     Run-Go env GOOS GOARCH GOVERSION
-    Run-Go test -tags=integration -race ./... -timeout 5m
+    Run-Go test -tags=integration -race ./... -timeout 10m
     Run-Go build -o "$work/basic-host.exe" ./examples/basic-host
     Run-Go build -o "$work/lifecycle-smoke.exe" ./conformance/cmd/lifecycle-smoke
     Run-Go build -o "$work/stream-smoke.exe" ./conformance/cmd/stream-smoke

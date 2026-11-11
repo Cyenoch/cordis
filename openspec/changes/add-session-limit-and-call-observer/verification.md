@@ -31,3 +31,9 @@
 
 - macOS 15 arm64，Go 1.27.3：`bash conformance/run.sh` 通过。
 - 五平台 CI：提交 `feat: host-chosen in-flight limit…` 全部通过，https://github.com/Cyenoch/cordis/actions/runs/43034898421 。
+
+## CI 在慢机上暴露的问题
+
+- `loader`：`Ready` 的条件读取“当前是否稳定”，而内核在宣告之后才评估它；评估落在下一次编辑之后时，已经启动的实例会被停掉再启动（macos-15-intel 上出现）。改为单向锁存：条目第一次全部稳定后即满足，此后不变。
+- `wire`：模糊测试种子留下的写入期限定时器在后面的测试里触发，被按 goroutine 数量断言的测试计入（ubuntu-24.04-arm 上出现）。写完即撤销期限。
+- `cmd/cordis` 的集成测试在 macos-15-intel 上超过整包 5 分钟的时限；堆栈显示它仍在运行而非卡死。时限放宽到 10 分钟。
