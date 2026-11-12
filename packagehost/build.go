@@ -27,6 +27,9 @@ const BuildSchema = "cordis-go.build/v1"
 const BuildDescriptorFile = "build.json"
 const sdkModule = "github.com/Cyenoch/cordis"
 
+// BuildOptions selects what Build compiles. GoPackage, GOOS and GOARCH are
+// required; Output defaults to the manifest's artifact for the target, and
+// the generated code to package main in cordis_gen.go.
 type BuildOptions struct {
 	GoPackage        string
 	Output           string
@@ -47,6 +50,7 @@ type SDKBuild struct {
 	Capabilities string            `json:"capabilities"`
 }
 
+// BuildTarget is one artifact Build produced, with its digest.
 type BuildTarget struct {
 	OS     string `json:"os"`
 	Arch   string `json:"arch"`

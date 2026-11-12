@@ -18,6 +18,8 @@ import (
 // PackageDirectoryEnv names the activation's verified package snapshot.
 const PackageDirectoryEnv = "CORDIS_PACKAGE_DIR"
 
+// Options configures native plugin processes. Environment is all a plugin
+// gets besides CORDIS_PACKAGE_DIR; Grace applies where the launch sets none.
 type Options struct {
 	Environment map[string]string
 	Lifetime    context.Context
@@ -27,6 +29,8 @@ type Options struct {
 	StderrBytes int64
 }
 
+// Runtime starts each activation as a copy of its package's executable,
+// talking to it over stdin and stdout.
 type Runtime struct{ options Options }
 
 // New creates an adapter with no inherited environment and no implicit restart.
@@ -36,6 +40,7 @@ func New(options Options) *Runtime {
 	return &Runtime{options: options}
 }
 
+// Start runs launch.Artifact from the activation's package snapshot.
 func (r *Runtime) Start(ctx context.Context, launch contract.Launch) (contract.Session, error) {
 	path, err := process.Artifact(launch.Directory, launch.Artifact)
 	if err != nil {

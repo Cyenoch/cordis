@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -69,5 +70,18 @@ func TestUnknownCommandSuggestsTheClosest(t *testing.T) {
 		if err := execute(t.Context(), []string{typed}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != want {
 			t.Errorf("%s: %v, want %q", typed, err, want)
 		}
+	}
+}
+
+// A plugin from init asks for the Go this module needs, not the newer Go
+// that built the CLI.
+func TestInitWritesTheSDKGoVersion(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "\ngo "+sdkGoVersion+"\n") {
+		t.Fatalf("sdkGoVersion %s differs from the go directive in go.mod", sdkGoVersion)
 	}
 }

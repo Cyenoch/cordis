@@ -258,28 +258,38 @@ func prepareDevCandidate(ctx context.Context, options devOptions, input devInput
 		trust.Digests[pkg.Ref.Digest] = true
 		trust.Publishers[pkg.Manifest.Publisher] = append(trust.Publishers[pkg.Manifest.Publisher], pkg.Ref.ID)
 	}
+	if err := stageDevStore(ctx, filepath.Join(dir, "store"), trust, logger, archives, packages, input.plan.entries); err != nil {
+		return nil, err
+	}
 	h, err := hosting.Open(hosting.Options{
 		Directory: filepath.Join(dir, "store"), Logger: logger, Trust: trust, Stderr: options.stderr,
 	})
 	if err != nil {
 		return nil, err
 	}
-	candidate = &devCandidate{host: h, directory: dir, generation: input.generation}
-	for _, archive := range archives {
-		if _, err := h.Install(ctx, archive); err != nil {
-			return candidate, err
-		}
-	}
-	if err := selectDevPackages(ctx, h, packages); err != nil {
-		return candidate, err
-	}
-	if err := saveDevEntries(ctx, h.Store(), input.plan.entries); err != nil {
-		return candidate, err
-	}
-	return candidate, nil
+	return &devCandidate{host: h, directory: dir, generation: input.generation}, nil
 }
 
-func selectDevPackages(ctx context.Context, h *hosting.Host, packages map[string]packagehost.Package) error {
+// stageDevStore installs, selects and enables the dev project in a store
+// that no host runs yet, so the candidate host starts all of it in Restore.
+func stageDevStore(ctx context.Context, directory string, trust packagehost.TrustPolicy, logger *slog.Logger, archives []string, packages map[string]packagehost.Package, entries []contract.Entry) (result error) {
+	store, err := packagehost.OpenWithOptions(directory, packagehost.Options{Trust: trust, Logger: logger})
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, store.Close()) }()
+	for _, archive := range archives {
+		if _, err := store.Install(ctx, archive); err != nil {
+			return err
+		}
+	}
+	if err := selectDevPackages(ctx, store, packages); err != nil {
+		return err
+	}
+	return saveDevEntries(ctx, store, entries)
+}
+
+func selectDevPackages(ctx context.Context, store *packagehost.Store, packages map[string]packagehost.Package) error {
 	states := map[string]uint8{}
 	var selectPackage func(string) error
 	selectPackage = func(id string) error {
@@ -299,7 +309,7 @@ func selectDevPackages(ctx context.Context, h *hosting.Host, packages map[string
 				return err
 			}
 		}
-		if err := h.Select(ctx, pkg.Ref); err != nil {
+		if err := store.Select(ctx, pkg.Ref, packagehost.ChangeOptions{}); err != nil {
 			return err
 		}
 		states[id] = 2

@@ -17,6 +17,10 @@ import (
 	"github.com/Cyenoch/cordis/schema/gocontract"
 )
 
+// sdkGoVersion is the go directive of this module, the oldest Go the SDK
+// builds with. init writes it so a plugin asks for no newer Go than it needs.
+const sdkGoVersion = "1.27.3"
+
 func initCommand(flags *flag.FlagSet, parse func() (bool, error), out io.Writer) error {
 	module := flags.String("module", "", "Go module path for the plugin")
 	sdkVersion := flags.String("sdk-version", "", "Cordis module version (default: actual CLI dependency version)")
@@ -40,10 +44,6 @@ func initCommand(flags *flag.FlagSet, parse func() (bool, error), out io.Writer)
 	if !strings.HasPrefix(*sdkVersion, "v") || packagehost.ValidateVersion(strings.TrimPrefix(*sdkVersion, "v")) != nil {
 		return &usageError{message: "init needs -sdk-version vX.Y.Z when the CLI was built from an unversioned checkout"}
 	}
-	goVersion := strings.TrimPrefix(info.GoVersion, "go")
-	if err := packagehost.ValidateVersion(goVersion); err != nil {
-		return fmt.Errorf("init: cannot use Go build version %q in go.mod", info.GoVersion)
-	}
 	artifact := "plugin"
 	if runtime.GOOS == "windows" {
 		artifact += ".exe"
@@ -52,7 +52,7 @@ func initCommand(flags *flag.FlagSet, parse func() (bool, error), out io.Writer)
 	manifest := "id = " + strconv.Quote(*id) + "\nversion = \"0.1.0\"\npublisher = " + strconv.Quote(*publisher) + "\n\n" + runtimeSource
 	files := []struct{ name, content string }{
 		{"plugin.toml", manifest},
-		{"go.mod", "module " + strconv.Quote(*module) + "\n\ngo " + goVersion + "\n\nrequire " + sdkModule + " " + *sdkVersion + "\n"},
+		{"go.mod", "module " + strconv.Quote(*module) + "\n\ngo " + sdkGoVersion + "\n\nrequire " + sdkModule + " " + *sdkVersion + "\n"},
 	}
 	dir := flags.Arg(0)
 	for _, name := range []string{"plugin.toml", "plugin.yaml", "plugin.yml", "plugin.json", "main.go", "main_test.go", "go.mod", gocontract.GoFile, gocontract.ContractFile} {

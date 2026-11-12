@@ -16,8 +16,11 @@ func awaitExit(pid int) bool {
 	defer unix.Close(queue)
 	watch := []unix.Kevent_t{{Ident: uint64(pid), Filter: unix.EVFILT_PROC, Flags: unix.EV_ADD | unix.EV_ONESHOT, Fflags: unix.NOTE_EXIT}}
 	events := make([]unix.Kevent_t, 1)
+	// A watch attached while the process is exiting can miss its exit, so
+	// the wait also looks for a zombie now and then.
+	recheck := unix.NsecToTimespec(int64(time.Second))
 	for {
-		n, err := unix.Kevent(queue, watch, events, nil)
+		n, err := unix.Kevent(queue, watch, events, &recheck)
 		switch {
 		case errors.Is(err, unix.EINTR):
 			watch = nil // registered already; only wait
@@ -29,8 +32,19 @@ func awaitExit(pid int) bool {
 			return unix.Errno(events[0].Data) == unix.ESRCH
 		case n > 0:
 			return true
+		default:
+			watch = nil
+			if exited(pid) {
+				return true
+			}
 		}
 	}
+}
+
+// exited reports whether pid is a zombie, its exit already past.
+func exited(pid int) bool {
+	info, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	return err == nil && info.Proc.P_stat == 5 // SZOMB
 }
 
 func groupHasNoLiveMembers(pid int) (bool, error) {

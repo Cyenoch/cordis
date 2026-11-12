@@ -30,6 +30,8 @@ type Limits struct {
 	Entries       int
 }
 
+// DefaultLimits caps an archive at 64 MiB, a file at 64 MiB, the expanded
+// package at 256 MiB and 10000 entries.
 func DefaultLimits() Limits { return Limits{64 << 20, 64 << 20, 256 << 20, 10000} }
 func (l Limits) validate() error {
 	if l.ArchiveBytes <= 0 || l.FileBytes <= 0 || l.ExpandedBytes <= 0 || l.FileBytes == int64(^uint64(0)>>1) || l.ExpandedBytes == int64(^uint64(0)>>1) || l.Entries <= 0 || l.Entries > 10000 {

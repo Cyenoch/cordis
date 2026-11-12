@@ -13,6 +13,8 @@ Host 从已验证的包创建不可变的执行快照，在其中启动产物，
 
 退役先让依赖它的消费者完成清理，再向插件发送 `shutdown`：SDK 取消普通工作、等待已准入的回调、按逆序运行清理。超出宽限（`hosting.Options.Grace`，默认 5 秒）仍未退出时终止并回收整个进程树。进程在没有收到停止请求时退出（包括退出码 0），该 entry 以 `unexpected_exit` 失败。
 
+进程树是 Unix 的进程组或 Windows 的 Job。后代自行 `setsid`、另建进程组或 daemonize 后就不在树内，宿主不回收它们。
+
 ## 环境与输出
 
 默认不继承父进程环境，需要的变量由 `native.Options.Environment` 显式给出。stdout 专用于协议；stderr 始终被排空，避免写满管道阻塞插件。配置 `hosting.Options.Stderr` 可接收输出，转发受 `StderrBytes` 预算限制，超出的部分继续排空。

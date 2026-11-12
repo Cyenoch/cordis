@@ -17,7 +17,6 @@ import (
 
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/examples/pluginmeta"
-	"github.com/Cyenoch/cordis/hosting"
 	"github.com/Cyenoch/cordis/packagehost"
 )
 
@@ -219,12 +218,12 @@ func TestDevPackageSelectionHonorsRequiredAndOptionalDependencies(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			h, err := hosting.Open(hosting.Options{Directory: t.TempDir(), Trust: trust})
+			store, err := packagehost.OpenWithOptions(t.TempDir(), packagehost.Options{Trust: trust})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() {
-				if err := h.Close(t.Context()); err != nil {
+				if err := store.Close(); err != nil {
 					t.Error(err)
 				}
 			}()
@@ -247,22 +246,19 @@ func TestDevPackageSelectionHonorsRequiredAndOptionalDependencies(t *testing.T) 
 					m.OptionalDependencies, m.Dependencies = m.Dependencies, nil
 				}
 				archive, _ := cliArchive(t, m, key, []byte("not executed"))
-				pkg, err := h.Install(t.Context(), archive)
+				pkg, err := store.Install(t.Context(), archive)
 				if err != nil {
 					t.Fatal(err)
 				}
 				packages[id] = pkg
 			}
-			err = selectDevPackages(t.Context(), h, packages)
+			err = selectDevPackages(t.Context(), store, packages)
 			wantSuccess := scenario == "required" || scenario == "optional-cycle"
 			if (err == nil) != wantSuccess {
 				t.Fatalf("dependency selection result: %v", err)
 			}
 			if !wantSuccess && errors.Is(err, context.Canceled) {
 				t.Fatalf("dependency validation did not finish: %v", err)
-			}
-			if len(h.Instances()) != 0 {
-				t.Fatal("preflight started plugin code")
 			}
 		})
 	}

@@ -55,6 +55,14 @@ type Harness struct {
 // ctx has none, is reported with what it waits for.
 // Always Close a harness that Start returned.
 func Start(ctx context.Context, spec contract.DefinitionSpec, definition sdk.Definition, options Options) (h *Harness, err error) {
+	if err := paired(spec, definition); err != nil {
+		return nil, err
+	}
+	for _, child := range options.Children {
+		if err := paired(child.Spec, child.Definition); err != nil {
+			return nil, err
+		}
+	}
 	directory, err := os.MkdirTemp("", "cordis-plugintest-")
 	if err != nil {
 		return nil, err
@@ -136,6 +144,15 @@ func Start(ctx context.Context, spec contract.DefinitionSpec, definition sdk.Def
 		return h, fmt.Errorf("definition %q is %s, waiting for %+v", spec.ID, status.State, status.Waiting)
 	}
 	return h, nil
+}
+
+// paired tells a spec from one definition passed with another plugin, which
+// the host would only report as an unknown definition.
+func paired(spec contract.DefinitionSpec, definition sdk.Definition) error {
+	if spec.ID != definition.ID {
+		return fmt.Errorf("plugintest: spec of definition %q is paired with plugin %q", spec.ID, definition.ID)
+	}
+	return nil
 }
 
 // startLimit bounds how long Start waits when ctx has no deadline.

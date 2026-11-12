@@ -28,3 +28,14 @@ func TestStartReportsAMissingProvider(t *testing.T) {
 		t.Fatalf("Start = %v, %v", h, err)
 	}
 }
+
+// A spec passed with another plugin's definition is named as such.
+func TestStartNamesAMismatchedPair(t *testing.T) {
+	t.Parallel()
+	spec := contract.DefinitionSpec{ID: "main", ConfigSchema: json.RawMessage(`{"type":"object"}`), Provides: []contract.Service{}, Requires: []contract.Consumer{}}
+	plugin := cordis.Plugin[struct{}]{Name: "other", Start: func(context.Context, *cordis.Scope, struct{}) error { return nil }}
+	h, err := plugintest.Start(t.Context(), spec, sdk.Define(plugin), plugintest.Options{})
+	if h != nil || err == nil || !strings.Contains(err.Error(), `spec of definition "main" is paired with plugin "other"`) {
+		t.Fatalf("Start = %v, %v", h, err)
+	}
+}

@@ -18,6 +18,7 @@ type RecoveryPolicy struct {
 	MaxDelay     time.Duration
 }
 
+// RecoveryState is where the recovery of one entry stands.
 type RecoveryState string
 
 const (
@@ -30,6 +31,7 @@ const (
 	RecoveryMissing       RecoveryState = "missing"
 )
 
+// RecoveryInfo is the recovery of one entry as RecoveryStatus reports it.
 type RecoveryInfo struct {
 	Entry       string            `json:"entry"`
 	Identity    contract.Identity `json:"identity"`

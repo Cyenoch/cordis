@@ -51,6 +51,9 @@ const (
 	commitRootSynced     commitStage = "root-synced"
 )
 
+// Store is a package store directory: installed packages, the selected
+// version of each, saved entry intent and recent runs. One process holds
+// it at a time.
 type Store struct {
 	mu      sync.Mutex
 	entries atomic.Pointer[map[string]contract.Entry]
@@ -74,10 +77,13 @@ type ChangeOptions struct {
 	Enabled []string
 }
 
+// Removal is the result of Uninstall. Pending means the catalog dropped the
+// package but its files remain; Reason says why, and RetryRemovals deletes
+// them later.
 type Removal struct {
-	Removed bool
-	Pending bool
-	Reason  string
+	Removed bool   `json:"removed"`
+	Pending bool   `json:"pending"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // CommitError means the atomic catalog or runs root was replaced. Callers must not retry
@@ -105,6 +111,7 @@ func Open(root string, trust TrustPolicy) (s *Store, err error) {
 	return OpenWithOptions(root, Options{Trust: trust})
 }
 
+// OpenWithOptions is Open with a logger and limits as well as trust.
 func OpenWithOptions(root string, options Options) (s *Store, err error) {
 	limits := options.Limits
 	if limits == (Limits{}) {
@@ -192,6 +199,9 @@ func copyTrust(t TrustPolicy) TrustPolicy {
 	}
 	return out
 }
+
+// UpdateTrust replaces the trust policy for later installs, selections and
+// snapshots.
 func (s *Store) UpdateTrust(trust TrustPolicy) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -434,9 +444,13 @@ func (s *Store) mutate(ctx context.Context, c catalog) error {
 	return s.commit(ctx, c)
 }
 
+// Install verifies archive, a package zip, against the trust policy and
+// adds it. It selects nothing.
 func (s *Store) Install(ctx context.Context, archive string) (Package, error) {
 	return s.install(ctx, archive, false)
 }
+
+// ImportDirectory installs a package from an unpacked directory.
 func (s *Store) ImportDirectory(ctx context.Context, dir string) (Package, error) {
 	return s.install(ctx, dir, true)
 }
@@ -563,6 +577,8 @@ func (s *Store) get(ref contract.PackageRef) (Package, error) {
 	p.Directory = s.content(ref.Digest)
 	return clonePackage(p), nil
 }
+
+// Get is the installed package ref names.
 func (s *Store) Get(ref contract.PackageRef) (Package, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -587,6 +603,8 @@ func (s *Store) Selected(id string) (Package, error) {
 	}
 	return s.get(ref)
 }
+
+// Installed lists every installed package.
 func (s *Store) Installed() ([]Package, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -661,6 +679,9 @@ func preflight(c catalog, ref contract.PackageRef) ([]string, error) {
 	err := visit(ref)
 	return diagnostics, err
 }
+
+// Preflight checks that ref's required dependencies are selected and
+// compatible. The diagnostics name optional dependencies that are not.
 func (s *Store) Preflight(ref contract.PackageRef) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -766,6 +787,8 @@ func validateEntry(m contract.Manifest, e contract.Entry) error {
 	}
 	return fmt.Errorf("unknown definition %s", e.Definition)
 }
+
+// Entries is the saved intent of every entry.
 func (s *Store) Entries() ([]contract.Entry, error) {
 	entries := s.entries.Load()
 	if entries == nil {
@@ -786,6 +809,9 @@ func (s *Store) publishEntries() {
 	entries := s.catalog.Entries
 	s.entries.Store(&entries)
 }
+
+// SaveEntry saves e as it is, after validating it against the selected
+// version of its package.
 func (s *Store) SaveEntry(ctx context.Context, e contract.Entry) (err error) {
 	var committed bool
 	var ref contract.PackageRef
@@ -817,6 +843,8 @@ func (s *Store) SaveEntry(ctx context.Context, e contract.Entry) (err error) {
 	c.Entries[e.ID] = e
 	return s.mutate(ctx, c)
 }
+
+// DeleteEntry removes the saved intent of a disabled entry.
 func (s *Store) DeleteEntry(ctx context.Context, id string) (err error) {
 	var committed bool
 	defer func() { s.logMutation(ctx, "entry.remove", contract.PackageRef{}, id, committed, err) }()
@@ -847,6 +875,7 @@ type Snapshot struct {
 	closed    bool
 }
 
+// Close removes the snapshot's files.
 func (p *Snapshot) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -859,6 +888,9 @@ func (p *Snapshot) Close() error {
 	p.closed = true
 	return nil
 }
+
+// Snapshot copies the selected ref to a private directory to run from and
+// verifies the copy against the current trust policy.
 func (s *Store) Snapshot(ctx context.Context, ref contract.PackageRef) (snapshot *Snapshot, err error) {
 	s.mu.Lock()
 	if err = s.check(); err != nil {
@@ -978,6 +1010,9 @@ func (s *Store) checkUninstall(ref contract.PackageRef, opt ChangeOptions) error
 	return nil
 }
 
+// Uninstall removes ref. It refuses a version in opt.InUse, or a selected
+// one that opt.Enabled packages depend on; entries of a selected version are
+// disabled.
 func (s *Store) Uninstall(ctx context.Context, ref contract.PackageRef, opt ChangeOptions) (result Removal, err error) {
 	var committed bool
 	defer func() { s.logMutation(ctx, "uninstall", ref, "", committed, err) }()
@@ -1073,6 +1108,9 @@ func (s *Store) PendingRemovals() ([]contract.PackageRef, error) {
 	}
 	return out, nil
 }
+
+// RetryRemovals deletes the files of earlier removals that are still
+// pending.
 func (s *Store) RetryRemovals() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1087,6 +1125,8 @@ func (s *Store) RetryRemovals() error {
 	}
 	return nil
 }
+
+// Close releases the store lock.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

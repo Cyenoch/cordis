@@ -19,6 +19,8 @@ import (
 	"github.com/Cyenoch/cordis/runtime/native"
 )
 
+// Options configures a Host. Directory, the package store, is required; the
+// rest have working defaults.
 type Options struct {
 	Directory  string
 	Trust      packagehost.TrustPolicy
@@ -69,6 +71,9 @@ type CallRecord struct {
 	Err error
 }
 
+// Host runs the entries of one package store: it keeps their saved intent,
+// starts them in dependency order and coordinates package changes with what
+// runs. Open one with Open and Close it when done.
 type Host struct {
 	mu             sync.Mutex
 	operations     chan struct{}
@@ -93,6 +98,8 @@ type Host struct {
 	changed        chan struct{} // closed and replaced whenever an instance or a service changes
 }
 
+// Open opens the store in options.Directory, locking it for this process.
+// It starts nothing; Restore starts the saved entries.
 func Open(options Options) (*Host, error) {
 	if options.Directory == "" {
 		return nil, contract.Fail(contract.Invalid, "package directory required")
@@ -141,7 +148,28 @@ func Open(options Options) (*Host, error) {
 	return h, nil
 }
 
-func (h *Host) Store() *packagehost.Store { return h.store }
+// Catalog reads the package store a Host owns. Changes go through the Host,
+// which coordinates them with running instances.
+type Catalog interface {
+	Installed() ([]packagehost.Package, error)
+	Get(ref contract.PackageRef) (packagehost.Package, error)
+	Selected(id string) (packagehost.Package, error)
+	Entries() ([]contract.Entry, error)
+	Runs() ([]packagehost.RunRecord, error)
+	Preflight(ref contract.PackageRef) ([]string, error)
+	PendingRemovals() ([]contract.PackageRef, error)
+}
+
+// Store returns the read side of the Host's package store.
+func (h *Host) Store() Catalog { return h.store }
+
+// UpdateTrust replaces the trust policy. Later installs, selections and
+// activation snapshots are checked against it; running activations go on.
+func (h *Host) UpdateTrust(trust packagehost.TrustPolicy) error { return h.store.UpdateTrust(trust) }
+
+// RetryRemovals deletes the files of earlier uninstalls that are still
+// pending.
+func (h *Host) RetryRemovals() error { return h.store.RetryRemovals() }
 
 // changes returns a channel that is closed at the next change of an
 // instance or a service.
@@ -285,10 +313,15 @@ func (h *Host) Emit(ctx context.Context, event contract.Event) (contract.EventRe
 	return dispatch(ctx, h.app.Scope(), event)
 }
 
+// Install verifies archive against the trust policy and adds it to the
+// store. It selects nothing.
 func (h *Host) Install(ctx context.Context, archive string) (packagehost.Package, error) {
 	return h.store.Install(ctx, archive)
 }
 
+// Select makes ref the selected version of its package after checking its
+// trust, dependencies and the saved entries that use it. It refuses while
+// another version of the package runs; Replace switches running entries.
 func (h *Host) Select(ctx context.Context, ref contract.PackageRef) error {
 	if err := h.lockOperation(ctx); err != nil {
 		return err
@@ -336,6 +369,8 @@ func (h *Host) changeOptions() (packagehost.ChangeOptions, error) {
 	return options, nil
 }
 
+// Enable saves entry as enabled and starts it. The returned Instance
+// reports when it becomes active or why it waits.
 func (h *Host) Enable(ctx context.Context, entry contract.Entry) (contract.Instance, error) {
 	if err := h.lockOperation(ctx); err != nil {
 		return nil, err
@@ -474,6 +509,8 @@ func (h *Host) enableEntry(ctx context.Context, entry contract.Entry, parent *ru
 	return instance, commitErr
 }
 
+// Disable stops the entry and the entries it owns and saves them as
+// disabled.
 func (h *Host) Disable(ctx context.Context, id string) error {
 	if err := h.lockOperation(ctx); err != nil {
 		return err
@@ -600,6 +637,10 @@ func (h *Host) forget(id string, instance *hostInstance) {
 	delete(h.entrySpecs, id)
 }
 
+// Uninstall removes ref from the store. It refuses a version that runs, and
+// a selected version while entries of its package or of packages that need
+// it are enabled. Removal.Pending means its files are not deleted yet;
+// Reason says why, and RetryRemovals tries again.
 func (h *Host) Uninstall(ctx context.Context, ref contract.PackageRef) (packagehost.Removal, error) {
 	if err := h.lockOperation(ctx); err != nil {
 		return packagehost.Removal{}, err
@@ -615,6 +656,8 @@ func (h *Host) Uninstall(ctx context.Context, ref contract.PackageRef) (packageh
 	return h.store.Uninstall(ctx, ref, options)
 }
 
+// Replace selects ref and restarts every entry of its package, with the
+// entries they own, on the new version.
 func (h *Host) Replace(ctx context.Context, ref contract.PackageRef) error {
 	if err := h.lockOperation(ctx); err != nil {
 		return err
@@ -754,6 +797,7 @@ func (h *Host) Close(ctx context.Context) error {
 	return errors.Join(err, storeErr)
 }
 
+// Status is the status of a running entry, persistent or dynamic.
 func (h *Host) Status(id string) (contract.Status, error) {
 	instance, err := h.Instance(id)
 	if err != nil {

@@ -24,18 +24,25 @@ const ManifestFile = "plugin.json"
 const IntegrityFile = "integrity.json"
 const SignatureFile = "signature.json"
 
+// IntegrityEntry is the size and digest of one package file.
 type IntegrityEntry struct {
 	Path   string `json:"path"`
 	Size   uint64 `json:"size"`
 	SHA256 string `json:"sha256"`
 }
+
+// Integrity lists every file of a package; the package digest covers it.
 type Integrity struct {
 	Files []IntegrityEntry `json:"files"`
 }
+
+// Signature is a publisher key's Ed25519 signature over a package.
 type Signature struct {
 	KeyID     string `json:"keyId"`
 	Signature string `json:"signature"`
 }
+
+// Package is an installed package. Directory is its content in the store.
 type Package struct {
 	Ref         contract.PackageRef `json:"ref"`
 	Manifest    contract.Manifest   `json:"manifest"`
@@ -43,6 +50,8 @@ type Package struct {
 	Source      string              `json:"source"`
 	Development bool                `json:"development"`
 }
+
+// TrustedKey is a publisher's signing key.
 type TrustedKey struct {
 	PublicKey ed25519.PublicKey
 	Publisher string
