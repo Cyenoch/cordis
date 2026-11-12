@@ -16,6 +16,7 @@
 - 配置不符合 schema 时，`cordis run` 与 `cordis enable` 的错误指出配置来自哪个文件（或 `-config`、stdin）；未知属性的错误列出可接受的属性名。
 - `cordis generate` 的报错给出改法：未知指令与约束列出可用项，无法描述的 chan、func、interface 字段提示 `json:"-"`，配置是指针时说明要用结构体，`requires`/`provides` 写成服务名时指出对应接口。
 - 打错的命令提示最接近的命令（`unknown command: instal; did you mean install?`）；`cordis generate` 的目录不存在时直接这样说，不再报告为 go 无法启动。
+- 安全：`golang.org/x/text` 升到 v0.41.0（GO-2026-5970，包路径校验在非法输入上死循环）；以 `toolchain go1.27.4` 构建（GO-2026-6859，`net/http`），`go` 最低版本仍为 1.27.3。
 
 ## v0.2.0
 
