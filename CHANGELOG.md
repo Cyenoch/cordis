@@ -12,6 +12,7 @@
 - store 被另一个进程占用时，错误带上 store 路径；新增 `packagehost.ErrInUse`。CLI 提示 Host 运行期间用 `cordis control`。
 - `pack`、`sign`、`install` 以及 `inspect` 的 `ref` 增加 `exact`（`id@version#digest`），可直接交给 `select`、`uninstall`。新增 `contract.PackageRef.String`。
 - 生成的 endpoint 收到不存在的方法时列出可用方法的线上名称；从 Go 推导的契约在把流式方法当普通调用（或反过来）时直接说明。升级后 `cordis pack` 会要求先重新运行 `cordis generate`。
+- 从 Go 推导契约时，本包里带 `json` 或 `cordis` 标签的未导出字段报错，不再被静默略去；约束不适用的报错改为 `minLength does not apply to integer values`。
 
 ## v0.2.0
 

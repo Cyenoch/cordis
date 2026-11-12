@@ -179,6 +179,11 @@ func (s *source) fields(t *types.Struct, visiting []*types.Named, properties map
 			}
 		}
 		if !field.Exported() {
+			// encoding/json skips it whatever its tags say; a tag on a field
+			// of this package means its author expected it in the contract.
+			if field.Pkg() == s.pkg && (tag.Get("json") != "" || tag.Get("cordis") != "") {
+				return fail(fmt.Errorf("unexported fields are not encoded; export it or remove its tags"))
+			}
 			continue
 		}
 		if name == "" {
@@ -285,7 +290,7 @@ func constrain(property shape, tag string) error {
 		kind := property["type"]
 		accepts := func(kinds ...string) error {
 			if !slices.Contains(kinds, kind.(string)) {
-				return fmt.Errorf("cordis tag: %s does not apply to a %s", key, kind)
+				return fmt.Errorf("cordis tag: %s does not apply to %s values", key, kind)
 			}
 			return nil
 		}
