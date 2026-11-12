@@ -40,6 +40,9 @@ jobs:
   conformance:
     uses: ./.github/workflows/conformance.yml
 
+  vulnerabilities:
+    uses: ./.github/workflows/vulnerabilities.yml
+
   build:
     needs: documents
     strategy:
@@ -75,7 +78,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [documents, conformance, build]
+    needs: [documents, conformance, vulnerabilities, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

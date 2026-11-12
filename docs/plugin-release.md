@@ -81,7 +81,7 @@ inspect 的 `files` 是实际文件清单，逐项列出大小和摘要。未声
 
 ## 发布 Cordis CLI
 
-维护者在干净检出中推送明确版本 tag 后，Release workflow 对同一提交运行文档检查和五平台 conformance，构建并执行各平台归档内的 CLI，再上传完整发行集。普通 main 推送不会创建 Release。
+维护者在干净检出中推送明确版本 tag 后，Release workflow 对同一提交运行文档检查、五平台 conformance 和 govulncheck，构建并执行各平台归档内的 CLI，再上传完整发行集。普通 main 推送不会创建 Release。
 
 ```sh
 go run ./scripts/release -version v0.1.1 -output ./dist
