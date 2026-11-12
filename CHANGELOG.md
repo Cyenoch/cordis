@@ -2,6 +2,10 @@
 
 版本与承诺范围见 [稳定性](docs/stability.md)。
 
+## 未发布
+
+- CI 在推送、PR 和每周定时运行 govulncheck（仓库与示例插件）；Release 在它通过后才发布。
+
 ## v0.3.0
 
 - `cordis pack` 先核对 `cordis_gen.go`、`cordis_gen.json` 与 Go 源码一致：改了契约没有重新生成时报错，不再打包旧契约。新增 `gocontract.Check`。
@@ -17,7 +21,6 @@
 - `cordis generate` 的报错给出改法：未知指令与约束列出可用项，无法描述的 chan、func、interface 字段提示 `json:"-"`，配置是指针时说明要用结构体，`requires`/`provides` 写成服务名时指出对应接口。
 - 打错的命令提示最接近的命令（`unknown command: instal; did you mean install?`）；`cordis generate` 的目录不存在时直接这样说，不再报告为 go 无法启动。
 - 安全：`golang.org/x/text` 升到 v0.41.0（GO-2026-5970，包路径校验在非法输入上死循环）；以 `toolchain go1.27.4` 构建（GO-2026-6859，`net/http`），`go` 最低版本仍为 1.27.3。
-- CI 在推送、PR 和每周定时运行 govulncheck（仓库与示例插件）；Release 在它通过后才发布。
 - **行为变化**：`TrustPolicy.Digests` 中的摘要单独足以信任该包，不再要求包没有签名。带有未知密钥、已撤销密钥或无效签名的包，摘要被批准时也能安装和运行（`signature.json` 不在摘要内，删掉它本来就能通过）；`signature.json` 本身格式错误仍拒绝。发布者授权、撤销与 `PublisherChanges` 照旧。`cordis run -dev-unsigned` 与 `cordis dev` 因此也运行带未知签名的本地产物。
 - **破坏性变更**：`TrustPolicy.DevDigests` 改名为 `Digests`，与 `Keys` 并列，不保留旧名；它是生产与开发共用的信任来源。CLI 信任文件格式不变。
 - `hosting.Caller` 新增 `Endpoint(required)`：返回 entry 视图里校验过版本的 endpoint，交给生成的 `NewXClient`，一元与流式方法都能调用，包括隔离在 entry 内、根作用域看不到的服务。
