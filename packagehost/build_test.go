@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -115,6 +116,8 @@ func TestPackAuthorPublishesOnlyDeclaredFiles(t *testing.T) {
 
 func TestPackRejectsBuildDriftWithoutReplacingArchive(t *testing.T) {
 	t.Parallel()
+	built := t.TempDir()
+	d := externalAuthorBuild(t, built, minimalAuthorTOML)
 	for _, tt := range []struct {
 		name   string
 		change func(*testing.T, string, BuildDescriptor)
@@ -158,9 +161,13 @@ func TestPackRejectsBuildDriftWithoutReplacingArchive(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			d := externalAuthorBuild(t, dir, minimalAuthorTOML)
+			if err := os.CopyFS(dir, os.DirFS(built)); err != nil {
+				t.Fatal(err)
+			}
 			archive := filepath.Join(t.TempDir(), "existing.zip")
 			writeAuthorFile(t, filepath.Dir(archive), filepath.Base(archive), "existing archive")
+			d := d
+			d.Targets = slices.Clone(d.Targets)
 			tt.change(t, dir, d)
 			_, err := Pack(context.Background(), dir, archive)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
