@@ -404,7 +404,7 @@ func (a *analysis) plugin(file *ast.File, decl *ast.FuncDecl, found []directive)
 		case "misspelled":
 			return nil, a.source.errorf(d.position, "write %s%s without a space after the slashes", prefix, strings.Join(d.args, " "))
 		default:
-			return nil, a.source.errorf(d.position, "unknown directive %s%s", prefix, d.verb)
+			return nil, a.source.errorf(d.position, "unknown directive %s%s; a plugin takes %sprovides and %srequires", prefix, d.verb, prefix, prefix)
 		}
 	}
 	if p.id == "" {
@@ -432,12 +432,21 @@ func (a *analysis) plugin(file *ast.File, decl *ast.FuncDecl, found []directive)
 	derived, err := a.source.derive(p.config)
 	if err == nil && (derived["type"] != "object" || derived["nullable"] == true || derived["additionalProperties"] != nil) {
 		err = fmt.Errorf("a configuration is a struct")
+		if _, pointer := types.Unalias(p.config).(*types.Pointer); pointer {
+			err = fmt.Errorf("a configuration is a struct, not a pointer to one")
+		}
 	}
 	if err != nil {
 		return nil, a.source.within(decl.Pos(), fmt.Sprintf("plugin %s: configuration %s", p.id, types.TypeString(p.config, nil)), err)
 	}
 	p.schema = derived
 	return p, nil
+}
+
+// serviceName explains a directive that named a service where its interface
+// belongs.
+func (a *analysis) serviceName(d directive, s *service) error {
+	return a.source.errorf(d.position, "%s is a service name; name its interface, %s", s.name, s.object.Name())
 }
 
 // reference resolves an interface named in a directive, X or pkg.X, to the
@@ -455,11 +464,17 @@ func (a *analysis) reference(file *ast.File, d directive, expression string) (*s
 			}
 		}
 		if scope == nil {
+			if s, named := a.byName[expression]; named {
+				return nil, a.serviceName(d, s)
+			}
 			return nil, a.source.errorf(d.position, "%s: this file does not import a package named %s", expression, qualifier)
 		}
 	}
 	object, ok := scope.Lookup(name).(*types.TypeName)
 	if !ok {
+		if s, named := a.byName[expression]; named {
+			return nil, a.serviceName(d, s)
+		}
 		return nil, a.source.errorf(d.position, "%s is not a declared type", expression)
 	}
 	if s, known := a.byObject[object]; known {

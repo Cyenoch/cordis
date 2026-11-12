@@ -205,8 +205,8 @@ func (s *source) fields(t *types.Struct, visiting []*types.Named, properties map
 		var err error
 		if quoted {
 			property, err = quotedInteger(field.Type())
-		} else {
-			property, err = s.schemaOf(field.Type(), visiting)
+		} else if property, err = s.schemaOf(field.Type(), visiting); err != nil && unencodable(field.Type()) {
+			err = fmt.Errorf("%w; tag the field json:\"-\" to leave it out", err)
 		}
 		if err == nil {
 			err = constrain(property, tag.Get("cordis"))
@@ -341,7 +341,7 @@ func constrain(property shape, tag string) error {
 			}
 			property[key] = values
 		default:
-			return fmt.Errorf("cordis tag: unknown constraint %q", key)
+			return fmt.Errorf("cordis tag: unknown constraint %q; use minLength, maxLength, minItems, maxItems, minimum, maximum, pattern or enum", key)
 		}
 	}
 	return nil
@@ -376,4 +376,14 @@ func ownEncoding(t *types.Named) string {
 		}
 	}
 	return ""
+}
+
+// unencodable reports types encoding/json cannot encode or that a contract
+// never describes, for which leaving the field out is the likely fix.
+func unencodable(t types.Type) bool {
+	switch t.Underlying().(type) {
+	case *types.Chan, *types.Signature, *types.Interface:
+		return true
+	}
+	return false
 }
