@@ -70,7 +70,7 @@ inspect 的 `files` 是实际文件清单，逐项列出大小和摘要。未声
 
 ```sh
 ./bin/cordis install -store ./state -trust ./trust.json ./bin/resource.zip
-./bin/cordis select -store ./state -trust ./trust.json 'example.resource@0.1.0#替换为安装输出的完整摘要'
+./bin/cordis select -store ./state -trust ./trust.json 'install 输出的 exact'
 ./bin/cordis enable -store ./state -trust ./trust.json -package example.resource resource
 ./bin/cordis host -store ./state -trust ./trust.json
 ```

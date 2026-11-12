@@ -172,11 +172,11 @@ stdin 只允许一个输入使用，且必须指定格式；内联与对应文�
 "$CORDIS" sign "$PLUGIN.zip" author-key "$PLUGIN.author.private"
 ```
 
-按 [CLI 信任文件示例](cli.md#离线管理与前台运行)填写 `trust.json`，把 `publicKey` 替换为 keygen 的输出，publisher 使用 `example.author`，包 ID 使用 `example.hello`。下面 select 的完整引用取自 sign 输出：
+按 [CLI 信任文件示例](cli.md#离线管理与前台运行)填写 `trust.json`，把 `publicKey` 替换为 keygen 的输出，publisher 使用 `example.author`，包 ID 使用 `example.hello`。select 的参数是 pack、sign 或 install 输出的 `exact`：
 
 ```sh
 "$CORDIS" install -store "$PLUGIN.state" -trust "$PLUGIN.trust.json" "$PLUGIN.zip"
-"$CORDIS" select -store "$PLUGIN.state" -trust "$PLUGIN.trust.json" 'example.hello@0.1.0#完整摘要'
+"$CORDIS" select -store "$PLUGIN.state" -trust "$PLUGIN.trust.json" 'install 输出的 exact'
 "$CORDIS" enable -store "$PLUGIN.state" -trust "$PLUGIN.trust.json" -package example.hello -config-file config.toml hello
 "$CORDIS" host -store "$PLUGIN.state" -trust "$PLUGIN.trust.json"
 ```

@@ -40,7 +40,7 @@ func controlStore(t *testing.T) (string, string, contract.PackageRef) {
 	directory := t.TempDir()
 	for _, args := range [][]string{
 		{"install", "-store", directory, "-trust", trust, archive},
-		{"select", "-store", directory, "-trust", trust, refText(ref)},
+		{"select", "-store", directory, "-trust", trust, ref.String()},
 	} {
 		if err := execute(t.Context(), args, strings.NewReader(""), io.Discard, io.Discard); err != nil {
 			t.Fatal(err)

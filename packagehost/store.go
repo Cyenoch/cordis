@@ -558,7 +558,7 @@ func clonePackage(p Package) Package {
 func (s *Store) get(ref contract.PackageRef) (Package, error) {
 	p, ok := s.catalog.Installed[ref.Digest]
 	if !ok || p.Ref != ref {
-		return Package{}, fmt.Errorf("package reference is not installed: %s@%s#%s", ref.ID, ref.Version, ref.Digest)
+		return Package{}, fmt.Errorf("package reference is not installed: %s", ref)
 	}
 	p.Directory = s.content(ref.Digest)
 	return clonePackage(p), nil

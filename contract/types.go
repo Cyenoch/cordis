@@ -118,6 +118,10 @@ type PackageRef struct {
 	Digest  string `json:"digest"`
 }
 
+// String is the exact reference, id@version#digest, that selects or
+// uninstalls this package.
+func (r PackageRef) String() string { return r.ID + "@" + r.Version + "#" + r.Digest }
+
 type Dependency struct {
 	ID    string `json:"id"`
 	Min   string `json:"min,omitempty"`

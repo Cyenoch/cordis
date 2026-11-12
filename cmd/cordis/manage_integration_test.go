@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -70,10 +69,6 @@ func cliArchive(t *testing.T, manifest contract.Manifest, key ed25519.PrivateKey
 	return archive, pkg.Ref
 }
 
-func refText(ref contract.PackageRef) string {
-	return fmt.Sprintf("%s@%s#%s", ref.ID, ref.Version, ref.Digest)
-}
-
 func TestOfflineCLIManagesIntentAndIncompatibleUpgrade(t *testing.T) {
 	key, trust := cliTrust(t, "example", "demo")
 	m := contract.Manifest{
@@ -106,9 +101,13 @@ func TestOfflineCLIManagesIntentAndIncompatibleUpgrade(t *testing.T) {
 	if _, err := run("install", "-store", directory, "-trust", deny, first); err == nil {
 		t.Fatal("untrusted signer was accepted")
 	}
-	must("install", "-store", directory, "-trust", trust, first)
+	// install prints the exact reference select takes.
+	var installed struct{ Exact string }
+	if err := json.Unmarshal([]byte(must("install", "-store", directory, "-trust", trust, first)), &installed); err != nil || installed.Exact != firstRef.String() {
+		t.Fatalf("install printed exact %q, want %q: %v", installed.Exact, firstRef, err)
+	}
 	must("install", "-store", directory, "-trust", trust, second)
-	must("select", "-store", directory, "-trust", trust, refText(firstRef))
+	must("select", "-store", directory, "-trust", trust, installed.Exact)
 	must("enable", "-store", directory, "-trust", trust, "-package", "demo", "-isolate", "db@1", "-config", `{"value":"old"}`, "root")
 	must("enable", "-store", directory, "-trust", trust, "-package", "demo", "-parent", "root", "-config", `{"value":"child"}`, "child")
 	var status struct {
@@ -146,7 +145,7 @@ func TestOfflineCLIManagesIntentAndIncompatibleUpgrade(t *testing.T) {
 		t.Fatalf("explicit isolation clear: %+v %v", entry, err)
 	}
 	must("disable", "-store", directory, "root")
-	if _, err := run("select", "-store", directory, "-trust", trust, refText(secondRef)); err == nil {
+	if _, err := run("select", "-store", directory, "-trust", trust, secondRef.String()); err == nil {
 		t.Fatal("incompatible old configuration was silently discarded")
 	}
 	if _, err := run("remove", "-store", directory, "root"); err == nil {
@@ -154,7 +153,7 @@ func TestOfflineCLIManagesIntentAndIncompatibleUpgrade(t *testing.T) {
 	}
 	must("remove", "-store", directory, "child")
 	must("remove", "-store", directory, "root")
-	must("select", "-store", directory, "-trust", trust, refText(secondRef))
+	must("select", "-store", directory, "-trust", trust, secondRef.String())
 	must("enable", "-store", directory, "-trust", trust, "-package", "demo", "-config", `{"value":1}`, "root")
 	broken := errors.New("broken output")
 	err := execute(t.Context(), []string{"enable", "-store", directory, "-trust", trust, "-config", `{"value":2}`, "root"},
@@ -267,17 +266,17 @@ func TestOfflineCLIProtectsEnabledReverseDependencies(t *testing.T) {
 		}
 	}
 	for _, ref := range []contract.PackageRef{firstRef, consumerRef} {
-		if err := run("select", "-store", directory, "-trust", trust, refText(ref)); err != nil {
+		if err := run("select", "-store", directory, "-trust", trust, ref.String()); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := run("enable", "-store", directory, "-trust", trust, "-package", "demo", "consumer"); err != nil {
 		t.Fatal(err)
 	}
-	if err := run("select", "-store", directory, "-trust", trust, refText(secondRef)); err == nil {
+	if err := run("select", "-store", directory, "-trust", trust, secondRef.String()); err == nil {
 		t.Fatal("selection ignored enabled reverse dependency")
 	}
-	if err := run("uninstall", "-store", directory, refText(firstRef)); err == nil {
+	if err := run("uninstall", "-store", directory, firstRef.String()); err == nil {
 		t.Fatal("uninstall ignored enabled reverse dependency")
 	}
 	if err := run("select", "-store", directory, "-trust", trust, "dep@latest"); exitCode(err, io.Discard) != 2 {
@@ -307,7 +306,7 @@ func TestForegroundHostReportsPartialStateAndClosesNativeProcesses(t *testing.T)
 		}
 	}
 	run("install", "-store", directory, "-trust", trust, archive)
-	run("select", "-store", directory, "-trust", trust, refText(ref))
+	run("select", "-store", directory, "-trust", trust, ref.String())
 	run("enable", "-store", directory, "-trust", trust, "-package", m.ID, "-definition", "provider", "healthy")
 	run("enable", "-store", directory, "-trust", trust, "-package", m.ID, "-definition", "provider", "-config", `{"label":"fail-initialize"}`, "failed")
 	run("enable", "-store", directory, "-trust", trust, "-package", m.ID, "-definition", "consumer", "waiting")

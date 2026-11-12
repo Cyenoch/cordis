@@ -103,13 +103,13 @@ Pack 仅发布元数据、全部声明产物和顶层 `resources` 的精确文�
 
 ```sh
 ./bin/cordis install -store ./state -trust ./trust.json ./hello.zip
-./bin/cordis select -store ./state -trust ./trust.json 'example.hello@0.1.0#完整摘要'
+./bin/cordis select -store ./state -trust ./trust.json 'install 输出的 exact'
 ./bin/cordis enable -store ./state -trust ./trust.json -package example.hello -config-file ./config.toml hello
 ./bin/cordis status -store ./state
 ./bin/cordis host -store ./state -trust ./trust.json
 ```
 
-`select` 的 ID、version、digest 取自 install/sign 输出，替换示例中的完整引用。`enable` 只保存意图，`host` 才执行插件。前台输出每个实例的状态、等待原因和恢复错误；部分实例失败或缺依赖时继续运行，默认不自动重试。Ctrl+C 使用独立的关闭期限回收进程，默认 `5s`，可用 `-shutdown-timeout` 调整。
+pack、sign、install 输出的 `exact` 即 `select`、`uninstall` 所需的完整引用。`enable` 只保存意图，`host` 才执行插件。前台输出每个实例的状态、等待原因和恢复错误；部分实例失败或缺依赖时继续运行，默认不自动重试。Ctrl+C 使用独立的关闭期限回收进程，默认 `5s`，可用 `-shutdown-timeout` 调整。
 
 `host -control-file FILE` 显式开启[本机在线控制](local-control.md)，供另一个终端通过 connection 文件执行 status、enable、disable、stop、resume、retry。它只管理已有持久 entry，动态子项只查询。请求默认 30s，可用 `control -timeout` 调整至 1ms–5m；超时后的写入结果可能不确定，先查询，不自动重发。
 

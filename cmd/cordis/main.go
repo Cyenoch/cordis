@@ -165,18 +165,18 @@ func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 		if err != nil {
 			return err
 		}
-		return writeJSON(out, pkg.Ref)
+		return writeJSON(out, refOutput(pkg.Ref))
 	case "inspect", "validate":
 		pkg, err := packagehost.Inspect(ctx, flags.Arg(0))
 		if err != nil {
 			return err
 		}
 		return writeJSON(out, struct {
-			Ref      contract.PackageRef          `json:"ref"`
+			Ref      packageOutput                `json:"ref"`
 			Manifest contract.Manifest            `json:"manifest"`
 			Files    []packagehost.IntegrityEntry `json:"files"`
 			Trust    string                       `json:"trust"`
-		}{Ref: pkg.Ref, Manifest: pkg.Manifest, Files: pkg.Files, Trust: "not evaluated; inspection never authorizes execution"})
+		}{Ref: refOutput(pkg.Ref), Manifest: pkg.Manifest, Files: pkg.Files, Trust: "not evaluated; inspection never authorizes execution"})
 	case "keygen":
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
@@ -204,7 +204,7 @@ func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 		if err != nil {
 			return err
 		}
-		return writeJSON(out, pkg.Ref)
+		return writeJSON(out, refOutput(pkg.Ref))
 	}
 	return nil
 }

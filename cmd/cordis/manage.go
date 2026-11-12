@@ -52,6 +52,15 @@ func loadTrust(file string) (packagehost.TrustPolicy, error) {
 	return trust, nil
 }
 
+// packageOutput is a package reference as the CLI prints it: its fields, and
+// the exact form select and uninstall take.
+type packageOutput struct {
+	contract.PackageRef
+	Exact string `json:"exact"`
+}
+
+func refOutput(ref contract.PackageRef) packageOutput { return packageOutput{ref, ref.String()} }
+
 func parseRef(value string) (contract.PackageRef, error) {
 	identity, digest, found := strings.Cut(value, "#")
 	id, version, versionFound := strings.Cut(identity, "@")
@@ -145,7 +154,7 @@ func manageCommand(ctx context.Context, command string, flags *flag.FlagSet, par
 		if err != nil {
 			return err
 		}
-		value = pkg.Ref
+		value = refOutput(pkg.Ref)
 	case "select", "uninstall":
 		ref, err := parseRef(flags.Arg(0))
 		if err != nil {
