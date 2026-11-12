@@ -17,6 +17,7 @@ const (
 	Failed                 // start, update or managed work failed; needs Update or Restart
 )
 
+// String is the lower-case state name, or State(n) for an unknown value.
 func (s State) String() string {
 	switch s {
 	case Waiting:
@@ -229,6 +230,7 @@ type Realm struct{ label string }
 // IsolateIn. The label is what String returns.
 func NewRealm(label string) *Realm { return &Realm{label: label} }
 
+// String is the label given to NewRealm.
 func (r *Realm) String() string { return r.label }
 
 type isolation struct {

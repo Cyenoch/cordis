@@ -21,6 +21,7 @@ func (h *Host) Resolver() loader.Resolver { return packages{host: h} }
 
 type packages struct{ host *Host }
 
+// Resolve accepts "package:<id>" and "package:<id>#<definition>".
 func (p packages) Resolve(name string) (loader.Loadable, bool) {
 	rest, ok := strings.CutPrefix(name, "package:")
 	if !ok || rest == "" {
@@ -35,6 +36,8 @@ type packageDefinition struct {
 	id, definition string
 }
 
+// Load runs the definition as the dynamic entry "loader/<owner>"; its record
+// goes when s stops.
 func (p packageDefinition) Load(s *cordis.Scope, config json.RawMessage) (loader.Handle, error) {
 	owner, _ := loader.EntryOf(s)
 	entry := contract.Entry{ID: "loader/" + owner, Parent: "loader", Package: p.id, Definition: p.definition, Config: config}
@@ -55,9 +58,13 @@ func (p packageDefinition) Load(s *cordis.Scope, config json.RawMessage) (loader
 // loaded adapts an entry to the handle a loader controls it with.
 type loaded struct{ instance *hostInstance }
 
-func (l loaded) Status() cordis.Status          { return l.instance.instance.Status() }
+// Status is the kernel status of the entry.
+func (l loaded) Status() cordis.Status { return l.instance.instance.Status() }
+
+// Wait is the kernel instance's Wait.
 func (l loaded) Wait(ctx context.Context) error { return l.instance.instance.Wait(ctx) }
 
+// Update validates config against the definition, empty as {}, and applies it.
 func (l loaded) Update(ctx context.Context, config json.RawMessage) error {
 	if len(config) == 0 {
 		config = json.RawMessage(`{}`)
@@ -68,6 +75,7 @@ func (l loaded) Update(ctx context.Context, config json.RawMessage) error {
 	return l.instance.instance.Update(ctx, config)
 }
 
+// Stop stops the entry; once it is stopped the host drops its record.
 func (l loaded) Stop(ctx context.Context) error {
 	err := l.instance.instance.Stop(ctx)
 	if l.instance.gone() {

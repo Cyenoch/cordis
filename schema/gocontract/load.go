@@ -188,6 +188,7 @@ type exports struct {
 	gc     types.Importer
 }
 
+// Import maps path through the root's ImportMap and reads its export data.
 func (e *exports) Import(path string) (*types.Package, error) {
 	if mapped, ok := e.source.root.ImportMap[path]; ok {
 		path = mapped
@@ -217,6 +218,7 @@ type Error struct {
 	Message  string
 }
 
+// Error is the position, when valid, followed by the message.
 func (e *Error) Error() string {
 	if !e.Position.IsValid() {
 		return e.Message

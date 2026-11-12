@@ -90,9 +90,12 @@ type Removal struct {
 // under the assumption that the mutation did not happen.
 type CommitError struct{ Err error }
 
+// Error says the mutation committed, followed by the failure.
 func (e *CommitError) Error() string {
 	return "store mutation committed but durability/cleanup failed: " + e.Err.Error()
 }
+
+// Unwrap yields the durability or cleanup failure.
 func (e *CommitError) Unwrap() error { return e.Err }
 
 func newCatalog() catalog {

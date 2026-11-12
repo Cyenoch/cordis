@@ -147,12 +147,17 @@ func New(options Options) (*Endpoint, error) {
 
 // Identity is the activation the session belongs to.
 func (e *Endpoint) Identity() contract.Identity { e.mu.Lock(); defer e.mu.Unlock(); return e.identity }
-func (e *Endpoint) Done() <-chan struct{}       { return e.done }
+
+// Done is closed once the session has ended.
+func (e *Endpoint) Done() <-chan struct{} { return e.done }
 
 // Ready is closed once initialize has succeeded and the session admits
 // business requests.
 func (e *Endpoint) Ready() <-chan struct{} { return e.readied }
-func (e *Endpoint) Err() error             { e.mu.Lock(); defer e.mu.Unlock(); return e.err }
+
+// Err is nil until Done is closed, then why the session ended: io.EOF for
+// Close. An error from closing the transport is joined in shortly after.
+func (e *Endpoint) Err() error { e.mu.Lock(); defer e.mu.Unlock(); return e.err }
 
 // ErrWrite marks a session that ended because the peer no longer took what
 // was written to it: the peer went away, it did not break the protocol.
@@ -164,12 +169,18 @@ var ErrRead = errors.New("read session")
 
 type readError struct{ error }
 
-func (e readError) Unwrap() error      { return e.error }
+// Unwrap yields the read failure.
+func (e readError) Unwrap() error { return e.error }
+
+// Is matches ErrRead.
 func (readError) Is(target error) bool { return target == ErrRead }
 
 // closed is what a request gets that the session ended under.
 func (e *Endpoint) closed() error { return &contract.ClosedError{Err: e.Err()} }
-func (e *Endpoint) Close() error  { e.shutdown(io.EOF); return nil }
+
+// Close ends a running session with io.EOF and closes the transport. Calls
+// awaiting a reply fail with a *contract.ClosedError; incoming handlers are canceled.
+func (e *Endpoint) Close() error { e.shutdown(io.EOF); return nil }
 
 // Wait returns once the endpoint's goroutines have; call it after Close.
 func (e *Endpoint) Wait() { e.wg.Wait() }
@@ -197,10 +208,13 @@ func (e *Endpoint) shutdown(err error) {
 	})
 }
 
+// Call is CallWithReceipt without a receipt.
 func (e *Endpoint) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	return e.CallWithReceipt(ctx, method, input, nil)
 }
 
+// CallWithReceipt implements contract.Session. A ctx without a deadline gets the
+// session's Deadline limit, except for chain methods; empty input is sent as {}.
 func (e *Endpoint) CallWithReceipt(ctx context.Context, method string, input json.RawMessage, receipt func(bool)) (json.RawMessage, error) {
 	settle := func(sent bool) {
 		if receipt != nil {

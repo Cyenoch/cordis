@@ -53,6 +53,8 @@ type Error struct {
 	Cause        error
 }
 
+// Error is the source, with line and column when known and the JSON Pointer
+// in parentheses when set, followed by the cause.
 func (e *Error) Error() string {
 	where := e.Source
 	if e.Line > 0 {
@@ -67,6 +69,7 @@ func (e *Error) Error() string {
 	return where + ": " + e.Cause.Error()
 }
 
+// Unwrap yields the cause.
 func (e *Error) Unwrap() error { return e.Cause }
 
 // Parse converts a bounded source to JSON without rounding numeric tokens.

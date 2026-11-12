@@ -23,6 +23,7 @@ var ErrReadOnly = errors.New("loader: configuration file format is read-only")
 // the label of a space shared by every entry that names it.
 type isolation struct{ label string }
 
+// MarshalJSON writes true for a private space and the label otherwise.
 func (i isolation) MarshalJSON() ([]byte, error) {
 	if i.label == "" {
 		return []byte("true"), nil
@@ -30,6 +31,7 @@ func (i isolation) MarshalJSON() ([]byte, error) {
 	return json.Marshal(i.label)
 }
 
+// UnmarshalJSON accepts true or a non-empty label string.
 func (i *isolation) UnmarshalJSON(data []byte) error {
 	if string(data) == "true" {
 		*i = isolation{}

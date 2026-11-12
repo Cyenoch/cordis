@@ -47,6 +47,7 @@ type receivedField[T any] struct {
 	present bool
 }
 
+// UnmarshalJSON marks the field present and strictly decodes its value.
 func (f *receivedField[T]) UnmarshalJSON(data []byte) error {
 	f.present = true
 	return contract.Decode(data, &f.value)
@@ -195,7 +196,10 @@ func validRequestID(id string) bool {
 
 type frameSizeError struct{}
 
+// Error says the frame exceeds the byte limit, as an invalid_message.
 func (*frameSizeError) Error() string { return "invalid_message: frame exceeds byte limit" }
+
+// Unwrap yields a contract.Invalid *contract.Error.
 func (*frameSizeError) Unwrap() error {
 	return contract.Fail(contract.Invalid, "frame exceeds byte limit")
 }

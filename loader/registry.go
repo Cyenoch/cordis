@@ -132,6 +132,7 @@ func (r *registered[C]) decode(raw json.RawMessage) (C, error) {
 	return config, err
 }
 
+// Load decodes raw over the defaults, empty as {}, and loads the plugin on s.
 func (r *registered[C]) Load(s *cordis.Scope, raw json.RawMessage) (Handle, error) {
 	config, err := r.decode(raw)
 	if err != nil {
@@ -145,9 +146,16 @@ type handle[C any] struct {
 	instance   *cordis.Instance[C]
 }
 
-func (h *handle[C]) Status() cordis.Status          { return h.instance.Status() }
+// Status is the instance's Status.
+func (h *handle[C]) Status() cordis.Status { return h.instance.Status() }
+
+// Wait is the instance's Wait.
 func (h *handle[C]) Wait(ctx context.Context) error { return h.instance.Wait(ctx) }
+
+// Stop is the instance's Stop.
 func (h *handle[C]) Stop(ctx context.Context) error { return h.instance.Stop(ctx) }
+
+// Update decodes raw as Load does and applies it to the instance.
 func (h *handle[C]) Update(ctx context.Context, raw json.RawMessage) error {
 	config, err := h.registered.decode(raw)
 	if err != nil {

@@ -34,10 +34,12 @@ type HandlerError struct {
 	Err      error
 }
 
+// Error is the name, the registering instance's name and the failure.
 func (e *HandlerError) Error() string {
 	return fmt.Sprintf("%s: handler of %q: %v", e.Name, e.Instance.Name, e.Err)
 }
 
+// Unwrap yields the failure.
 func (e *HandlerError) Unwrap() error { return e.Err }
 
 // guard runs fn and converts a panic into an error naming the stage.

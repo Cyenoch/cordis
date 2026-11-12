@@ -37,6 +37,7 @@ type patch struct {
 	Keys   map[string]json.RawMessage
 }
 
+// MarshalJSON writes one object: Keys, with "id", "plugin" and "insert" when set.
 func (p patch) MarshalJSON() ([]byte, error) {
 	fields := map[string]any{}
 	for key, value := range p.Keys {
@@ -54,6 +55,8 @@ func (p patch) MarshalJSON() ([]byte, error) {
 	return json.Marshal(fields)
 }
 
+// UnmarshalJSON reads that object, rejecting keys a patch cannot set; without
+// "id" it accepts only "insert".
 func (p *patch) UnmarshalJSON(data []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {

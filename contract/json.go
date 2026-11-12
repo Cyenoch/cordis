@@ -20,6 +20,7 @@ type UnknownFieldError struct {
 	Field string
 }
 
+// Error quotes the rejected field.
 func (e *UnknownFieldError) Error() string {
 	return fmt.Sprintf("unknown contract field %q", e.Field)
 }
@@ -31,6 +32,7 @@ type PathError struct {
 	Err  error
 }
 
+// Error is the pointer followed by the failure; at the root, the failure alone.
 func (e *PathError) Error() string {
 	if e.Path == "" {
 		return e.Err.Error()
@@ -38,6 +40,7 @@ func (e *PathError) Error() string {
 	return e.Path + ": " + e.Err.Error()
 }
 
+// Unwrap yields the failure.
 func (e *PathError) Unwrap() error { return e.Err }
 
 // under prefixes the location of err with one more path segment.

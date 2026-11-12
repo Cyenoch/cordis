@@ -42,6 +42,7 @@ func jsonField(path string, err error) error {
 	return field(path, "json", message)
 }
 
+// Error is the path, "/" for the root, then the keyword and the message.
 func (e *FieldError) Error() string {
 	path := e.Path
 	if path == "" {

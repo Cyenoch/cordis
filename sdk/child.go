@@ -55,6 +55,8 @@ func (i *childInstance) Status() contract.Status {
 	return status
 }
 
+// Refresh asks the host for the current status. On failure it returns the last
+// acknowledged status with the error.
 func (i *childInstance) Refresh(ctx context.Context) (contract.Status, error) {
 	err := i.control(ctx, "status")
 	return i.Status(), err
@@ -71,8 +73,16 @@ func (i *childInstance) control(ctx context.Context, action string) error {
 	return nil
 }
 
+// Wait asks the host to wait for the child as its Wait does, and records the
+// status the host answers with.
 func (i *childInstance) Wait(ctx context.Context) error { return i.control(ctx, "wait") }
+
+// Stop asks the host to stop the child for good, and records the status the
+// host answers with.
 func (i *childInstance) Stop(ctx context.Context) error { return i.control(ctx, "stop") }
+
+// Update asks the host to validate and apply config. It leaves the recorded
+// status as it is.
 func (i *childInstance) Update(ctx context.Context, config json.RawMessage) (contract.UpdateResult, error) {
 	var result contract.UpdateResult
 	err := i.invoke(ctx, contract.ChildRequest{Action: "update", Child: contract.Child{Config: config}}, &result)

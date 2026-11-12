@@ -44,6 +44,8 @@ type Error struct {
 
 // Error is the code and the message.
 func (e *Error) Error() string { return string(e.Code) + ": " + e.Message }
+
+// Unwrap yields the error Wrap classified; nil for one from Fail or decoding.
 func (e *Error) Unwrap() error { return e.cause }
 
 // Fail returns an *Error with code and message.
@@ -62,6 +64,9 @@ func Wrap(code Code, err error) error {
 	}
 	return &Error{Code: code, Message: err.Error(), cause: err}
 }
+
+// Is matches an *Error with the same Code, context.Canceled for Canceled and
+// context.DeadlineExceeded for Timeout.
 func (e *Error) Is(target error) bool {
 	if other, ok := target.(*Error); ok {
 		return other != nil && e.Code == other.Code
@@ -349,7 +354,10 @@ type Registration struct {
 // It tells "the peer is gone" from an error the peer answered with.
 type ClosedError struct{ Err error }
 
+// Error is "session closed: " followed by why the session ended.
 func (e *ClosedError) Error() string { return "session closed: " + e.Err.Error() }
+
+// Unwrap yields why the session ended.
 func (e *ClosedError) Unwrap() error { return e.Err }
 
 // Session is one side of a running session with a peer.

@@ -441,8 +441,11 @@ type dependency struct {
 	service contract.Service
 }
 
+// Service is the service as the host announced it in initialize.
 func (d *dependency) Service() contract.Service { return d.service }
 
+// Call forwards the call to the host, for a provider of this major up to the
+// announced minor.
 func (d *dependency) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	var output json.RawMessage
 	err := d.guest.request(ctx, "call", contract.ServiceCall{

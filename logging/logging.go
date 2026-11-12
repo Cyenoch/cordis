@@ -220,6 +220,8 @@ type step struct {
 	attrs []slog.Attr
 }
 
+// Enabled compares level with the scope override, else the logger's named
+// level, else the provider's level.
 func (h *handler) Enabled(_ context.Context, level slog.Level) bool {
 	current := h.provider.state.Load()
 	threshold := current.level
@@ -232,6 +234,8 @@ func (h *handler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= threshold
 }
 
+// Handle buffers the record and sends it to each enabled added handler and the
+// default output. It returns the output's error; others are logged there.
 func (h *handler) Handle(ctx context.Context, record slog.Record) error {
 	p := h.provider
 	current := p.state.Load()
@@ -295,12 +299,15 @@ func (h *handler) derive(sink slog.Handler) slog.Handler {
 	return sink
 }
 
+// WithAttrs returns a handler that adds attrs to the buffer and every sink.
 func (h *handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	derived := *h
 	derived.steps = append(slices.Clone(h.steps), step{attrs: attrs})
 	return &derived
 }
 
+// WithGroup returns a handler that nests later attributes under name; an empty
+// name returns h.
 func (h *handler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h

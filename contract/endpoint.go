@@ -36,11 +36,13 @@ type VersionError struct {
 	Visible  Service
 }
 
+// Error names the service key, the provided version and the required minors.
 func (e *VersionError) Error() string {
 	return fmt.Sprintf("%s: incompatible version: provided %d.%d, required minor %d..%d",
 		e.Required.Key(), e.Visible.Major, e.Visible.Minor, e.Required.MinMinor, e.Required.MaxMinor)
 }
 
+// Is matches an *Error with code Incompatible.
 func (e *VersionError) Is(target error) bool {
 	other, ok := target.(*Error)
 	return ok && other != nil && other.Code == Incompatible

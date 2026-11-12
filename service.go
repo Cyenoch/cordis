@@ -57,10 +57,12 @@ type typeError struct {
 	held, asked    reflect.Type
 }
 
+// Error names the service, the requiring instance and both Go types.
 func (e *typeError) Error() string {
 	return fmt.Sprintf("service %q required by %q: %v: provided as %v, requested as %v", e.name, e.instance, ErrTypeMismatch, e.held, e.asked)
 }
 
+// Unwrap yields ErrTypeMismatch.
 func (e *typeError) Unwrap() error { return ErrTypeMismatch }
 
 // Name refers to a service by name only, without a Go type. It is meant for

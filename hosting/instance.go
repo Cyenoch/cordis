@@ -123,6 +123,8 @@ func (i *hostInstance) endRun(r *run) error {
 	return i.host.store.EndRun(context.Background(), r.identity, state, outcome)
 }
 
+// Status combines the kernel state with the entry's record. A disabled or
+// temporarily stopped entry reads as stopped rather than waiting or failed.
 func (i *hostInstance) Status() contract.Status {
 	kernel := i.instance.Status()
 	i.mu.Lock()
@@ -224,6 +226,8 @@ func (i *hostInstance) Wait(ctx context.Context) error {
 	}
 }
 
+// Update validates config, saves it for a catalog entry and applies it. A
+// later revision that replaces it sets Superseded rather than an error.
 func (i *hostInstance) Update(ctx context.Context, config json.RawMessage) (contract.UpdateResult, error) {
 	h := i.host
 	if err := h.lockOperation(ctx); err != nil {

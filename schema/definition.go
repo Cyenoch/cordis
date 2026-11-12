@@ -59,6 +59,7 @@ type Method struct {
 	Stream bool `json:"stream,omitempty"`
 }
 
+// MarshalJSON writes name, methods and the version as one "major.minor" string.
 func (s Service) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Name    string   `json:"name"`
@@ -67,6 +68,8 @@ func (s Service) MarshalJSON() ([]byte, error) {
 	}{Name: s.Name, Version: fmt.Sprintf("%d.%d", s.Major, s.Minor), Methods: s.Methods})
 }
 
+// UnmarshalJSON accepts the version as a "major.minor" string or an integer
+// major, meaning minor 0; components must be canonical and the major positive.
 func (s *Service) UnmarshalJSON(raw []byte) error {
 	var wire struct {
 		Name    string          `json:"name"`

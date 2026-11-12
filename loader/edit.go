@@ -56,6 +56,7 @@ type Dropped struct {
 	Key  string // the key of a dropped update
 }
 
+// Error names the dropped change, its key if any, and the entry.
 func (d Dropped) Error() string {
 	what := string(d.Kind)
 	if d.Key != "" {

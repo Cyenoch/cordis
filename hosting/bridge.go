@@ -348,6 +348,7 @@ type guestEndpoint struct {
 	service contract.Service
 }
 
+// Service is the registered service the endpoint forwards to.
 func (e *guestEndpoint) Service() contract.Service { return e.service }
 
 // observe reports a finished call to the host's observer.
@@ -358,6 +359,8 @@ func (e *guestEndpoint) observe(method string, stream bool, started time.Time, i
 	}
 }
 
+// Call forwards a call to the guest once a session slot is free and reports it
+// to OnCall. A call the session ended under fails with not_ready.
 func (e *guestEndpoint) Call(ctx context.Context, method string, input json.RawMessage) (output json.RawMessage, err error) {
 	defer func(started time.Time) { e.observe(method, false, started, 0, err) }(time.Now())
 	release, err := e.run.acquire(ctx)

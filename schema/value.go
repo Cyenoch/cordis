@@ -33,6 +33,7 @@ func NonNull[T any](value T) Nullable[T] { return Nullable[T]{Valid: true, Value
 // ContractDataType is the type the contract describes: T, nullable.
 func (Nullable[T]) ContractDataType() reflect.Type { return reflect.TypeFor[T]() }
 
+// MarshalJSON writes null when not Valid, else Value.
 func (n Nullable[T]) MarshalJSON() ([]byte, error) {
 	if !n.Valid {
 		return []byte("null"), nil
@@ -44,6 +45,7 @@ func (n Nullable[T]) MarshalJSON() ([]byte, error) {
 	return data, nil
 }
 
+// UnmarshalJSON reads null as not Valid, else decodes Value.
 func (n *Nullable[T]) UnmarshalJSON(data []byte) error {
 	if n == nil {
 		return fmt.Errorf("unmarshal nullable value: nil receiver")
@@ -66,9 +68,13 @@ type Int64 int64
 // Uint64 is a uint64 whose JSON is a decimal string, exact past 2^53.
 type Uint64 uint64
 
-func (n Int64) MarshalJSON() ([]byte, error)  { return json.Marshal(strconv.FormatInt(int64(n), 10)) }
+// MarshalJSON writes a decimal string.
+func (n Int64) MarshalJSON() ([]byte, error) { return json.Marshal(strconv.FormatInt(int64(n), 10)) }
+
+// MarshalJSON writes a decimal string.
 func (n Uint64) MarshalJSON() ([]byte, error) { return json.Marshal(strconv.FormatUint(uint64(n), 10)) }
 
+// UnmarshalJSON accepts only a canonical decimal string.
 func (n *Int64) UnmarshalJSON(data []byte) error {
 	if n == nil {
 		return fmt.Errorf("unmarshal int64: nil receiver")
@@ -85,6 +91,7 @@ func (n *Int64) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// UnmarshalJSON accepts only a canonical decimal string.
 func (n *Uint64) UnmarshalJSON(data []byte) error {
 	if n == nil {
 		return fmt.Errorf("unmarshal uint64: nil receiver")
