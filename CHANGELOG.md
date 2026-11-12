@@ -2,7 +2,7 @@
 
 版本与承诺范围见 [稳定性](docs/stability.md)。
 
-## 未发布
+## v0.4.0
 
 - 修复：契约的引用展开预算按复制进结果的紧凑字节计，每个字节只计一次，不再随嵌套深度和缩进重复计费。此前紧凑后只有约 92 KB 的契约会因超出 1 MiB 被拒绝，导入它的包无法 `cordis generate`。上限值与按契约文件计的范围不变；超限错误改为 `expanded schemas exceed the cumulative byte limit of 1048576`。
 - `cordis generate` 写出前用 `schema.Parse` 读回 `cordis_gen.json`，读不回时报出该文件路径并且两个文件都不写；`gocontract.Package.Contract` 同样会因此失败。
