@@ -265,7 +265,7 @@ func TestCLIProcesses(t *testing.T) {
 			command := exec.CommandContext(ctx, "go", args...)
 			command.Dir = dir
 			command.WaitDelay = 10 * time.Second
-			dumpStacksOnCancel(command)
+			dumpStacksOnCancel(t, command)
 			if data, err := command.CombinedOutput(); err != nil {
 				t.Fatalf("go %v: %v\n%s", args, err, data)
 			}
