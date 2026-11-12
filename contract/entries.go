@@ -22,6 +22,8 @@ func CheckIsolate(keys []string) error {
 	return nil
 }
 
+// CheckEntryGraph checks that every parent of entries exists and that
+// parents form no cycle.
 func CheckEntryGraph(entries []Entry) error {
 	byID := make(map[string]Entry, len(entries))
 	for _, entry := range entries {

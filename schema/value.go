@@ -27,8 +27,10 @@ type Nullable[T any] struct {
 	Value T
 }
 
+// NonNull constructs a non-null Nullable.
 func NonNull[T any](value T) Nullable[T] { return Nullable[T]{Valid: true, Value: value} }
 
+// ContractDataType is the type the contract describes: T, nullable.
 func (Nullable[T]) ContractDataType() reflect.Type { return reflect.TypeFor[T]() }
 
 func (n Nullable[T]) MarshalJSON() ([]byte, error) {
@@ -58,8 +60,10 @@ func (n *Nullable[T]) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Int64 and Uint64 have canonical decimal-string JSON representations.
+// Int64 is an int64 whose JSON is a decimal string, exact past 2^53.
 type Int64 int64
+
+// Uint64 is a uint64 whose JSON is a decimal string, exact past 2^53.
 type Uint64 uint64
 
 func (n Int64) MarshalJSON() ([]byte, error)  { return json.Marshal(strconv.FormatInt(int64(n), 10)) }

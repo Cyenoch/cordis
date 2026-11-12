@@ -17,6 +17,7 @@ const SessionSchema = "cordis-go.session/v1"
 // ProtocolMajor is the session protocol this module speaks.
 const ProtocolMajor = 1
 
+// Code classifies an error across the session; ErrorCode reads it.
 type Code string
 
 const (
@@ -34,14 +35,18 @@ const (
 	Panicked     Code = "panic"
 )
 
+// Error is an error with a Code, as it crosses the session.
 type Error struct {
 	Code    Code   `json:"code"`
 	Message string `json:"message"`
 	cause   error
 }
 
-func (e *Error) Error() string             { return string(e.Code) + ": " + e.Message }
-func (e *Error) Unwrap() error             { return e.cause }
+// Error is the code and the message.
+func (e *Error) Error() string { return string(e.Code) + ": " + e.Message }
+func (e *Error) Unwrap() error { return e.cause }
+
+// Fail returns an *Error with code and message.
 func Fail(code Code, message string) error { return &Error{Code: code, Message: message} }
 
 // Wrap classifies err with code. The message is err's text and err stays
@@ -64,6 +69,7 @@ func (e *Error) Is(target error) bool {
 	return (target == context.Canceled && e.Code == Canceled) || (target == context.DeadlineExceeded && e.Code == Timeout)
 }
 
+// NewID returns a random 128-bit identifier in hex, as activations use.
 func NewID() string {
 	var id [16]byte
 	_, err := rand.Read(id[:])
@@ -73,6 +79,8 @@ func NewID() string {
 	return hex.EncodeToString(id[:])
 }
 
+// Identity names one activation: its package, entry, activation and the
+// digest of the package version it runs.
 type Identity struct {
 	Package    string `json:"package"`
 	Entry      string `json:"entry"`
@@ -80,6 +88,8 @@ type Identity struct {
 	Digest     string `json:"digest"`
 }
 
+// Protocol is a range of session protocol minors within one major, and the
+// session features a side requires.
 type Protocol struct {
 	Major            uint32   `json:"major"`
 	MinMinor         uint32   `json:"minMinor"`
@@ -87,6 +97,7 @@ type Protocol struct {
 	RequiredFeatures []string `json:"requiredFeatures,omitempty"`
 }
 
+// Negotiate returns the highest minor both ranges share, or incompatible.
 func (p Protocol) Negotiate(other Protocol) (uint32, error) {
 	for _, features := range [][]string{p.RequiredFeatures, other.RequiredFeatures} {
 		for _, feature := range features {
@@ -108,14 +119,18 @@ func (p Protocol) Negotiate(other Protocol) (uint32, error) {
 	return high, nil
 }
 
+// Service is a provided service at an exact version.
 type Service struct {
 	Name  string `json:"name"`
 	Major uint32 `json:"major"`
 	Minor uint32 `json:"minor"`
 }
 
+// Key is name@major, the identity under which providers are found.
 func (s Service) Key() string { return fmt.Sprintf("%s@%d", s.Name, s.Major) }
 
+// Requirement is a service a definition needs: one major and a range of
+// minors.
 type Requirement struct {
 	Name     string `json:"name"`
 	Major    uint32 `json:"major"`
@@ -123,11 +138,15 @@ type Requirement struct {
 	MaxMinor uint32 `json:"maxMinor"`
 }
 
+// Key is name@major of the required service.
 func (r Requirement) Key() string { return Service{Name: r.Name, Major: r.Major}.Key() }
+
+// Accepts reports whether s satisfies the requirement.
 func (r Requirement) Accepts(s Service) bool {
 	return r.Name == s.Name && r.Major == s.Major && s.Minor >= r.MinMinor && s.Minor <= r.MaxMinor
 }
 
+// PackageRef names one installed package version exactly.
 type PackageRef struct {
 	ID      string `json:"id"`
 	Version string `json:"version"`
@@ -138,6 +157,7 @@ type PackageRef struct {
 // uninstalls this package.
 func (r PackageRef) String() string { return r.ID + "@" + r.Version + "#" + r.Digest }
 
+// Dependency is another package a package needs, by ID and version range.
 type Dependency struct {
 	ID    string `json:"id"`
 	Min   string `json:"min,omitempty"`
@@ -145,17 +165,21 @@ type Dependency struct {
 	Range string `json:"range,omitempty"`
 }
 
+// Artifact is the executable of a package for one platform.
 type Artifact struct {
 	OS   string `json:"os"`
 	Arch string `json:"arch"`
 	Path string `json:"path"`
 }
 
+// RuntimeSpec says how a package runs; Kind is "native".
 type RuntimeSpec struct {
 	Kind      string     `json:"kind"`
 	Artifacts []Artifact `json:"artifacts,omitempty"`
 }
 
+// DefinitionSpec is one plugin definition of a package: its config schema,
+// the services it requires and those it provides.
 type DefinitionSpec struct {
 	ID           string          `json:"id"`
 	ConfigSchema json.RawMessage `json:"configSchema"`
@@ -163,6 +187,7 @@ type DefinitionSpec struct {
 	Provides     []Service       `json:"provides"`
 }
 
+// Manifest is a package's plugin.json.
 type Manifest struct {
 	Schema               string           `json:"schema"`
 	ID                   string           `json:"id"`
@@ -177,6 +202,7 @@ type Manifest struct {
 	OptionalDependencies []Dependency     `json:"optionalDependencies"`
 }
 
+// State is where an instance stands in its lifecycle.
 type State string
 
 const (
@@ -188,6 +214,8 @@ const (
 	Failed    State = "failed"
 )
 
+// Status is the observable state of an instance; Waiting says why one has
+// not started.
 type Status struct {
 	Identity         Identity     `json:"identity"`
 	State            State        `json:"state"`
@@ -201,6 +229,8 @@ type Status struct {
 	Diagnostics      []string     `json:"diagnostics,omitempty"`
 }
 
+// WaitReason is one thing a waiting instance waits for: a requirement or a
+// parent.
 type WaitReason struct {
 	Kind        string       `json:"kind"`
 	Requirement *Requirement `json:"requirement,omitempty"`
@@ -209,6 +239,8 @@ type WaitReason struct {
 	Reason      string       `json:"reason"`
 }
 
+// InstanceInfo is one registered instance as Host.Instances lists it. Origin is
+// "persistent" or "dynamic"; a dynamic one has an Owner.
 type InstanceInfo struct {
 	Entry   Entry      `json:"entry"`
 	Package PackageRef `json:"package"`
@@ -217,6 +249,7 @@ type InstanceInfo struct {
 	Owner   *Identity  `json:"owner,omitempty"`
 }
 
+// RestoreEntry is what Restore did with one saved entry.
 type RestoreEntry struct {
 	ID     string `json:"id"`
 	Action string `json:"action"`
@@ -224,16 +257,20 @@ type RestoreEntry struct {
 	Error  error  `json:"-"`
 }
 
+// RestoreReport lists what Restore did with each saved entry.
 type RestoreReport struct {
 	Entries []RestoreEntry `json:"entries"`
 }
 
+// UpdateResult is the outcome of a configuration update: the revision it
+// got, and whether it was applied or a later revision or Stop superseded it.
 type UpdateResult struct {
 	Revision   uint64
 	Applied    bool
 	Superseded bool
 }
 
+// Dispatch is how an event reaches its listeners.
 type Dispatch string
 
 const (
@@ -242,11 +279,14 @@ const (
 	First      Dispatch = "first"
 )
 
+// EventResult is what an event emission returned: whether a listener
+// handled it, and its value.
 type EventResult struct {
 	Handled bool            `json:"handled"`
 	Value   json.RawMessage `json:"value,omitempty"`
 }
 
+// EventHandler serves one event emission.
 type EventHandler func(context.Context, json.RawMessage) (EventResult, error)
 
 // Entry fixes ownership and service isolation for one registration.
@@ -295,6 +335,8 @@ type Failure struct {
 	Error Error `json:"error"`
 }
 
+// Registration is a guest's answer to Initialize: what it agreed to and the
+// services it published.
 type Registration struct {
 	FrameBytes int       `json:"frameBytes"`
 	Minor      uint32    `json:"minor"`
@@ -310,6 +352,7 @@ type ClosedError struct{ Err error }
 func (e *ClosedError) Error() string { return "session closed: " + e.Err.Error() }
 func (e *ClosedError) Unwrap() error { return e.Err }
 
+// Session is one side of a running session with a peer.
 type Session interface {
 	Call(context.Context, string, json.RawMessage) (json.RawMessage, error)
 	// CallWithReceipt invokes a non-nil receipt exactly once before awaiting a
@@ -323,6 +366,7 @@ type Session interface {
 	Close() error
 }
 
+// SessionHandler serves the requests of the peer.
 type SessionHandler func(context.Context, string, json.RawMessage) (json.RawMessage, error)
 
 // SessionStreamHandler serves the stream requests of the peer.
@@ -342,6 +386,7 @@ const (
 	MaxInflight     = 1024
 )
 
+// ValidateInflight checks an in-flight limit.
 func ValidateInflight(value int) error {
 	if value < MinInflight || value > MaxInflight {
 		return Fail(Invalid, "inflight must be between 16 and 1024")
@@ -349,6 +394,7 @@ func ValidateInflight(value int) error {
 	return nil
 }
 
+// ValidateFrameBytes checks a frame size limit.
 func ValidateFrameBytes(value int) error {
 	if value < MinFrameBytes || value > MaxFrameBytes {
 		return Fail(Invalid, "frameBytes must be between 4096 and 1048576")
@@ -356,6 +402,7 @@ func ValidateFrameBytes(value int) error {
 	return nil
 }
 
+// Launch is what a Runtime needs to start one activation.
 type Launch struct {
 	Identity   Identity
 	Directory  string
@@ -369,6 +416,7 @@ type Launch struct {
 	Stderr   func(StderrRecord) error
 }
 
+// Runtime starts activations. Start's context bounds only the start.
 type Runtime interface {
 	Start(context.Context, Launch) (Session, error)
 }

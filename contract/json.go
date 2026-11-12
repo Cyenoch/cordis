@@ -118,6 +118,8 @@ func decode(data []byte, target any, maxDepth, maxArray int, strictContainers bo
 	return nil
 }
 
+// CheckJSON checks that data is one UTF-8 JSON value within the nesting and
+// array limits.
 func CheckJSON(data []byte, maxDepth, maxArray int) error {
 	if !utf8.Valid(data) {
 		return Fail(Invalid, "invalid UTF-8 JSON")

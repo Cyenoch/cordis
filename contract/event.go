@@ -21,11 +21,15 @@ const (
 	KindQuery Kind = "query"
 )
 
+// SubscriptionOptions are the options of a guest listener or middleware:
+// run once, or before the others.
 type SubscriptionOptions struct {
 	Once    bool `json:"once"`
 	Prepend bool `json:"prepend"`
 }
 
+// SubscriptionSpec registers a guest listener, query handler or chain
+// middleware with the host.
 type SubscriptionSpec struct {
 	ID      string              `json:"id"`
 	Kind    Kind                `json:"kind"`
@@ -33,14 +37,17 @@ type SubscriptionSpec struct {
 	Options SubscriptionOptions `json:"options"`
 }
 
+// SubscriptionCancel removes a guest registration by ID.
 type SubscriptionCancel struct {
 	ID string `json:"id"`
 }
 
+// SubscriptionState acknowledges a cancellation; Inactive confirms it.
 type SubscriptionState struct {
 	Inactive bool `json:"inactive"`
 }
 
+// EventDelivery is the host's delivery of one emission to a guest listener.
 type EventDelivery struct {
 	ID    string          `json:"id"`
 	Input json.RawMessage `json:"input"`
@@ -111,8 +118,10 @@ func local(stop func()) func(context.Context) error {
 // they are a round trip to the host.
 type EventKey[T any] struct{ name string }
 
+// NewEventKey returns the key of the event named name.
 func NewEventKey[T any](name string) EventKey[T] { return EventKey[T]{name: name} }
 
+// Name is the event's name on the session.
 func (k EventKey[T]) Name() string { return k.name }
 
 // On registers fn for the lifetime of s. The returned cancel removes it
@@ -170,8 +179,10 @@ func (k EventKey[T]) emit(ctx context.Context, s *cordis.Scope, payload T, mode 
 // validated JSON. Its operations mirror cordis.Query.
 type QueryKey[In, Out any] struct{ name string }
 
+// NewQueryKey returns the key of the query named name.
 func NewQueryKey[In, Out any](name string) QueryKey[In, Out] { return QueryKey[In, Out]{name: name} }
 
+// Name is the query's name on the session.
 func (k QueryKey[In, Out]) Name() string { return k.name }
 
 // Handle registers fn for the lifetime of s. fn reports whether it answered;

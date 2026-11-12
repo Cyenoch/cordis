@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// ExitReason is why an activation's process ended.
 type ExitReason string
 
 const (
@@ -29,6 +30,7 @@ type Outcome struct {
 	CleanupCode     Code          `json:"cleanupCode,omitempty"`
 }
 
+// Clone returns a copy that shares nothing with o.
 func (o Outcome) Clone() Outcome {
 	if o.ExitCode != nil {
 		code := *o.ExitCode

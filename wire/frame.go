@@ -15,6 +15,8 @@ import (
 	"github.com/Cyenoch/cordis/contract"
 )
 
+// Frame is one message of the session: a request, response, item, credit
+// or cancel.
 type Frame struct {
 	wireBytes  int
 	Schema     string          `json:"schema"`
@@ -65,12 +67,18 @@ type receivedFrame struct {
 	Credit     receivedField[int]            `json:"credit"`
 }
 
+// Limits bound a session. Inflight is how many requests may be open in each
+// direction. Deadline, at most 120 seconds, is the deadline of a call whose
+// context has none and of every stream, and how long a stream with credit
+// may stay silent. Grace is how long the peer has to answer a cancel, and
+// how long a cancel, a response or the closing session may take.
 type Limits struct {
 	Inflight int
 	Deadline time.Duration
 	Grace    time.Duration
 }
 
+// DefaultLimits are 64 in flight, 30 seconds and one second.
 func DefaultLimits() Limits {
 	return Limits{Inflight: contract.DefaultInflight, Deadline: 30 * time.Second, Grace: time.Second}
 }
@@ -198,6 +206,7 @@ type requestReference struct {
 	id       string
 }
 
+// RequestID is the ID of the peer request ctx belongs to, or "".
 func RequestID(ctx interface{ Value(any) any }) string {
 	ref, _ := ctx.Value(requestKey{}).(requestReference)
 	return ref.id

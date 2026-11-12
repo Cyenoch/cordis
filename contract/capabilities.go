@@ -9,6 +9,7 @@ type Consumer struct {
 	Contract    string      `json:"contract"`
 }
 
+// Requirements are the requirements of d's consumers.
 func (d DefinitionSpec) Requirements() []Requirement {
 	result := make([]Requirement, len(d.Requires))
 	for i, consumer := range d.Requires {

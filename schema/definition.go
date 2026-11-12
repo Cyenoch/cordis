@@ -23,6 +23,8 @@ type Definition struct {
 	Definitions []PluginDefinition         `json:"definitions,omitempty"`
 }
 
+// PluginDefinition declares one plugin definition: its config type, the
+// services it provides and those it consumes.
 type PluginDefinition struct {
 	ID       string                `json:"id"`
 	Config   json.RawMessage       `json:"config,omitempty"`
@@ -30,6 +32,8 @@ type PluginDefinition struct {
 	Requires []ConsumerDeclaration `json:"requires,omitempty"`
 }
 
+// ConsumerDeclaration is a service a definition consumes under Name, with
+// the minors it accepts.
 type ConsumerDeclaration struct {
 	Name     string `json:"name"`
 	Service  string `json:"service"`
@@ -37,6 +41,8 @@ type ConsumerDeclaration struct {
 	MaxMinor uint32 `json:"maxMinor"`
 }
 
+// Service declares a versioned service and its methods; in JSON the version
+// is one "major.minor" field.
 type Service struct {
 	Name    string   `json:"name"`
 	Major   uint32   `json:"-"`
@@ -44,6 +50,7 @@ type Service struct {
 	Methods []Method `json:"methods"`
 }
 
+// Method declares one method with the types of its request and response.
 type Method struct {
 	Name     string          `json:"name"`
 	Request  json.RawMessage `json:"request"`

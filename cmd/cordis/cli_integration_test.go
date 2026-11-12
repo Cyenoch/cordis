@@ -258,8 +258,14 @@ func TestCLIProcesses(t *testing.T) {
 		}
 		goCommand := func(args ...string) {
 			t.Helper()
-			command := exec.CommandContext(t.Context(), "go", args...)
+			// A hung command fails here with the stacks of its Go processes
+			// instead of holding the run until go test gives up.
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+			defer cancel()
+			command := exec.CommandContext(ctx, "go", args...)
 			command.Dir = dir
+			command.WaitDelay = 10 * time.Second
+			dumpStacksOnCancel(command)
 			if data, err := command.CombinedOutput(); err != nil {
 				t.Fatalf("go %v: %v\n%s", args, err, data)
 			}

@@ -8,7 +8,7 @@ import (
 	"github.com/Cyenoch/cordis/contract"
 )
 
-// Instance is the running instance of an entry, persistent or dynamic.
+// Instance is the instance of a registered entry, persistent or dynamic.
 func (h *Host) Instance(id string) (contract.Instance, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -22,8 +22,8 @@ func (h *Host) Instance(id string) (contract.Instance, error) {
 	return i, nil
 }
 
-// Instances lists every running instance with its entry, package and
-// status, sorted by entry ID.
+// Instances lists every registered instance, persistent or dynamic and in
+// any state, with its entry, package and status, sorted by entry ID.
 func (h *Host) Instances() []contract.InstanceInfo {
 	h.mu.Lock()
 	result := make([]contract.InstanceInfo, 0, len(h.entries))

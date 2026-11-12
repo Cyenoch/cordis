@@ -20,6 +20,8 @@ type ChildInstance interface {
 	Refresh(context.Context) (Status, error)
 }
 
+// ChildRequest is a guest's request about a dynamic child: Action is
+// create, status, wait, stop or update.
 type ChildRequest struct {
 	Child  Child  `json:"child"`
 	ID     string `json:"id"`

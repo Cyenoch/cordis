@@ -8,7 +8,6 @@
 - `plugintest.Start` 收到不配对的 spec 与定义时，错误同时说出两者，不再只报 unknown plugin definition。
 - `Host.Store()` 返回只读的 `hosting.Catalog`（`Installed`、`Get`、`Selected`、`Entries`、`Runs`、`Preflight`、`PendingRemovals`）；修改须经 Host，以免绕过它对运行实例的协调。迁移：`host.Store().UpdateTrust` 改为 `host.UpdateTrust`，`RetryRemovals` 同理；安装、选择、启用与卸载用 Host 的同名方法。
 - `cordis uninstall` 的输出字段改为小写 `removed`、`pending`、`reason`，与其他命令一致（`packagehost.Removal` 增加 json 标签）。
-- macOS 上等待插件或 `go list` 进程退出时，如果退出事件丢失（进程恰在退出时登记监视），一秒内发现僵尸进程并继续，不再无限等待。
 - `native.New` 改为接收一个 `native.Options`；原来的可变参数会静默忽略第一个之后的选项。无选项时写 `native.New(native.Options{})`。
 - CLI 信任文件新增 `digests`，批准精确摘要的包而无需签名，与 `TrustPolicy.Digests` 相同；拒绝错误提到的“approved exact digest”现在可以配置。
 - `cordis run` 只在启动确有等待原因时输出 `startup` 诊断，正常启动不再打印空的等待行。

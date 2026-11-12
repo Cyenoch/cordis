@@ -797,7 +797,7 @@ func (h *Host) Close(ctx context.Context) error {
 	return errors.Join(err, storeErr)
 }
 
-// Status is the status of a running entry, persistent or dynamic.
+// Status is the status of a registered entry, persistent or dynamic.
 func (h *Host) Status(id string) (contract.Status, error) {
 	instance, err := h.Instance(id)
 	if err != nil {

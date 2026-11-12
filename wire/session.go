@@ -16,6 +16,7 @@ import (
 	"github.com/Cyenoch/cordis/contract"
 )
 
+// Handler serves a request of the peer.
 type Handler func(context.Context, string, json.RawMessage) (json.RawMessage, error)
 
 // Prepare captures request references before the reader advances to another
@@ -26,6 +27,8 @@ type Prepare func(context.Context, string, json.RawMessage) (Handler, error)
 // ends the stream when it ends; a non-nil error ends it with that error.
 type StreamHandler func(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error]
 
+// Options configures an Endpoint. Transport and Handler are required;
+// Guest marks the plugin side, which answers initialize.
 type Options struct {
 	Transport io.ReadWriteCloser
 	Identity  contract.Identity
@@ -69,6 +72,8 @@ type cancellation struct {
 	timer    *time.Timer
 }
 
+// Endpoint is one side of a session over a transport. It implements
+// contract.Session.
 type Endpoint struct {
 	mu               sync.Mutex
 	issue            chan struct{}
@@ -99,6 +104,7 @@ type Endpoint struct {
 	wg               sync.WaitGroup
 }
 
+// New starts an endpoint reading options.Transport.
 func New(options Options) (*Endpoint, error) {
 	if options.Transport == nil || options.Handler == nil {
 		return nil, contract.Fail(contract.Invalid, "session transport and handler are required")
@@ -139,6 +145,7 @@ func New(options Options) (*Endpoint, error) {
 	return e, nil
 }
 
+// Identity is the activation the session belongs to.
 func (e *Endpoint) Identity() contract.Identity { e.mu.Lock(); defer e.mu.Unlock(); return e.identity }
 func (e *Endpoint) Done() <-chan struct{}       { return e.done }
 
@@ -163,7 +170,9 @@ func (readError) Is(target error) bool { return target == ErrRead }
 // closed is what a request gets that the session ended under.
 func (e *Endpoint) closed() error { return &contract.ClosedError{Err: e.Err()} }
 func (e *Endpoint) Close() error  { e.shutdown(io.EOF); return nil }
-func (e *Endpoint) Wait()         { e.wg.Wait() }
+
+// Wait returns once the endpoint's goroutines have; call it after Close.
+func (e *Endpoint) Wait() { e.wg.Wait() }
 
 func (e *Endpoint) shutdown(err error) {
 	e.closeOnce.Do(func() {

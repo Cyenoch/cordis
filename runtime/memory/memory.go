@@ -32,6 +32,8 @@ func (r *Runtime) Register(packageID string, definitions ...sdk.Definition) {
 	r.mu.Unlock()
 }
 
+// Start runs the registered definitions of launch's package in this process
+// over an in-memory session.
 func (r *Runtime) Start(ctx context.Context, launch contract.Launch) (contract.Session, error) {
 	r.mu.Lock()
 	definitions := r.packages[launch.Identity.Package]

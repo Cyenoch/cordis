@@ -123,8 +123,10 @@ type ServiceMethods struct {
 	Streams  map[string]StreamHandler
 }
 
+// Service is the provided service.
 func (m ServiceMethods) Service() Service { return m.Provides }
 
+// Call runs the handler of method, or fails for an unknown one.
 func (m ServiceMethods) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	handler := m.Calls[method]
 	if handler == nil {
@@ -133,6 +135,7 @@ func (m ServiceMethods) Call(ctx context.Context, method string, input json.RawM
 	return handler(ctx, input)
 }
 
+// Stream runs the stream handler of method, or fails for an unknown one.
 func (m ServiceMethods) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	handler := m.Streams[method]
 	if handler == nil {

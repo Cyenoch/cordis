@@ -65,8 +65,10 @@ type ChainDo struct {
 // wait for requests that wait for it.
 type ChainKey[In, Out any] struct{ name string }
 
+// NewChainKey returns the key of the middleware chain named name.
 func NewChainKey[In, Out any](name string) ChainKey[In, Out] { return ChainKey[In, Out]{name: name} }
 
+// Name is the chain's name on the session.
 func (k ChainKey[In, Out]) Name() string { return k.name }
 
 // Use registers middleware for the lifetime of s. The middleware may change
