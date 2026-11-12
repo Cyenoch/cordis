@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"runtime"
 	"strings"
 	"testing"
@@ -103,4 +105,32 @@ func FuzzManifest(f *testing.F) {
 		}
 		_, _ = decodeManifest(data)
 	})
+}
+
+// The config schemas of one manifest share one expansion budget, so a
+// manifest cannot multiply the work of inspecting it by repeating a schema
+// that each fits alone: ten references to a 60 KiB definition expand to about
+// 600 KiB, and a second such config exceeds 1 MiB.
+func TestManifestConfigSchemasShareExpansionBudget(t *testing.T) {
+	t.Parallel()
+	properties := map[string]any{}
+	for i := range 10 {
+		properties[fmt.Sprint("p", i)] = map[string]string{"$ref": "#/$defs/large"}
+	}
+	config, err := json.Marshal(map[string]any{
+		"type": "object", "properties": properties,
+		"$defs": map[string]any{"large": map[string]string{"type": "string", "description": strings.Repeat("x", 60<<10)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := manifestFixture("demo", "1.0.0")
+	m.Definitions[0].ConfigSchema = config
+	if err := ValidateManifest(m); err != nil {
+		t.Fatal(err)
+	}
+	m.Definitions = append(m.Definitions, contract.DefinitionSpec{ID: "second", ConfigSchema: config})
+	if err := ValidateManifest(m); err == nil || !strings.Contains(err.Error(), "definition second configSchema") || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("ValidateManifest = %v, want the second config schema over the byte limit", err)
+	}
 }

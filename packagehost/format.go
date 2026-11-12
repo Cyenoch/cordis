@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Cyenoch/cordis/contract"
+	"github.com/Cyenoch/cordis/schema"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
@@ -134,6 +135,9 @@ func ValidateManifest(m contract.Manifest) error {
 		return fmt.Errorf("package has no definitions")
 	}
 	defs := map[string]bool{}
+	// The config schemas come from one untrusted manifest, so they share one
+	// expansion budget, as the documents of a contract do.
+	budget := schema.NewBudget()
 	for _, d := range m.Definitions {
 		if !validName(d.ID) || defs[d.ID] {
 			return fmt.Errorf("invalid or duplicate definition %q", d.ID)
@@ -142,7 +146,7 @@ func ValidateManifest(m contract.Manifest) error {
 		if len(d.ConfigSchema) == 0 {
 			return fmt.Errorf("definition %s requires configSchema", d.ID)
 		}
-		if err := validateConfigSchema(d.ConfigSchema); err != nil {
+		if err := budget.Check(d.ConfigSchema); err != nil {
 			return fmt.Errorf("definition %s configSchema: %w", d.ID, err)
 		}
 		requirements := map[string]bool{}

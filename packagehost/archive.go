@@ -39,12 +39,6 @@ func (l Limits) validate() error {
 	}
 	return nil
 }
-func validateConfigSchema(raw json.RawMessage) error {
-	if len(raw) == 0 {
-		return nil
-	}
-	return schema.Check(raw)
-}
 func validateConfig(raw, value json.RawMessage) error {
 	if len(value) == 0 {
 		value = json.RawMessage(`{}`)

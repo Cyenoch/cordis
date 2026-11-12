@@ -87,14 +87,33 @@ type node struct {
 }
 
 // Compile validates the schema itself before preparing a reusable validator.
-func Compile(data json.RawMessage) (*Schema, error) {
+func Compile(data json.RawMessage) (*Schema, error) { return NewBudget().compile(data) }
+
+// Budget is one reference-expansion budget, the byte and node limits that a
+// contract's documents share, charged by every schema checked against it.
+// Schemas that arrive together from one source, such as the config schemas of
+// a package manifest, share a Budget so that their number cannot multiply the
+// work of checking them. A Budget is not safe for concurrent use.
+type Budget struct{ refs *resolver }
+
+// NewBudget returns an unspent Budget.
+func NewBudget() *Budget { return &Budget{refs: &resolver{active: map[string]bool{}}} }
+
+// Check rejects an invalid schema as the package-level Check does, charging
+// its expansion to b. Once b is spent, every later schema is rejected.
+func (b *Budget) Check(data json.RawMessage) error {
+	_, err := b.compile(data)
+	return err
+}
+
+func (b *Budget) compile(data json.RawMessage) (*Schema, error) {
 	if !utf8.Valid(data) {
 		return nil, field("/schema", "json", "invalid UTF-8")
 	}
 	if err := contract.CheckJSON(data, 32, 10000); err != nil {
 		return nil, jsonField("/schema", err)
 	}
-	data, err := resolveSchema(data, nil)
+	data, err := b.refs.resolve(data)
 	if err != nil {
 		return nil, err
 	}

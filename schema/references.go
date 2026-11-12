@@ -10,16 +10,6 @@ import (
 	"github.com/Cyenoch/cordis/contract"
 )
 
-// References are expanded before compilation, so every downstream consumer sees
-// the same finite schema rather than needing its own reference resolver.
-func resolveSchema(raw json.RawMessage, types map[string]json.RawMessage) (json.RawMessage, error) {
-	r, err := newResolver(types)
-	if err != nil {
-		return nil, err
-	}
-	return r.resolve(raw)
-}
-
 // newResolver keeps the shared types in compact form, so that a reference is
 // charged for the bytes it copies and never for the layout of its source.
 func newResolver(types map[string]json.RawMessage) (*resolver, error) {
@@ -39,6 +29,8 @@ func newResolver(types map[string]json.RawMessage) (*resolver, error) {
 	return r, nil
 }
 
+// resolve expands references before compilation, so every downstream consumer
+// sees the same finite schema rather than needing its own reference resolver.
 func (r *resolver) resolve(raw json.RawMessage) (json.RawMessage, error) {
 	if err := contract.CheckJSON(raw, 32, 10000); err != nil {
 		return nil, jsonField("/schema", err)
@@ -47,12 +39,12 @@ func (r *resolver) resolve(raw json.RawMessage) (json.RawMessage, error) {
 	if err := json.Compact(&compact, raw); err != nil {
 		return nil, jsonField("/schema", err)
 	}
-	if err := r.consume(encodedSize(compact.Bytes())); err != nil {
-		return nil, err
-	}
 	return r.expandRoot(compact.Bytes(), "root", 0)
 }
 
+// expandRoot expands a root document or a referenced type. Its body, without
+// $defs, is charged here; each $defs entry is charged when a reference visits
+// it, so no byte of $defs is charged as part of the body as well.
 func (r *resolver) expandRoot(raw json.RawMessage, scope string, depth int) (json.RawMessage, error) {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &root); err != nil || root == nil {
@@ -65,6 +57,15 @@ func (r *resolver) expandRoot(raw json.RawMessage, scope string, depth int) (jso
 		}
 		delete(root, "$defs")
 	}
+	// Marshal escapes HTML and line separators, so data is the body as it is
+	// copied into the expansion.
+	data, err := json.Marshal(root)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.consume(len(data)); err != nil {
+		return nil, err
+	}
 	oldDefs, oldScope := r.defs, r.scope
 	r.defs, r.scope = defs, scope
 	defer func() { r.defs, r.scope = oldDefs, oldScope }()
@@ -76,10 +77,6 @@ func (r *resolver) expandRoot(raw json.RawMessage, scope string, depth int) (jso
 		if _, err := compile(expanded, pointer("/schema/$defs", name), depth); err != nil {
 			return nil, err
 		}
-	}
-	data, err := json.Marshal(root)
-	if err != nil {
-		return nil, err
 	}
 	return r.expand(data, depth)
 }
@@ -94,15 +91,17 @@ type resolver struct {
 }
 
 // maxResolvedBytes bounds the expanded schemas of one resolver: the bytes
-// copied into them, each counted once. Every level of nesting decodes its input
-// and encodes its output once, so the work stays within a fixed multiple of it.
+// copied into them, each counted once. It bounds the result, not the work:
+// every level of nesting decodes and re-encodes its subtree, so the work grows
+// with the depth at which the bytes sit.
 const maxResolvedBytes = 1 << 20
 
-// consume charges compact bytes before they are copied into an expansion: a
-// root document once, and a reference's target at every visit.
+// consume charges compact bytes before they are copied into an expansion: the
+// body of a root document or type at every expansion, and a $defs target at
+// every visit.
 func (r *resolver) consume(size int) error {
 	if size > maxResolvedBytes-r.bytes {
-		return field("/schema", "$ref", fmt.Sprintf("expanded schemas exceed the cumulative byte limit of %d", maxResolvedBytes))
+		return field("/schema", "limit", fmt.Sprintf("expanded schemas exceed the cumulative byte limit of %d", maxResolvedBytes))
 	}
 	r.bytes += size
 	return nil
@@ -148,8 +147,10 @@ func (r *resolver) reference(ref string, depth int) (json.RawMessage, error) {
 	if r.active[key] {
 		return nil, field("/schema", "$ref", "cyclic reference: "+ref)
 	}
-	if err := r.consume(encodedSize(value)); err != nil {
-		return nil, err
+	if strings.HasPrefix(ref, "#/$defs/") {
+		if err := r.consume(encodedSize(value)); err != nil {
+			return nil, err
+		}
 	}
 	r.active[key] = true
 	var result json.RawMessage
@@ -166,7 +167,7 @@ func (r *resolver) reference(ref string, depth int) (json.RawMessage, error) {
 func (r *resolver) expand(raw json.RawMessage, depth int) (json.RawMessage, error) {
 	r.nodes++
 	if depth > 32 || r.nodes > 10000 {
-		return nil, field("/schema", "$ref", "expanded schema exceeds depth or node limit")
+		return nil, field("/schema", "limit", "expanded schema exceeds depth or node limit")
 	}
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {

@@ -2,6 +2,12 @@
 
 版本与承诺范围见 [稳定性](docs/stability.md)。
 
+## 未发布
+
+- **行为变化**：包清单中各 definition 的 `configSchema` 改为共用一份引用展开预算（1 MiB 字节、10000 节点），与一份契约中的文档相同。此前每个配置 schema 各有一份：一个 1 MiB 的清单把一个约 2 KB 的放大 schema 重复 457 次，检查这个不受信任的包在 v0.4.0 上约 50 秒、累计分配约 88 GiB，现在约 0.1 秒后被拒绝（Apple M5 Pro 实测）。这比 v0.3.0 和 v0.4.0 都严格：每个配置 schema 单独都在预算内、合计超出的清单现在被拒绝，打包和安装时都会检查。改法：合计超出时缩小配置 schema，或不要让多个 definition 各自展开同一个大的 `$defs`。新增 `schema.NewBudget` 与 `Budget.Check`，供宿主让同一来源的多个 schema 共用一份预算。
+- 修复：`$defs` 中的条目不再既随所在文档计一次、又在每次引用时再计。v0.4.0 因此拒绝了一些 v0.3.0 接受的 schema，例如 `$defs` 中有一个由 10 万个 `<` 组成的描述、展开后只有几十字节的 schema。
+- **行为变化**：引用展开超出字节预算、深度或节点上限时，`schema.FieldError` 的 `Keyword` 由 `$ref` 改为 `limit`；不含 `$ref` 的 schema 也会超限，原来的关键字有误导。`Message` 不变，`Error()` 中的关键字随之变为 `/schema: limit: …`。改法：判断超限改用 `Keyword == "limit"`。
+
 ## v0.4.0
 
 - 修复：契约的引用展开预算按复制进结果的紧凑字节计，每个字节只计一次，不再随嵌套深度和缩进重复计费。此前紧凑后只有约 92 KB 的契约会因超出 1 MiB 被拒绝，导入它的包无法 `cordis generate`。上限值与按契约文件计的范围不变；超限错误改为 `expanded schemas exceed the cumulative byte limit of 1048576`。

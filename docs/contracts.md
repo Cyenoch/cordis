@@ -244,7 +244,7 @@ if err := compiled.Validate(configJSON); err != nil { return err }
 
 一次性校验可用 `schema.Validate(schemaJSON, valueJSON)`；仅检查声明用 `schema.Check(schemaJSON)`。编译后的 Schema 不可变，可并发复用。值和 schema 都拒绝重复 key、尾随 JSON、无效 UTF-8，限制嵌套深度 32、单数组 10,000 项。未自动插入 default、截断值或把字符串转成数字。
 
-错误通过 `errors.As(err, &fieldError)` 读取 `*schema.FieldError`：`Path` 是 JSON Pointer（根为 `""`），`Keyword` 为 `required`、`minimum`、`nullable`、`discriminator` 等，`Message` 提供原因。schema 自身错误使用 `/schema` 前缀。调用方可据此定位配置字段，不必解析错误字符串。
+错误通过 `errors.As(err, &fieldError)` 读取 `*schema.FieldError`：`Path` 是 JSON Pointer（根为 `""`），`Keyword` 为 `required`、`minimum`、`nullable`、`discriminator` 等，超出引用展开的字节预算、深度或节点上限时为 `limit`，`Message` 提供原因。schema 自身错误使用 `/schema` 前缀。调用方可据此定位配置字段，不必解析错误字符串。
 
 ## 标准编辑器 Schema
 
@@ -366,4 +366,6 @@ if err := document.Decode(&settings); err != nil { return err }
 
 `Document.Positions` 以 JSON Pointer 为键，空路径表示根，行列从 1 开始；对象成员通常定位到键，数组项定位到值。`document.Locate("/database/port", cause)` 保留原错误和请求路径，缺少精确位置时使用最近已知祖先。`*config.Error` 暴露 `Source`、`Path`、`Line`、`Column`、`Cause` 并支持 `errors.Is/As`；语法错误也带来源和可获得的行列。`Decode` 尽可能定位未知字段：同名字段出现多处或自定义 codec 不提供路径时，可能只能定位到根。YAML 依赖库的语法错误通常只提供行号，列号为 0。来源可能包含可信本地路径，对外展示前应由宿主做安全投影。
 
-一份契约内的类型、方法与 definition 配置的本地引用展开共用 1 MiB 字节预算、32 层深度和 10000 节点限制；单独编译的一个 schema 自成一份。预算计的是复制进展开结果的紧凑字节：每个文档计一次，每次引用在复制前按目标计一次，因此与空白和嵌套深度无关，重复引用照样计费。过大的声明在生成或宿主预检前拒绝；`cordis generate` 写出 `cordis_gen.json` 前确认 `schema.Parse` 能读回它。这不是 Go 进程的硬内存上限。
+一份契约内的类型、方法与 definition 配置的本地引用展开共用 1 MiB 字节预算、32 层深度和 10000 节点限制；包清单中各 definition 的配置 schema 同样共用一份；单独编译的一个 schema 自成一份。宿主检查来自同一来源的多个 schema 时，用 `schema.NewBudget()` 返回的 `Budget.Check` 让它们共用一份，数量就不会成倍放大工作量。预算计的是复制进展开结果的紧凑字节，按转义后的长度：文档和每次类型引用按去掉 `$defs` 的本体计一次，每次 `$defs` 引用在复制前按目标计一次；文档或类型每次展开时都校验其全部 `$defs` 条目，这次校验同样复制条目，按引用计费，所以类型的 `$defs` 在每次引用该类型时都计一次。因此与空白和嵌套深度无关，重复引用照样计费。过大的声明在生成或宿主预检前拒绝；`cordis generate` 写出 `cordis_gen.json` 前确认 `schema.Parse` 能读回它。
+
+预算限制的是展开结果，不是检查的工作量：每层嵌套都会重新编码一次子树。在 Apple M5 Pro（darwin/arm64，Go 1.27.4）上实测，最坏的单个 schema 是把约 1 MiB 的展开结果放在 31 层深处的一个叶子里：检查耗时约 0.14–0.36 秒（叶子由需要转义的 `<` 组成时最慢），累计分配约 340–375 MiB，堆峰值增加约 115–130 MiB。一份清单的配置 schema 共用预算，所以检查一份清单也不超过这个量级。这不是 Go 进程的硬内存上限。

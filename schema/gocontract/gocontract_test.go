@@ -422,6 +422,46 @@ func TestStaleBindingsOfAnImportedService(t *testing.T) {
 	}
 }
 
+// A package that provides a service of another package reads that package's
+// contract back as written, indented. Here 600 fields sit twelve structs down:
+// charging the indentation at every level, as before v0.4.0, let the service
+// generate and then rejected its contract in the providing package.
+func TestProvidesADeepServiceOfAnotherPackage(t *testing.T) {
+	root, err := os.MkdirTemp("testdata", "provides-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	api, plug := filepath.Join(root, "api"), filepath.Join(root, "plug")
+	var source strings.Builder
+	source.WriteString("package api\n\nimport \"context\"\n\n//cordis:service example.deep 1\ntype Deep interface {\n\tDo(ctx context.Context, request L0) error\n}\n\n")
+	for level := range 12 {
+		fmt.Fprintf(&source, "type L%d struct{ Next L%d `json:\"next\"` }\n", level, level+1)
+	}
+	source.WriteString("type L12 struct {\n")
+	for i := range 600 {
+		fmt.Fprintf(&source, "\tF%03d string `json:\"f%03d\"`\n", i, i)
+	}
+	source.WriteString("}\n")
+	files := map[string]string{
+		filepath.Join(api, "api.go"):   source.String(),
+		filepath.Join(plug, "plug.go"): "package plug\n\nimport (\n\t\"context\"\n\n\t\"github.com/Cyenoch/cordis\"\n\t\"github.com/Cyenoch/cordis/schema/gocontract/" + filepath.ToSlash(api) + "\"\n)\n\nvar _ api.Deep\n\n//cordis:plugin plug\n//cordis:provides api.Deep\nfunc start(context.Context, *cordis.Scope, struct{}) error { return nil }\n",
+	}
+	for path, source := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{api, plug} {
+		if _, err := gocontract.Generate(t.Context(), dir, gocontract.Target{}); err != nil {
+			t.Fatalf("Generate %s: %v", dir, err)
+		}
+	}
+}
+
 // Build constraints decide which declarations a target has.
 func TestContractOfTheBuildTarget(t *testing.T) {
 	dir, err := os.MkdirTemp("testdata", "target-")
