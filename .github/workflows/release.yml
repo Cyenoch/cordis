@@ -26,9 +26,12 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          # bun.lock gives the docs build its own cache key, so it does not
+          # claim the one Linux conformance saves its race build under.
           cache-dependency-path: |
             go.sum
             examples/plugins/*/go.sum
+            bun.lock
       - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
