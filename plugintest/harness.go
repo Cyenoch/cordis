@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"time"
 
 	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
@@ -48,7 +50,9 @@ type Harness struct {
 
 // Start runs definition as an entry whose ID is spec.ID and waits until it
 // is Active. spec is what the generated <Name>DefinitionSpec returns. When
-// the plugin does not become Active, Start returns why and cleans up.
+// the plugin does not become Active, Start returns why and cleans up; one
+// still waiting for a requirement after ctx's deadline, or 30 seconds when
+// ctx has none, is reported with what it waits for.
 // Always Close a harness that Start returned.
 func Start(ctx context.Context, spec contract.DefinitionSpec, definition sdk.Definition, options Options) (h *Harness, err error) {
 	directory, err := os.MkdirTemp("", "cordis-plugintest-")
@@ -114,13 +118,39 @@ func Start(ctx context.Context, spec contract.DefinitionSpec, definition sdk.Def
 	if err != nil {
 		return h, err
 	}
-	if err := h.instance.Wait(ctx); err != nil {
+	// A requirement nothing provides keeps the entry waiting for good. Told
+	// what it waits for, a test fails with that instead of hanging until go
+	// test gives up.
+	wait, cancel := ctx, context.CancelFunc(func() {})
+	if _, bounded := ctx.Deadline(); !bounded {
+		wait, cancel = context.WithTimeout(ctx, startLimit)
+	}
+	defer cancel()
+	if err := h.instance.Wait(wait); err != nil {
+		if status := h.instance.Status(); status.State == contract.Waiting {
+			return h, fmt.Errorf("definition %q is still waiting for %s; provide it in Options.Setup: %w", spec.ID, waitingFor(status.Waiting), err)
+		}
 		return h, fmt.Errorf("start definition %q: %w", spec.ID, err)
 	}
 	if status := h.instance.Status(); status.State != contract.Active {
 		return h, fmt.Errorf("definition %q is %s, waiting for %+v", spec.ID, status.State, status.Waiting)
 	}
 	return h, nil
+}
+
+// startLimit bounds how long Start waits when ctx has no deadline.
+const startLimit = 30 * time.Second
+
+func waitingFor(reasons []contract.WaitReason) string {
+	names := make([]string, 0, len(reasons))
+	for _, r := range reasons {
+		if r.Requirement == nil {
+			names = append(names, r.Reason)
+			continue
+		}
+		names = append(names, fmt.Sprintf("%s@%d.%d-%d (%s)", r.Requirement.Name, r.Requirement.Major, r.Requirement.MinMinor, r.Requirement.MaxMinor, r.Reason))
+	}
+	return strings.Join(names, ", ")
 }
 
 // Scope is the root scope of the host. Get the plugin's endpoints from it,

@@ -23,7 +23,7 @@ go build -o ./bin/cordis ./cmd/cordis
 | --- | --- |
 | `init -module MODULE [FLAGS] DIRECTORY` | 创建作者源、业务入口、业务测试、生成物与独立 go.mod，不覆盖已有文件 |
 | `build -go-package PACKAGE -goos OS -goarch ARCH [FLAGS] DIRECTORY` | 重新生成、构建明确目标，写入 build.json |
-| `pack DIRECTORY ARCHIVE.zip` | 校验声明和构建描述，生成 ZIP 和完整性表 |
+| `pack DIRECTORY ARCHIVE.zip` | 核对生成文件与 Go 源码、声明和构建描述，生成 ZIP 和完整性表 |
 | `keygen PRIVATE_KEY_FILE` | 创建 Ed25519 私钥文件，只向 stdout 输出公钥 |
 | `sign ARCHIVE.zip KEY_ID PRIVATE_KEY_FILE` | 为归档签名 |
 | `inspect ARCHIVE.zip` | 查看包引用和 Manifest，不授权执行 |

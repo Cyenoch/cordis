@@ -9,8 +9,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/Cyenoch/cordis/config"
+	"github.com/Cyenoch/cordis/packagehost"
 	"github.com/Cyenoch/cordis/schema"
 	"github.com/Cyenoch/cordis/schema/gocontract"
 )
@@ -62,6 +64,32 @@ func generateCommand(ctx context.Context, flags *flag.FlagSet, parse func() (boo
 		return err
 	}
 	return atomicOutput(*output, generated.Bytes())
+}
+
+// checkDerived fails when a contract derived from Go source was not
+// regenerated after that source changed. Pack itself reads only the
+// generated files, so without this it would package the old contract.
+func checkDerived(ctx context.Context, source string) error {
+	author, err := packagehost.LoadAuthor(source)
+	if err != nil || !author.Derived {
+		return err
+	}
+	dir := source
+	if info, err := os.Stat(source); err == nil && !info.IsDir() {
+		dir = filepath.Dir(source)
+	}
+	// The source is read as built for a declared target: files of another
+	// target may not compile here. Every target derives the same contract.
+	target := gocontract.Target{}
+	if artifacts := author.Manifest.Runtime.Artifacts; len(artifacts) > 0 {
+		target = gocontract.Target{GOOS: artifacts[0].OS, GOARCH: artifacts[0].Arch}
+		for _, artifact := range artifacts {
+			if artifact.OS == runtime.GOOS && artifact.Arch == runtime.GOARCH {
+				target = gocontract.Target{GOOS: artifact.OS, GOARCH: artifact.Arch}
+			}
+		}
+	}
+	return gocontract.Check(ctx, dir, target)
 }
 
 func atomicOutput(path string, data []byte) (result error) {

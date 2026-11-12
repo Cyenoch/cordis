@@ -116,7 +116,7 @@ Name string `json:"name" cordis:"minLength=1,maxLength=64"`
 - `cordis_gen.go`：适配代码，内容见[类型化服务](#类型化服务)。
 - `cordis_gen.json`：推导出的契约，格式即下文的声明式契约。随源码提交，契约的变化会出现在评审的 diff 里。
 
-对同一份源码重复生成得到逐字节相同的文件。`cordis build` 与 `cordis dev` 先重新生成；`pack` 校验声明指纹，改了源码没重新构建会被拒绝。打包和检查只读 `cordis_gen.json`，不运行 Go 分析；缺少该文件时报错并提示先生成。生成需要 `go` 命令和能编译的依赖。
+对同一份源码重复生成得到逐字节相同的文件。`cordis build` 与 `cordis dev` 先重新生成；`cordis pack` 先核对两个生成文件与 Go 源码一致，再校验声明指纹：改了契约没有重新生成或重新构建，都会被拒绝。`packagehost.Pack` 与检查只读 `cordis_gen.json`，不运行 Go 分析；缺少该文件时报错并提示先生成。生成需要 `go` 命令和能编译的依赖。
 
 ## 声明式契约文件
 

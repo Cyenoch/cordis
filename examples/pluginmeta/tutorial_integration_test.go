@@ -32,7 +32,7 @@ func TestGettingStarted(t *testing.T) {
 		}
 		return matches[0][1]
 	}
-	run := func(dir, stdin, program string, args ...string) []byte {
+	run := func(t *testing.T, dir, stdin, program string, args ...string) []byte {
 		t.Helper()
 		command := exec.CommandContext(t.Context(), program, args...)
 		command.Dir = dir
@@ -58,24 +58,24 @@ func TestGettingStarted(t *testing.T) {
 		suffix = ".exe"
 	}
 	cli := filepath.Join(bin, "cordis"+suffix)
-	run(root, "", "go", "build", "-o", cli, "./cmd/cordis")
+	run(t, root, "", "go", "build", "-o", cli, "./cmd/cordis")
 	dir := filepath.Join(t.TempDir(), "hello")
-	run(root, "", cli, "init", "-module", "example.net/cordis-hello", "-sdk-version", "v0.0.0",
+	run(t, root, "", cli, "init", "-module", "example.net/cordis-hello", "-sdk-version", "v0.0.0",
 		"-id", "example.hello", "-publisher", "example.author", dir)
-	run(dir, "", "go", "mod", "edit", "-replace=github.com/Cyenoch/cordis="+root)
+	run(t, dir, "", "go", "mod", "edit", "-replace=github.com/Cyenoch/cordis="+root)
 	for _, file := range []struct{ language, name string }{
 		{"go", "main.go"}, {"toml", "config.toml"}, {"toml", "input.toml"},
 	} {
 		write(filepath.Join(dir, file.name), block(file.language, file.name))
 	}
-	run(dir, "", "go", "mod", "tidy")
-	run(dir, "", cli, "generate")
+	run(t, dir, "", "go", "mod", "tidy")
+	run(t, dir, "", cli, "generate")
 	goos, goarch := runtime.GOOS, runtime.GOARCH
-	run(dir, "", cli, "build", "-go-package", ".", "-goos", goos, "-goarch", goarch, ".")
-	run(dir, "", "go", "test", ".")
+	run(t, dir, "", cli, "build", "-go-package", ".", "-goos", goos, "-goarch", goarch, ".")
+	run(t, dir, "", "go", "test", ".")
 	archive := dir + ".zip"
-	run(dir, "", cli, "pack", ".", archive)
-	run(dir, "", cli, "inspect", archive)
+	run(t, dir, "", cli, "pack", ".", archive)
+	run(t, dir, "", cli, "inspect", archive)
 	for _, input := range []struct {
 		name, stdin string
 		args        []string
@@ -87,7 +87,7 @@ func TestGettingStarted(t *testing.T) {
 		t.Run(input.name, func(t *testing.T) {
 			args := []string{"run", "-dev-unsigned", "-service", "example.echo"}
 			args = append(append(args, input.args...), archive)
-			got := run(dir, input.stdin, cli, args...)
+			got := run(t, dir, input.stdin, cli, args...)
 			var want, actual bytes.Buffer
 			if err := json.Compact(&want, block("json", "调用结果")); err != nil {
 				t.Fatal(err)

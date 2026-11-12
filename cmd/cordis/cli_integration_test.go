@@ -287,6 +287,51 @@ func TestCLIProcesses(t *testing.T) {
 		if code, _, stderr := run(t, "", "pack", dir, archive); code != 0 {
 			t.Fatalf("pack: %d %s", code, stderr)
 		}
+		// A contract edited in Go and not regenerated is not packed: the
+		// archive would carry the contract the binary no longer has.
+		source := filepath.Join(dir, "main.go")
+		text, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeCLIFile(t, source, strings.Replace(string(text), "type Config struct{}", "type Config struct {\n\tPrefix string `json:\"prefix,omitempty\"`\n}", 1))
+		stale := filepath.Join(t.TempDir(), "stale.zip")
+		if code, _, stderr := run(t, "", "pack", dir, stale); code != 1 || !strings.Contains(stderr, "cordis_gen.json does not match the Go source; run cordis generate") {
+			t.Fatalf("pack after an unregenerated edit: %d %s", code, stderr)
+		}
+		if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("pack wrote an archive: %v", err)
+		}
+		// A package built for another OS, whose source compiles only there,
+		// is still checked and packed here.
+		foreign := "windows"
+		if runtime.GOOS == foreign {
+			foreign = "linux"
+		}
+		for _, name := range []string{"main.go", "main_test.go"} {
+			path := filepath.Join(dir, name)
+			text, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "main.go" {
+				text = []byte(strings.Replace(string(text), "type Config struct {\n\tPrefix string `json:\"prefix,omitempty\"`\n}", "type Config struct{}", 1))
+			}
+			writeCLIFile(t, path, "//go:build "+foreign+"\n\n"+string(text))
+		}
+		manifest := filepath.Join(dir, "plugin.toml")
+		text, err = os.ReadFile(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		retargeted := regexp.MustCompile(`(?s)\[\[runtime\.artifacts\]\].*`).ReplaceAllString(string(text), "[[runtime.artifacts]]\nos = \""+foreign+"\"\narch = \"amd64\"\npath = \"plugin-"+foreign+"\"\n")
+		writeCLIFile(t, manifest, retargeted)
+		if code, _, stderr := run(t, "", "build", "-go-package", ".", "-goos", foreign, "-goarch", "amd64", dir); code != 0 {
+			t.Fatalf("build for %s: %d %s", foreign, code, stderr)
+		}
+		if code, _, stderr := run(t, "", "pack", dir, filepath.Join(t.TempDir(), "foreign.zip")); code != 0 {
+			t.Fatalf("pack of a %s build: %d %s", foreign, code, stderr)
+		}
 	})
 }
 

@@ -158,6 +158,9 @@ func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 	case "version":
 		return printVersion(out)
 	case "pack":
+		if err := checkDerived(ctx, flags.Arg(0)); err != nil {
+			return err
+		}
 		pkg, err := packagehost.Pack(ctx, flags.Arg(0), flags.Arg(1))
 		if err != nil {
 			return err

@@ -21,15 +21,7 @@ import (
 // Generate analyzes the Go package in dir and writes GoFile and ContractFile
 // there. Files whose content would not change are left alone.
 func Generate(ctx context.Context, dir string, target Target) (*Package, error) {
-	p, err := Load(ctx, dir, target)
-	if err != nil {
-		return nil, err
-	}
-	code, err := p.Source()
-	if err != nil {
-		return nil, err
-	}
-	declared, err := p.Contract()
+	p, files, err := generated(ctx, dir, target)
 	if err != nil {
 		return nil, err
 	}
@@ -37,10 +29,7 @@ func Generate(ctx context.Context, dir string, target Target) (*Package, error) 
 	// disk that fills up or a directory that cannot be written leaves the
 	// previous pair, not one new file next to one old.
 	var staged []func(commit bool) error
-	for _, file := range []struct {
-		name string
-		data []byte
-	}{{ContractFile, declared}, {GoFile, code}} {
+	for _, file := range files {
 		finish, err := stage(filepath.Join(dir, file.name), file.data)
 		if err != nil {
 			for _, discard := range staged {
@@ -58,6 +47,47 @@ func Generate(ctx context.Context, dir string, target Target) (*Package, error) 
 		return nil, result
 	}
 	return p, nil
+}
+
+// Check fails unless GoFile and ContractFile in dir are what Generate would
+// write for the Go source there now.
+func Check(ctx context.Context, dir string, target Target) error {
+	_, files, err := generated(ctx, dir, target)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		path := filepath.Join(dir, file.name)
+		current, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) || err == nil && !bytes.Equal(current, file.data) {
+			return fmt.Errorf("%s does not match the Go source; run cordis generate", path)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type generatedFile struct {
+	name string
+	data []byte
+}
+
+func generated(ctx context.Context, dir string, target Target) (*Package, []generatedFile, error) {
+	p, err := Load(ctx, dir, target)
+	if err != nil {
+		return nil, nil, err
+	}
+	code, err := p.Source()
+	if err != nil {
+		return nil, nil, err
+	}
+	declared, err := p.Contract()
+	if err != nil {
+		return nil, nil, err
+	}
+	return p, []generatedFile{{ContractFile, declared}, {GoFile, code}}, nil
 }
 
 // stage writes data next to path. The returned function puts it in place or

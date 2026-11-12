@@ -2,6 +2,11 @@
 
 版本与承诺范围见 [稳定性](docs/stability.md)。
 
+## 未发布
+
+- `cordis pack` 先核对 `cordis_gen.go`、`cordis_gen.json` 与 Go 源码一致：改了契约没有重新生成时报错，不再打包旧契约。新增 `gocontract.Check`。
+- `plugintest.Start` 在 ctx 的期限内（没有期限时 30 秒）等不到所需服务时返回它在等什么，不再一直等到 `go test` 超时。
+
 ## v0.2.0
 
 - **行为变化**：`hosting.Options.Grace` 的默认值从 1 秒改为 5 秒（`hosting.DefaultGrace`）。它是插件应答取消、响应关闭和退出进程的期限；1 秒在清理较慢或机器很忙时会把健康的插件当作卡住。需要原来的行为时设置 `Grace: time.Second`。
