@@ -23,6 +23,9 @@ import (
 // It does not indicate whether the package is installed.
 var ErrNotSelected = errors.New("package has no explicit selection")
 
+// ErrInUse means another Store, usually a running Host, holds the root.
+var ErrInUse = errors.New("in use by another process")
+
 type catalog struct {
 	Revision        uint64                         `json:"revision"`
 	Installed       map[string]Package             `json:"installed"`
@@ -127,7 +130,7 @@ func OpenWithOptions(root string, options Options) (s *Store, err error) {
 	}
 	lock, err := acquireLock(filepath.Join(root, "store.lock"))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open store %s: %w", root, err)
 	}
 	s = &Store{root: root, trust: copyTrust(trust), limits: limits, catalog: newCatalog(), lock: lock, logger: options.Logger}
 	defer func() {

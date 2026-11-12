@@ -58,10 +58,12 @@ func (e *generatedEndpoint_Counter) Call(ctx context.Context, method string, inp
 	case "execute":
 		return generatedOperation_Counter_Execute.Serve(ctx, input, e.implementation.Execute)
 	}
-	return nil, contract.Fail(contract.Invalid, "service example.counter@1 has no method \""+method+"\"")
+	return nil, contract.Fail(contract.Invalid, "service example.counter@1 has no method \""+method+"\"; it has execute")
 }
 func (e *generatedEndpoint_Counter) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
+	case "execute":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service example.counter@1 method \"execute\" does not stream"))
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.counter@1 has no streaming method \""+method+"\""))
 }

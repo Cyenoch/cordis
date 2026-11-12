@@ -59,10 +59,12 @@ func (e *generatedEndpoint_Clock) Call(ctx context.Context, method string, input
 	case "now":
 		return generatedOperation_Clock_Now.Serve(ctx, input, func(ctx context.Context, _ struct{}) (time.Time, error) { return e.implementation.Now(ctx) })
 	}
-	return nil, contract.Fail(contract.Invalid, "service example.clock@1 has no method \""+method+"\"")
+	return nil, contract.Fail(contract.Invalid, "service example.clock@1 has no method \""+method+"\"; it has now")
 }
 func (e *generatedEndpoint_Clock) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
+	case "now":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service example.clock@1 method \"now\" does not stream"))
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.clock@1 has no streaming method \""+method+"\""))
 }

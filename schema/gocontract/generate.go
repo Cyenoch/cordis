@@ -60,7 +60,7 @@ func Check(ctx context.Context, dir string, target Target) error {
 		path := filepath.Join(dir, file.name)
 		current, err := os.ReadFile(path)
 		if errors.Is(err, os.ErrNotExist) || err == nil && !bytes.Equal(current, file.data) {
-			return fmt.Errorf("%s does not match the Go source; run cordis generate", path)
+			return fmt.Errorf("%s is not what cordis generate makes from the Go source; run cordis generate", path)
 		}
 		if err != nil {
 			return err
@@ -301,16 +301,20 @@ func (g *generator) service(s *service, declared schema.Service) {
 	for _, m := range s.methods {
 		if !m.stream {
 			g.line("case %q:\nreturn %s.Serve(%s, %s, %s)", m.wire, operations[m.name], ctx, input, g.adapt(e+".implementation", m))
+		} else {
+			g.line("case %q:\nreturn nil, %s.Fail(%s.Invalid, %q)", m.wire, g.contract(), g.contract(), "service "+key+" method \""+m.wire+"\" is a streaming method")
 		}
 	}
-	g.line("}\nreturn nil, %s.Fail(%s.Invalid, %q + %s + %q)\n}", g.contract(), g.contract(), "service "+key+" has no method \"", method, "\"")
+	g.line("}\nreturn nil, %s.Fail(%s.Invalid, %q + %s + %q)\n}", g.contract(), g.contract(), "service "+key+" has no method \"", method, "\""+offered(s.methods, false))
 	g.line("func (%s *%s) Stream(%s %s, %s string, %s %s) %s.Seq2[%s, error] {\nswitch %s {", e, endpointType, ctx, context, method, input, raw, g.std("iter"), raw, method)
 	for _, m := range s.methods {
 		if m.stream {
 			g.line("case %q:\nreturn %s.ServeStream(%s, %s, %s)", m.wire, operations[m.name], ctx, input, g.adapt(e+".implementation", m))
+		} else {
+			g.line("case %q:\nreturn %s.FailedStream(%s.Fail(%s.Invalid, %q))", m.wire, g.contract(), g.contract(), g.contract(), "service "+key+" method \""+m.wire+"\" does not stream")
 		}
 	}
-	g.line("}\nreturn %s.FailedStream(%s.Fail(%s.Invalid, %q + %s + %q))\n}", g.contract(), g.contract(), g.contract(), "service "+key+" has no streaming method \"", method, "\"")
+	g.line("}\nreturn %s.FailedStream(%s.Fail(%s.Invalid, %q + %s + %q))\n}", g.contract(), g.contract(), g.contract(), "service "+key+" has no streaming method \"", method, "\""+offered(s.methods, true))
 
 	g.line("type %s struct { endpoint %s.Endpoint }", clientType, g.contract())
 	g.line("// %s returns a typed client for endpoint. Requests and responses are", g.declare("New"+name+"Client"))
@@ -407,4 +411,19 @@ func exported(id string) string {
 		}
 	}
 	return name.String()
+}
+
+// offered lists, for a failed lookup, the methods of the kind the caller
+// asked for, as they are spelled on the wire.
+func offered(methods []method, stream bool) string {
+	var names []string
+	for _, m := range methods {
+		if m.stream == stream {
+			names = append(names, m.wire)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return "; it has " + strings.Join(names, ", ")
 }

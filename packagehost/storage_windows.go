@@ -24,8 +24,10 @@ func acquireLock(name string) (*os.File, error) {
 		return nil, err
 	}
 	var overlapped windows.Overlapped
-	if err = windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &overlapped); err != nil {
-		return nil, errors.Join(fmt.Errorf("storage already locked: %w", err), file.Close())
+	if err = windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &overlapped); errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+		return nil, errors.Join(ErrInUse, file.Close())
+	} else if err != nil {
+		return nil, errors.Join(fmt.Errorf("lock storage: %w", err), file.Close())
 	}
 	return file, nil
 }

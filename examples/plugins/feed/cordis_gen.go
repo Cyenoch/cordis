@@ -55,6 +55,8 @@ func NewFeedEndpoint(implementation Feed) contract.Endpoint {
 func (e *generatedEndpoint_Feed) Service() contract.Service { return FeedService() }
 func (e *generatedEndpoint_Feed) Call(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
 	switch method {
+	case "tail":
+		return nil, contract.Fail(contract.Invalid, "service example.feed@1 method \"tail\" is a streaming method")
 	}
 	return nil, contract.Fail(contract.Invalid, "service example.feed@1 has no method \""+method+"\"")
 }
@@ -63,7 +65,7 @@ func (e *generatedEndpoint_Feed) Stream(ctx context.Context, method string, inpu
 	case "tail":
 		return generatedOperation_Feed_Tail.ServeStream(ctx, input, e.implementation.Tail)
 	}
-	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.feed@1 has no streaming method \""+method+"\""))
+	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.feed@1 has no streaming method \""+method+"\"; it has tail"))
 }
 
 type generatedClient_Feed struct{ endpoint contract.Endpoint }

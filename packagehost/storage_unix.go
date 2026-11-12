@@ -17,8 +17,10 @@ func acquireLock(name string) (*os.File, error) {
 		return nil, fmt.Errorf("open storage lock: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), name)
-	if err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		return nil, errors.Join(fmt.Errorf("storage already locked: %w", err), file.Close())
+	if err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); errors.Is(err, unix.EWOULDBLOCK) {
+		return nil, errors.Join(ErrInUse, file.Close())
+	} else if err != nil {
+		return nil, errors.Join(fmt.Errorf("lock storage: %w", err), file.Close())
 	}
 	return file, nil
 }

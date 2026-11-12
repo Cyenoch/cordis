@@ -56,10 +56,12 @@ func (e *generatedEndpoint_ChainA) Call(ctx context.Context, method string, inpu
 	case "execute":
 		return generatedOperation_ChainA_Execute.Serve(ctx, input, e.implementation.Execute)
 	}
-	return nil, contract.Fail(contract.Invalid, "service chain.a@1 has no method \""+method+"\"")
+	return nil, contract.Fail(contract.Invalid, "service chain.a@1 has no method \""+method+"\"; it has execute")
 }
 func (e *generatedEndpoint_ChainA) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
+	case "execute":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service chain.a@1 method \"execute\" does not stream"))
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service chain.a@1 has no streaming method \""+method+"\""))
 }
@@ -126,10 +128,12 @@ func (e *generatedEndpoint_ChainB) Call(ctx context.Context, method string, inpu
 	case "execute":
 		return generatedOperation_ChainB_Execute.Serve(ctx, input, e.implementation.Execute)
 	}
-	return nil, contract.Fail(contract.Invalid, "service chain.b@1 has no method \""+method+"\"")
+	return nil, contract.Fail(contract.Invalid, "service chain.b@1 has no method \""+method+"\"; it has execute")
 }
 func (e *generatedEndpoint_ChainB) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
+	case "execute":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service chain.b@1 method \"execute\" does not stream"))
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service chain.b@1 has no streaming method \""+method+"\""))
 }
@@ -196,10 +200,12 @@ func (e *generatedEndpoint_ChainC) Call(ctx context.Context, method string, inpu
 	case "execute":
 		return generatedOperation_ChainC_Execute.Serve(ctx, input, e.implementation.Execute)
 	}
-	return nil, contract.Fail(contract.Invalid, "service chain.c@1 has no method \""+method+"\"")
+	return nil, contract.Fail(contract.Invalid, "service chain.c@1 has no method \""+method+"\"; it has execute")
 }
 func (e *generatedEndpoint_ChainC) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
+	case "execute":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service chain.c@1 method \"execute\" does not stream"))
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service chain.c@1 has no streaming method \""+method+"\""))
 }

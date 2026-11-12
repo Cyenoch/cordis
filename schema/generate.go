@@ -10,6 +10,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/Cyenoch/cordis/contract"
 )
@@ -374,7 +375,7 @@ func (g *generator) emitService(name string, s Service) {
 		}
 		g.line("case %s: var input %s%sRequest; if err := json.Unmarshal(data,&input); err != nil { return nil,err }; output,err := e.implementation.%s(ctx,input); if err != nil { return nil,err }; return json.Marshal(output)", strconv.Quote(method.Name), name, mn, mn)
 	}
-	g.line("default: return nil,contract.Fail(contract.Invalid,\"unknown service method\") }\n}")
+	g.line("default: return nil,%s }\n}", missingMethod(s, false))
 	g.line("func (e *%sEndpoint) Stream(ctx context.Context,method string,data json.RawMessage) iter.Seq2[json.RawMessage,error] { switch method {", lower)
 	for _, method := range s.Methods {
 		mn, _ := exportedName(method.Name)
@@ -383,7 +384,7 @@ func (g *generator) emitService(name string, s Service) {
 		}
 		g.line("case %s: return func(yield func(json.RawMessage,error) bool) { var input %s%sRequest; if err := json.Unmarshal(data,&input); err != nil { yield(nil,err); return }; for output,err := range e.implementation.%s(ctx,input) { if err != nil { yield(nil,err); return }; item,err := json.Marshal(output); if err != nil { yield(nil,err); return }; if !yield(item,nil) { return } } }", strconv.Quote(method.Name), name, mn, mn)
 	}
-	g.line("default: return contract.FailedStream(contract.Fail(contract.Invalid,\"unknown streaming service method\")) }\n}")
+	g.line("default: return contract.FailedStream(%s) }\n}", missingMethod(s, true))
 
 	// Client.
 	g.line("type %sClient struct { endpoint contract.Endpoint; local %s }", lower, name)
@@ -499,4 +500,23 @@ func (g *generator) emitDefinition(name string, pd PluginDefinition, spec contra
 		g.line("contract.Require(contract.EndpointKey(%q,%d),%d,%d),", r.Name, r.Major, r.MinMinor, r.MaxMinor)
 	}
 	g.line("},Validate:func(config %sConfig)error{_,err:=json.Marshal(config);return err},Start:start} }", name)
+}
+
+// missingMethod is the generated failure for a method the service lacks; it
+// names the methods a caller can use instead, as they are spelled on the wire.
+func missingMethod(s Service, stream bool) string {
+	kind, names := "method", []string{}
+	if stream {
+		kind = "streaming method"
+	}
+	for _, method := range s.Methods {
+		if method.Stream == stream {
+			names = append(names, method.Name)
+		}
+	}
+	service := strconv.Quote(fmt.Sprintf("%s@%d", s.Name, s.Major))
+	if len(names) == 0 {
+		return fmt.Sprintf("contract.Fail(contract.Invalid,fmt.Sprintf(%q,%s,method))", "service %s has no "+kind+" %q", service)
+	}
+	return fmt.Sprintf("contract.Fail(contract.Invalid,fmt.Sprintf(%q,%s,method,%s))", "service %s has no "+kind+" %q; it has %s", service, strconv.Quote(strings.Join(names, ", ")))
 }

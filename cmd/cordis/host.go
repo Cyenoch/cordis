@@ -26,6 +26,9 @@ func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, e
 	if flags.NArg() != 0 || *directory == "" || *trustFile == "" || *shutdownTimeout <= 0 {
 		return &usageError{message: commandUsage["host"]}
 	}
+	if err := existingStore(*directory); err != nil {
+		return err
+	}
 	trust, err := loadTrust(*trustFile)
 	if err != nil {
 		return err

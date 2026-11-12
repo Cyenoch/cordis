@@ -8,6 +8,9 @@
 - 插件以带错误码的错误失败时，Host 报告的错误只带一次错误码（此前为 `invalid_message: invalid_message: …`）。
 - `cordis run` 启动超时时若插件仍在 Starting，错误说明这一点并提示放宽 `-startup-timeout`。
 - `plugintest.Start` 在 ctx 的期限内（没有期限时 30 秒）等不到所需服务时返回它在等什么，不再一直等到 `go test` 超时。
+- 除 `install` 外，store 命令（含 `host`）要求 `-store` 目录已存在：写错路径时报错，不再静默创建并操作一个空 store。
+- store 被另一个进程占用时，错误带上 store 路径；新增 `packagehost.ErrInUse`。CLI 提示 Host 运行期间用 `cordis control`。
+- 生成的 endpoint 收到不存在的方法时列出可用方法的线上名称；从 Go 推导的契约在把流式方法当普通调用（或反过来）时直接说明。升级后 `cordis pack` 会要求先重新运行 `cordis generate`。
 
 ## v0.2.0
 

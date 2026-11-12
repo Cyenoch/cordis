@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 
@@ -117,9 +118,17 @@ func manageCommand(ctx context.Context, command string, flags *flag.FlagSet, par
 			return err
 		}
 	}
+	if command != "install" {
+		if err := existingStore(*directory); err != nil {
+			return err
+		}
+	}
 	store, err := packagehost.OpenWithOptions(*directory, packagehost.Options{
 		Trust: trust, Logger: slog.New(slog.NewJSONHandler(errOut, nil)),
 	})
+	if errors.Is(err, packagehost.ErrInUse) {
+		return fmt.Errorf("%w; while its host runs, use cordis control", err)
+	}
 	if err != nil {
 		return err
 	}
@@ -251,6 +260,15 @@ func manageCommand(ctx context.Context, command string, flags *flag.FlagSet, par
 	}
 	if err := writeJSON(out, value); err != nil {
 		return fmt.Errorf("%s completed with persistent state committed; write result: %w", command, err)
+	}
+	return nil
+}
+
+// existingStore refuses a store directory that was never created, so a
+// mistyped -store fails instead of reading or hosting an empty store.
+func existingStore(directory string) error {
+	if _, err := os.Stat(directory); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("store %s does not exist; cordis install creates it", directory)
 	}
 	return nil
 }

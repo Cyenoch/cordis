@@ -67,17 +67,27 @@ func (e_ *generatedEndpoint_Shadow) Call(ctx_ context.Context, method_ string, i
 		return generatedOperation_Shadow_Config.Serve(ctx_, input_, e_.implementation.Config)
 	case "endpoint":
 		return generatedOperation_Shadow_Endpoint.Serve(ctx_, input_, func(ctx_ context.Context, _ struct{}) (request, error) { return e_.implementation.Endpoint(ctx_) })
+	case "operation":
+		return nil, contract.Fail(contract.Invalid, "service example.shadow@1 method \"operation\" is a streaming method")
+	case "service":
+		return nil, contract.Fail(contract.Invalid, "service example.shadow@1 method \"service\" is a streaming method")
 	}
-	return nil, contract.Fail(contract.Invalid, "service example.shadow@1 has no method \""+method_+"\"")
+	return nil, contract.Fail(contract.Invalid, "service example.shadow@1 has no method \""+method_+"\"; it has client, config, endpoint")
 }
 func (e_ *generatedEndpoint_Shadow) Stream(ctx_ context.Context, method_ string, input_ json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method_ {
+	case "client":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service example.shadow@1 method \"client\" does not stream"))
+	case "config":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service example.shadow@1 method \"config\" does not stream"))
+	case "endpoint":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service example.shadow@1 method \"endpoint\" does not stream"))
 	case "operation":
 		return generatedOperation_Shadow_Operation.ServeStream(ctx_, input_, func(ctx_ context.Context, _ struct{}) iter.Seq2[e, error] { return e_.implementation.Operation(ctx_) })
 	case "service":
 		return generatedOperation_Shadow_Service.ServeStream(ctx_, input_, e_.implementation.Service)
 	}
-	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.shadow@1 has no streaming method \""+method_+"\""))
+	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.shadow@1 has no streaming method \""+method_+"\"; it has operation, service"))
 }
 
 type generatedClient_Shadow struct{ endpoint contract.Endpoint }

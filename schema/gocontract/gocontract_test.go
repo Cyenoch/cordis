@@ -198,8 +198,19 @@ func TestEndpointRejectsWhatTheContractDoesNotAllow(t *testing.T) {
 			t.Errorf("%s: Call(%s) = %v, want an invalid-request error", name, input, err)
 		}
 	}
-	if _, err := endpoint.Call(t.Context(), "tail", json.RawMessage(`{"count":1}`)); err == nil {
-		t.Error("a streaming method answered a plain call")
+	// A wrong method name tells the caller what it could have called.
+	for method, want := range map[string]string{
+		"Say":  `has no method "Say"; it has count, put, reset, say`,
+		"tail": `method "tail" is a streaming method`,
+	} {
+		if _, err := endpoint.Call(t.Context(), method, json.RawMessage(`{}`)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Call(%s) = %v, want %q", method, err, want)
+		}
+	}
+	for _, err := range endpoint.Stream(t.Context(), "say", json.RawMessage(`{}`)) {
+		if err == nil || !strings.Contains(err.Error(), `method "say" does not stream`) {
+			t.Errorf("Stream(say) = %v", err)
+		}
 	}
 	if _, err := echo.NewEchoClient(clock.NewClockEndpoint(nil)); err == nil {
 		t.Error("a client accepted the endpoint of another service")

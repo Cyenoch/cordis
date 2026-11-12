@@ -165,8 +165,10 @@ func TestLocalControlAcrossProcesses(t *testing.T) {
 	if response := control("stop", "owner.optional", true); response.Phase != "rejected" {
 		t.Fatal("dynamic child accepted for CLI mutation")
 	}
-	if output, err := exec.CommandContext(t.Context(), binary, "status", "-store", directory).CombinedOutput(); err == nil {
-		t.Fatalf("offline status bypassed live Store lock: %s", output)
+	if output, err := exec.CommandContext(t.Context(), binary, "status", "-store", directory).CombinedOutput(); err == nil ||
+		!strings.Contains(string(output), "open store "+directory+": in use by another process") ||
+		!strings.Contains(string(output), "while its host runs, use cordis control") {
+		t.Fatalf("offline status against a live host: %v %s", err, output)
 	}
 	enabled := control("enable", "off", false)
 	var settings struct{ Label string }

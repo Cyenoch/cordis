@@ -73,17 +73,29 @@ func (e *generatedEndpoint_Echo) Call(ctx context.Context, method string, input 
 		})
 	case "say":
 		return generatedOperation_Echo_Say.Serve(ctx, input, e.implementation.Say)
+	case "tail":
+		return nil, contract.Fail(contract.Invalid, "service example.echo@1 method \"tail\" is a streaming method")
+	case "ticks":
+		return nil, contract.Fail(contract.Invalid, "service example.echo@1 method \"ticks\" is a streaming method")
 	}
-	return nil, contract.Fail(contract.Invalid, "service example.echo@1 has no method \""+method+"\"")
+	return nil, contract.Fail(contract.Invalid, "service example.echo@1 has no method \""+method+"\"; it has count, put, reset, say")
 }
 func (e *generatedEndpoint_Echo) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
+	case "count":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service example.echo@1 method \"count\" does not stream"))
+	case "put":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service example.echo@1 method \"put\" does not stream"))
+	case "reset":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service example.echo@1 method \"reset\" does not stream"))
+	case "say":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service example.echo@1 method \"say\" does not stream"))
 	case "tail":
 		return generatedOperation_Echo_Tail.ServeStream(ctx, input, e.implementation.Tail)
 	case "ticks":
 		return generatedOperation_Echo_Ticks.ServeStream(ctx, input, func(ctx context.Context, _ struct{}) iter.Seq2[int, error] { return e.implementation.Ticks(ctx) })
 	}
-	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.echo@1 has no streaming method \""+method+"\""))
+	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.echo@1 has no streaming method \""+method+"\"; it has tail, ticks"))
 }
 
 type generatedClient_Echo struct{ endpoint contract.Endpoint }

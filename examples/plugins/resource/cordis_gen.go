@@ -58,10 +58,12 @@ func (e *generatedEndpoint_Resource) Call(ctx context.Context, method string, in
 	case "read":
 		return generatedOperation_Resource_Read.Serve(ctx, input, func(ctx context.Context, _ struct{}) (string, error) { return e.implementation.Read(ctx) })
 	}
-	return nil, contract.Fail(contract.Invalid, "service example.resource@1 has no method \""+method+"\"")
+	return nil, contract.Fail(contract.Invalid, "service example.resource@1 has no method \""+method+"\"; it has read")
 }
 func (e *generatedEndpoint_Resource) Stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
 	switch method {
+	case "read":
+		return contract.FailedStream(contract.Fail(contract.Invalid, "service example.resource@1 method \"read\" does not stream"))
 	}
 	return contract.FailedStream(contract.Fail(contract.Invalid, "service example.resource@1 has no streaming method \""+method+"\""))
 }

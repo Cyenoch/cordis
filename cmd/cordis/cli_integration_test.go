@@ -296,7 +296,7 @@ func TestCLIProcesses(t *testing.T) {
 		}
 		writeCLIFile(t, source, strings.Replace(string(text), "type Config struct{}", "type Config struct {\n\tPrefix string `json:\"prefix,omitempty\"`\n}", 1))
 		stale := filepath.Join(t.TempDir(), "stale.zip")
-		if code, _, stderr := run(t, "", "pack", dir, stale); code != 1 || !strings.Contains(stderr, "cordis_gen.json does not match the Go source; run cordis generate") {
+		if code, _, stderr := run(t, "", "pack", dir, stale); code != 1 || !strings.Contains(stderr, "cordis_gen.json is not what cordis generate makes from the Go source; run cordis generate") {
 			t.Fatalf("pack after an unregenerated edit: %d %s", code, stderr)
 		}
 		if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {

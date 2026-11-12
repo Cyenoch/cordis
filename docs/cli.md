@@ -32,7 +32,7 @@ go build -o ./bin/cordis ./cmd/cordis
 | `generate -output FILE\|- [-package NAME] [-format FORMAT] CONTRACT...` | 从声明式契约文件生成已格式化的 Go 源码 |
 | `run -dev-unsigned [FLAGS] ARCHIVE.zip` | 在临时宿主内运行自己的本地开发产物 |
 | `list -store DIRECTORY` | 列出已安装包、选中版本和持久 entry |
-| `install -store DIRECTORY -trust FILE ARCHIVE.zip` | 验证并安装签名包 |
+| `install -store DIRECTORY -trust FILE ARCHIVE.zip` | 验证并安装签名包；store 不存在时创建，其余 store 命令要求它已存在 |
 | `select -store DIRECTORY -trust FILE ID@VERSION#SHA256` | 选择精确版本 |
 | `enable -store DIRECTORY -trust FILE [FLAGS] ENTRY` | 保存校验后的启用意图，不启动插件 |
 | `disable -store DIRECTORY ENTRY` | 原子停用该持久 entry 及其子树 |

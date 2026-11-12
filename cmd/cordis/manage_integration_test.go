@@ -176,7 +176,7 @@ func TestOfflineCLIManagesIntentAndIncompatibleUpgrade(t *testing.T) {
 		if command == "disable" {
 			args = append(args, "root")
 		}
-		if _, err := run(args...); err == nil || !strings.Contains(err.Error(), "locked") {
+		if _, err := run(args...); err == nil || !strings.Contains(err.Error(), "in use by another process") {
 			t.Fatalf("%s bypassed ownership: %v", command, err)
 		}
 	}
