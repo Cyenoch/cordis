@@ -105,7 +105,11 @@ func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 	}
 	usage, ok := commandUsage[args[0]]
 	if !ok {
-		return &usageError{message: "unknown command: " + args[0]}
+		message := "unknown command: " + args[0]
+		if guess := closestCommand(args[0]); guess != "" {
+			message += "; did you mean " + guess + "?"
+		}
+		return &usageError{message: message}
 	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -266,4 +270,35 @@ func printVersion(out io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// closestCommand returns the command within two edits of name, if one is.
+func closestCommand(name string) string {
+	best, bestDistance := "", 3
+	for command := range commandUsage {
+		if d := editDistance(name, command); d < bestDistance || d == bestDistance && command < best {
+			best, bestDistance = command, d
+		}
+	}
+	return best
+}
+
+func editDistance(a, b string) int {
+	previous := make([]int, len(b)+1)
+	for j := range previous {
+		previous[j] = j
+	}
+	for i := range len(a) {
+		current := make([]int, len(b)+1)
+		current[0] = i + 1
+		for j := range len(b) {
+			cost := 1
+			if a[i] == b[j] {
+				cost = 0
+			}
+			current[j+1] = min(previous[j+1]+1, current[j]+1, previous[j]+cost)
+		}
+		previous = current
+	}
+	return previous[len(b)]
 }

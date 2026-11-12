@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -23,5 +25,19 @@ func TestServiceSelectionUsesDeclaredVersion(t *testing.T) {
 	req, err = selectService(m, "main", "echo", 0, 0, uint(^uint32(0)))
 	if err != nil || !req.Accepts(m.Definitions[0].Provides[0]) {
 		t.Fatal(req, err)
+	}
+}
+
+// A mistyped command suggests the one it most likely meant.
+func TestUnknownCommandSuggestsTheClosest(t *testing.T) {
+	for typed, want := range map[string]string{
+		"instal":  "unknown command: instal; did you mean install?",
+		"stauts":  "unknown command: stauts; did you mean status?",
+		"gnerate": "unknown command: gnerate; did you mean generate?",
+		"bogus":   "unknown command: bogus",
+	} {
+		if err := execute(t.Context(), []string{typed}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != want {
+			t.Errorf("%s: %v, want %q", typed, err, want)
+		}
 	}
 }

@@ -15,6 +15,7 @@
 - 从 Go 推导契约时，本包里带 `json` 或 `cordis` 标签的未导出字段报错，不再被静默略去；约束不适用的报错改为 `minLength does not apply to integer values`。
 - 配置不符合 schema 时，`cordis run` 与 `cordis enable` 的错误指出配置来自哪个文件（或 `-config`、stdin）；未知属性的错误列出可接受的属性名。
 - `cordis generate` 的报错给出改法：未知指令与约束列出可用项，无法描述的 chan、func、interface 字段提示 `json:"-"`，配置是指针时说明要用结构体，`requires`/`provides` 写成服务名时指出对应接口。
+- 打错的命令提示最接近的命令（`unknown command: instal; did you mean install?`）；`cordis generate` 的目录不存在时直接这样说，不再报告为 go 无法启动。
 
 ## v0.2.0
 

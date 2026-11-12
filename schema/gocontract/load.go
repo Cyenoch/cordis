@@ -67,6 +67,10 @@ type source struct {
 type Target struct{ GOOS, GOARCH string }
 
 func load(ctx context.Context, dir string, target Target) (*source, error) {
+	// A missing directory would otherwise surface as go itself not starting.
+	if _, err := os.Stat(dir); err != nil {
+		return nil, err
+	}
 	command := exec.Command("go", "list", "-e", "-deps", "-export",
 		"-json=ImportPath,Name,Dir,Export,GoFiles,DepOnly,ImportMap,Error", ".")
 	command.Dir = dir
