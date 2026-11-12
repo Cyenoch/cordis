@@ -8,13 +8,18 @@ function Run-Go {
 }
 try {
     Run-Go env GOOS GOARCH GOVERSION
-    Run-Go test -tags=integration -race ./... -timeout 10m
+    Run-Go test -tags=integration -race -count=1 ./... -timeout 10m
     Run-Go build -o "$work/basic-host.exe" ./examples/basic-host
     Run-Go build -o "$work/lifecycle-smoke.exe" ./conformance/cmd/lifecycle-smoke
     Run-Go build -o "$work/stream-smoke.exe" ./conformance/cmd/stream-smoke
     Push-Location examples/plugins/counter
     try {
+        Run-Go test -race -count=1 .
         Run-Go build -o "$work/counter.exe" .
+    } finally { Pop-Location }
+    Push-Location examples/plugins/resource
+    try {
+        Run-Go build -o "$work/resource.exe" .
     } finally { Pop-Location }
     Push-Location examples/plugins/chain
     try {

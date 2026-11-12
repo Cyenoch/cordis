@@ -25,9 +25,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            examples/plugins/*/go.sum
       - run: bun install --frozen-lockfile
       - run: bun run docs:test
       - run: bun run docs:examples

@@ -18,9 +18,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - run: |
           for module in examples/plugins/*/; do

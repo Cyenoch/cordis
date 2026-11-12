@@ -29,9 +29,21 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            examples/plugins/*/go.sum
       - shell: bash
-        run: env ${{ inputs.environment }} go test -race -tags '${{ inputs.tags }}' -count=${{ inputs.count }} -run '${{ inputs.run }}' -timeout 50m ${{ inputs.packages }}
+        env:
+          EXTRA: ${{ inputs.environment }}
+          TAGS: ${{ inputs.tags }}
+          COUNT: ${{ inputs.count }}
+          RUN: ${{ inputs.run }}
+          PACKAGES: ${{ inputs.packages }}
+        # EXTRA and PACKAGES are space-separated lists, split on purpose.
+        run: |
+          # shellcheck disable=SC2086
+          env $EXTRA go test -race -tags "$TAGS" -count="$COUNT" -run "$RUN" -timeout 50m $PACKAGES
