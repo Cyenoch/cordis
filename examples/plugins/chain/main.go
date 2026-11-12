@@ -138,6 +138,10 @@ func (p *providerServer) Execute(ctx context.Context, input Request) (Response, 
 		os.Exit(7)
 	case "panic":
 		panic("chain provider panicked")
+	case "stdout":
+		fmt.Println("a log line on the protocol stream")
+		<-ctx.Done()
+		return Response{}, ctx.Err()
 	case "exit":
 		os.Exit(0)
 	}

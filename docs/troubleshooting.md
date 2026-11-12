@@ -21,7 +21,9 @@ description: 从实例状态和错误定位依赖、启动、调用与清理问�
 | 调用 `timeout` | 默认期限 30 秒、上限 120 秒；长流需要定期产出心跳项；链的执行要给 `Do` 的 context 设期限 |
 | 链的某一跳 `not_ready` | 链的每一跳占会话的一个在途请求，直到整次执行返回，没有空位时立即失败而不排队；减少并发执行数或缩短链。普通调用在业务名额（在途上限减 8，默认 56）用完时是排队而不是失败；需要更多并行时调高 Host 的 `Inflight` |
 | store `in use by another process` | 另一个进程（通常是正在运行的 `cordis host`）持有该 store；Host 运行期间用 `cordis control` 管理，或先停止它 |
-| 会话关闭 | stdout 是否混入日志；帧格式、身份与方向是否正确 |
+| 调用中 `exited without shutdown: exit status N` | 插件进程自己退出或崩溃；看插件 stderr 里的 panic 栈 |
+| `plugin wrote non-protocol data to stdout` | 插件往 stdout 写了日志或其他内容；stdout 只传协议帧，日志写 stderr |
+| 会话关闭 | 帧格式、身份与方向是否正确 |
 | Linux 无法确认进程组清理 | 检查进程权限与 `/proc` 挂载；启用非零 hidepid 或无法查询时会明确报错，不会把看不见后代当作已退出 |
 
 初始化失败时，结构化日志记录 Starting 到 Quiescing/Failed 的转换，含 entry、activation、启动耗时和错误类别，不记录成功发布。意外的 exit 0 是 `unexpected_exit`；主动停止是 `requested_stop`，`Forced` 另行表示是否升级为强制终止。清理失败保存在独立的 `CleanupCode`，不覆盖退出原因。

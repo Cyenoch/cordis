@@ -151,6 +151,15 @@ func (e *Endpoint) Err() error             { e.mu.Lock(); defer e.mu.Unlock(); r
 // was written to it: the peer went away, it did not break the protocol.
 var ErrWrite = errors.New("write session")
 
+// ErrRead marks a session that ended because what the peer sent could not be
+// read as frames. It matches with errors.Is and adds nothing to the text.
+var ErrRead = errors.New("read session")
+
+type readError struct{ error }
+
+func (e readError) Unwrap() error      { return e.error }
+func (readError) Is(target error) bool { return target == ErrRead }
+
 // closed is what a request gets that the session ended under.
 func (e *Endpoint) closed() error { return &contract.ClosedError{Err: e.Err()} }
 func (e *Endpoint) Close() error  { e.shutdown(io.EOF); return nil }
@@ -530,6 +539,9 @@ func (e *Endpoint) readLoop() {
 		}
 		frame, err := readFrame(reader, limit)
 		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				err = readError{err}
+			}
 			e.shutdown(err)
 			return
 		}

@@ -118,7 +118,9 @@ func TestCallsAndStreamsWhileProvidersComeAndGo(t *testing.T) {
 // provider answered with: it is not_ready however the entry went, and the
 // reason is in the text.
 func TestProviderGoneIsNotReady(t *testing.T) {
-	r := &run{identity: contract.Identity{Entry: "provider"}}
+	session := &scriptedSession{done: make(chan struct{})}
+	session.Close()
+	r := &run{identity: contract.Identity{Entry: "provider"}, session: session, host: &Host{options: Options{Grace: time.Second}}}
 	closed := &contract.ClosedError{Err: io.EOF}
 	if err := r.gone(closed); !errors.Is(err, contract.Fail(contract.NotReady, "")) {
 		t.Fatalf("after an ordinary stop: %v", err)

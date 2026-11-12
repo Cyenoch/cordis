@@ -295,6 +295,9 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 			if reason != nil && !errors.Is(reason, io.EOF) && !errors.Is(reason, wire.ErrWrite) {
 				outcome.Reason = contract.ExitProtocol
 			}
+			if errors.Is(reason, wire.ErrRead) {
+				reason = fmt.Errorf("plugin wrote non-protocol data to stdout, which carries only protocol frames; write logs to stderr: %w", reason)
+			}
 		case waitErr = <-exited:
 			reaped = true
 		case <-lifetimeDone:
@@ -375,13 +378,17 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 			}
 			outcome.Signal = tree.ExitSignal(cmd.ProcessState)
 		}
-		if !requested && !s.expectedStop.Load() && reason == nil && waitErr == nil {
-			reason = contract.Fail(contract.PluginFailed, "activation exited without shutdown")
-		}
 		if requested || s.expectedStop.Load() {
 			var exited *exec.ExitError
 			if errors.As(waitErr, &exited) && tree.ExpectedExit(exited) {
 				waitErr = nil
+			}
+		} else if reason == nil {
+			// The process ended on its own, not after the host terminated it.
+			if waitErr != nil {
+				waitErr = fmt.Errorf("activation exited without shutdown: %w", waitErr)
+			} else {
+				reason = contract.Fail(contract.PluginFailed, "activation exited without shutdown: "+cmd.ProcessState.String())
 			}
 		}
 		failure := errors.Join(reason, waitErr)

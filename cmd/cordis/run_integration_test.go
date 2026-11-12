@@ -83,16 +83,22 @@ func TestRunCallsDeclaredMinorTwoFromIndependentPlugin(t *testing.T) {
 			}
 		})
 	}
-	t.Run("plugin panic", func(t *testing.T) {
-		command := exec.CommandContext(t.Context(), cli, "run", "-dev-unsigned", "-definition", "provider", "-service", "chain.a",
-			"-input", `{"method":"execute","input":{"operation":"panic"}}`, archive)
-		var diagnostics bytes.Buffer
-		command.Stderr = &diagnostics
-		if err := command.Run(); err == nil {
-			t.Fatal("run succeeded after the plugin panicked")
-		}
-		if !strings.Contains(diagnostics.String(), "[cli.instance] panic: chain provider panicked") {
-			t.Fatalf("plugin panic missing from run stderr:\n%s", &diagnostics)
-		}
-	})
+	for _, tt := range []struct{ operation, want string }{
+		{"panic", "[cli.instance] panic: chain provider panicked"},
+		{"crash", "stopped during the call: activation exited without shutdown: exit status 7"},
+		{"stdout", "stopped during the call: plugin wrote non-protocol data to stdout"},
+	} {
+		t.Run("plugin "+tt.operation, func(t *testing.T) {
+			command := exec.CommandContext(t.Context(), cli, "run", "-dev-unsigned", "-definition", "provider", "-service", "chain.a",
+				"-input", `{"method":"execute","input":{"operation":"`+tt.operation+`"}}`, archive)
+			var diagnostics bytes.Buffer
+			command.Stderr = &diagnostics
+			if err := command.Run(); err == nil {
+				t.Fatal("run succeeded after the plugin failed")
+			}
+			if !strings.Contains(diagnostics.String(), tt.want) {
+				t.Fatalf("run stderr lacks %q:\n%s", tt.want, &diagnostics)
+			}
+		})
+	}
 }

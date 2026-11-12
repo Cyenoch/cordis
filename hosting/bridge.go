@@ -179,7 +179,42 @@ func (r *run) gone(err error) error {
 	if !ok {
 		return err
 	}
-	return &contract.Error{Code: contract.NotReady, Message: fmt.Sprintf("entry %q stopped during the call: %v", r.identity.Entry, r.reported(closed.Err))}
+	return &contract.Error{Code: contract.NotReady, Message: fmt.Sprintf("entry %q stopped during the call: %v", r.identity.Entry, r.reason(closed.Err))}
+}
+
+// reason is why the session ended. What the guest reported comes first.
+// The transport only knows its stream closed; a native session learns how
+// the process exited once it has reaped it, so an unrequested end waits up
+// to a grace for that.
+func (r *run) reason(transport error) error {
+	r.mu.Lock()
+	failure, stopping := r.failure, r.stopping
+	r.mu.Unlock()
+	if failure != nil {
+		return failure
+	}
+	if stopping {
+		// The host ended the session, or it ended and the host is cleaning
+		// up after it; then its reason may already be known.
+		select {
+		case <-r.session.Done():
+			if err := r.session.Err(); err != nil {
+				return err
+			}
+		default:
+		}
+		return transport
+	}
+	timer := time.NewTimer(r.host.options.Grace)
+	defer timer.Stop()
+	select {
+	case <-r.session.Done():
+		if err := r.session.Err(); err != nil {
+			return err
+		}
+	case <-timer.C:
+	}
+	return transport
 }
 
 func (r *run) call(ctx context.Context, method string, input, output any) error {
