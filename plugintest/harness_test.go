@@ -21,7 +21,7 @@ func TestStartReportsAMissingProvider(t *testing.T) {
 		Requires: []contract.Consumer{{Requirement: contract.Requirement{Name: "example.missing", Major: 1, MinMinor: 0, MaxMinor: 2}, Contract: strings.Repeat("ab", 32)}}}
 	plugin := cordis.Plugin[struct{}]{Name: "main", Start: func(context.Context, *cordis.Scope, struct{}) error { return nil }}
 	// Long enough for a loaded machine to reach waiting; the test waits all of it.
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	h, err := plugintest.Start(ctx, spec, sdk.Define(plugin), plugintest.Options{})
 	if h != nil || err == nil || !strings.Contains(err.Error(), `definition "main" is still waiting for example.missing@1.0-2`) {
