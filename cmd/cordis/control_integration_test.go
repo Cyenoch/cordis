@@ -185,13 +185,13 @@ func TestLocalControlAcrossProcesses(t *testing.T) {
 	if after := control("status", "failed", false); after.Status.Instances[0].Status.Identity == before {
 		t.Fatal("retry did not create a new activation")
 	}
-	if response := control("stop", "failed", true); response.Phase != "unknown" {
-		t.Fatalf("historical failure was treated as uncommitted: %+v", response)
+	// Stopping what had already failed goes fine; the failure is history.
+	if response := control("stop", "failed", false); response.Phase != "completed" || controlState(response, "failed") != contract.Stopped {
+		t.Fatalf("stop of a failed entry = %+v", response)
 	}
-	if controlState(control("status", "failed", false), "failed") != contract.Stopped {
-		t.Fatal("failed Stop did not expose its committed state")
+	if response := control("disable", "failed", false); response.Phase != "completed" {
+		t.Fatalf("disable of a failed entry = %+v", response)
 	}
-	control("disable", "failed", true)
 	control("stop", "healthy", false)
 	stopped := control("status", "", false)
 	if controlState(stopped, "healthy") != contract.Stopped || controlState(stopped, "owner") != contract.Stopped {

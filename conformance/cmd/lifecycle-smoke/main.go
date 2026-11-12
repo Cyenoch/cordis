@@ -201,7 +201,8 @@ func crashUnderLoad(ctx context.Context, host *hosting.Host) error {
 			return fmt.Errorf("a caller of a crashed plugin got %T: %w", err, err)
 		}
 	}
-	// The entry failed; disabling it reports that failure.
+	// The entry failed. Right after the crash the host may still be
+	// recording that, so Disable may report it; the run history is checked.
 	_ = host.Disable(ctx, "recovery")
 	runs, err := host.Store().Runs()
 	if err != nil {

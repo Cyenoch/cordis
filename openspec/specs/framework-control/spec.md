@@ -59,8 +59,12 @@ Host SHALL 仅在显式指定 control-file 后开启本机回环控制端点，�
 - **THEN** 冲突或输入错误被明确返回，不绕过 Host 预约机制，也不停止无关实例
 
 #### Scenario: 停止成功但带历史错误
-- **WHEN** stop 已提交并将实例置为 Stopped，却返回其历史失败错误，或 disable 在部分子项完成后报错
+- **WHEN** stop 已提交并将实例置为 Stopped，却返回停止过程中的清理失败，或 disable 在部分子项完成后报错
 - **THEN** 不根据错误码断言未提交；缺少确定提交证据时报告结果不确定，用户可查询受影响整棵子树
+
+#### Scenario: 停止已失败的 entry
+- **WHEN** 对一个已经 Failed 的持久 entry 执行 stop 或 disable
+- **THEN** 响应为已完成并附带状态，不因该 entry 之前的失败报告结果不确定
 
 ### Requirement: 控制会话随 Host 结束
 Host 关闭时 SHALL 拒绝新控制、取消并等待受管请求结束，随后执行已有 Host 关闭流程；只有本会话创建且未被替换的连接文件可以清除。Host 崩溃留下的文件不得被误认成新会话，启动不自动抢占或覆盖。

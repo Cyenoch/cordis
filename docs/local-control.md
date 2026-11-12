@@ -47,7 +47,7 @@ cordis control -connection ./host-connection.json retry counter
 | committed_with_error | 已有提交证据，但后续持久化、清理或状态查询失败 |
 | unknown | 无法确认完整结果；可能已经改变了部分状态 |
 
-客户端断开或超时只取消等待。Stop 也可能已经成功，却返回历史失败；子树操作可能部分完成。遇到 unknown，查询整个受影响子树再决定下一步，不自动重复写命令。清理较慢时仍可并发查询状态。
+客户端断开或超时只取消等待。Stop 也可能已经提交，却返回停止过程中的清理失败；子树操作可能部分完成。停止已经失败的 entry 返回 completed，它之前的失败在状态的 `outcome` 中。遇到 unknown，查询整个受影响子树再决定下一步，不自动重复写命令。清理较慢时仍可并发查询状态。
 
 ## 连接文件
 

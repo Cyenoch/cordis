@@ -2,6 +2,12 @@
 
 版本与承诺范围见 [稳定性](docs/stability.md)。
 
+## 未发布
+
+- **行为变化**：停止一个已经失败的实例不再返回它之前的失败。`Host.Disable` 把这样的 entry 保存为停用并停下后返回 nil，`Host.Remove` 因此能删除坏插件的持久 entry（此前第一次 `Remove` 返回那次失败并保留记录，要再调一次才删除）；`Host.Replace`、`Instance.Stop`（持久 entry 与动态子实例）同理。失败仍在停止前的 `Status().Outcome` 与 `Store().Runs()` 中。停止过程中真正出的错（清理失败、期限到达、存储写入失败）照常返回；实例已记录失败、正在为它清理时到达的停止，这次清理的错误归入那次失败，不作为停止的结果；`Host.Close` 不变，仍返回关闭时仍失败的实例的错误。改法：需要在停用前知道 entry 是否失败的，先读 `Status` 或运行历史，不要依赖 `Disable` 的错误。
+- 修复：持久 entry 的临时 `Instance.Stop` 返回本次停止中的清理失败，此前这个错误被丢掉。
+- **行为变化**：`Enable` 或 `Resume` 之后、实例还没有任何可报告的等待原因时，`Status` 报 `starting`（`Applied` 不前进），不再报 `Waiting` 为空的 `waiting`；`waiting` 总带至少一个原因。改法：删去对"没有原因的 waiting"的特判。
+
 ## v0.5.0
 
 - **行为变化**：包清单中各 definition 的 `configSchema` 改为共用一份引用展开预算（1 MiB 字节、10000 节点），与一份契约中的文档相同。此前每个配置 schema 各有一份：一个 1 MiB 的清单把一个约 2 KB 的放大 schema 重复 457 次，检查这个不受信任的包在 v0.4.0 上约 50 秒、累计分配约 88 GiB，现在约 0.1 秒后被拒绝（Apple M5 Pro 实测）。这比 v0.3.0 和 v0.4.0 都严格：每个配置 schema 单独都在预算内、合计超出的清单现在被拒绝，打包和安装时都会检查。改法：合计超出时缩小配置 schema，或不要让多个 definition 各自展开同一个大的 `$defs`。新增 `schema.NewBudget` 与 `Budget.Check`，供宿主让同一来源的多个 schema 共用一份预算。

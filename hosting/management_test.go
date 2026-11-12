@@ -3,6 +3,7 @@ package hosting
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -297,5 +298,159 @@ func TestLoaderRunsNativePackages(t *testing.T) {
 	}
 	if _, err := f.host.Uninstall(f.ctx(), ref); err != nil {
 		t.Fatalf("uninstall after the entry stopped: %v", err)
+	}
+}
+
+// broken is a definition whose Start always fails.
+func broken(name string) cordis.Plugin[struct{}] {
+	return cordis.Plugin[struct{}]{Name: name, Start: func(context.Context, *cordis.Scope, struct{}) error {
+		return errors.New("broken on purpose")
+	}}
+}
+
+func TestRetiringAFailedEntrySucceeds(t *testing.T) {
+	f := newFixture(t)
+	f.pack(plainManifest("test.broken"), sdk.Define(broken("main")))
+	f.open()
+	for _, id := range []string{"disabled", "removed", "stopped"} {
+		if err := f.enable(contract.Entry{ID: id, Package: "test.broken"}).Wait(f.ctx()); err == nil || !strings.Contains(err.Error(), "broken on purpose") {
+			t.Fatalf("wait for %s = %v", id, err)
+		}
+	}
+
+	// The stop itself went fine; the failure is history, not its result.
+	must(t, f.host.Remove(f.ctx(), "removed"))
+	must(t, f.host.Disable(f.ctx(), "disabled"))
+	if _, err := f.host.Status("disabled"); err == nil {
+		t.Fatal("the disabled entry is still registered")
+	}
+	entries, err := f.host.Store().Entries()
+	must(t, err)
+	saved := map[string]bool{}
+	for _, entry := range entries {
+		saved[entry.ID] = entry.Enabled
+	}
+	if enabled, exists := saved["disabled"]; !exists || enabled {
+		t.Fatalf("the disabled entry is saved as %+v", entries)
+	}
+	if _, exists := saved["removed"]; exists {
+		t.Fatalf("the removed entry is still saved: %+v", entries)
+	}
+	runs, err := f.host.Store().Runs()
+	must(t, err)
+	failed := map[string]bool{}
+	for _, run := range runs {
+		if run.State == "failed" {
+			failed[run.Owner.Entry] = true
+		}
+	}
+	if !failed["disabled"] || !failed["removed"] {
+		t.Fatalf("the earlier failures are not in the history: %+v", runs)
+	}
+
+	stopped, err := f.host.Instance("stopped")
+	must(t, err)
+	must(t, stopped.Stop(f.ctx()))
+	if status := stopped.Status(); status.State != contract.Stopped || !status.TemporaryStopped || status.Outcome.FailureCode == "" {
+		t.Fatalf("status of the stopped entry = %+v", status)
+	}
+}
+
+func TestStoppingAFailedDynamicChildSucceeds(t *testing.T) {
+	f := newFixture(t)
+	created := make(chan error, 1)
+	parent := cordis.Plugin[struct{}]{Name: "main", Start: func(ctx context.Context, s *cordis.Scope, _ struct{}) error {
+		_, err := sdk.CreateChild(ctx, s, contract.Child{ID: "child", Definition: "broken"})
+		created <- err
+		return nil
+	}}
+	manifest := contract.Manifest{ID: "test.parent", Definitions: []contract.DefinitionSpec{{ID: "main"}, {ID: "broken"}}}
+	f.pack(manifest, sdk.Define(parent), sdk.Define(broken("broken")))
+	f.open()
+	must(t, f.enable(contract.Entry{ID: "parent", Package: "test.parent"}).Wait(f.ctx()))
+	must(t, <-created)
+	child, err := f.host.Instance("parent.child")
+	must(t, err)
+	if err := child.Wait(f.ctx()); err == nil {
+		t.Fatal("the broken child started")
+	}
+	must(t, child.Stop(f.ctx()))
+	if _, err := f.host.Instance("parent.child"); err == nil {
+		t.Fatal("the stopped child is still registered")
+	}
+}
+
+func TestDisableReportsWhatGoesWrongWhileStopping(t *testing.T) {
+	f := newFixture(t)
+	f.pack(plainManifest("test.messy"), sdk.Define(cordis.Plugin[struct{}]{Name: "main", Start: func(_ context.Context, s *cordis.Scope, _ struct{}) error {
+		s.Defer(func(context.Context) error { return errors.New("cleanup went wrong") })
+		return nil
+	}}))
+	f.open()
+	must(t, f.enable(contract.Entry{ID: "messy", Package: "test.messy"}).Wait(f.ctx()))
+	stopped := f.enable(contract.Entry{ID: "stopped", Package: "test.messy"})
+	must(t, stopped.Wait(f.ctx()))
+	// The guest reports that a cleanup failed; its text stays in the guest.
+	if err := f.host.Disable(f.ctx(), "messy"); contract.ErrorCode(err) != contract.PluginFailed {
+		t.Fatalf("disable = %v", err)
+	}
+	if err := stopped.Stop(f.ctx()); contract.ErrorCode(err) != contract.PluginFailed {
+		t.Fatalf("stop = %v", err)
+	}
+	if status := stopped.Status(); status.State != contract.Stopped || !status.TemporaryStopped {
+		t.Fatalf("status after a stop whose cleanup failed = %+v", status)
+	}
+}
+
+func TestStatusRightAfterEnableIsStartingNotReasonlessWaiting(t *testing.T) {
+	f := newFixture(t)
+	f.pack(plainManifest("test.plain"), sdk.Define(f.plain("plain")))
+	f.pack(echoManifest("test.user", false, echoRequirement(0, 9)), sdk.Define(f.plain("user")))
+	f.open()
+	check := func(id string, status contract.Status) {
+		t.Helper()
+		if status.State == contract.Waiting && len(status.Waiting) == 0 {
+			t.Fatalf("%s waits without a reason: %+v", id, status)
+		}
+		if status.State == contract.Starting && status.Applied == status.Desired {
+			t.Fatalf("%s reports a revision applied while it starts: %+v", id, status)
+		}
+	}
+	for n := range 20 {
+		id := fmt.Sprintf("plain%d", n)
+		instance := f.enable(contract.Entry{ID: id, Package: "test.plain"})
+		check(id, instance.Status())
+		must(t, instance.Wait(f.ctx()))
+		if status := instance.Status(); status.State != contract.Active || status.Applied != status.Desired {
+			t.Fatalf("%s after Wait = %+v", id, status)
+		}
+	}
+	// An entry that does wait says why from the first status on.
+	user := f.enable(contract.Entry{ID: "user", Package: "test.user"})
+	eventually(t, "the user to wait for its service", func() bool {
+		status := user.Status()
+		check("user", status)
+		return status.State == contract.Waiting
+	})
+}
+
+// A stop that interleaves with an Update can end with a new failure of the
+// same code as the one the entry had failed with before; that one is the
+// stop's own and must be reported.
+func TestStopResultKeepsANewFailureWithTheSameCode(t *testing.T) {
+	old := contract.Fail(contract.PluginFailed, "failed before the stop")
+	before := cordis.Status{State: cordis.Failed, Err: old}
+	if err := since(before, old); err != nil {
+		t.Fatalf("the earlier failure was reported: %v", err)
+	}
+	if err := since(before, errors.Join(old, errors.New("its own cleanup"))); err != nil {
+		t.Fatalf("the earlier failure with its own cleanup was reported: %v", err)
+	}
+	fresh := contract.Fail(contract.PluginFailed, "failed while stopping")
+	if err := since(before, fresh); err != fresh {
+		t.Fatalf("a new failure with the same code = %v", err)
+	}
+	if err := since(before, errors.Join(fresh)); err == nil {
+		t.Fatal("a joined new failure with the same code was dropped")
 	}
 }

@@ -198,10 +198,7 @@ func TestGuestKernelFailures(t *testing.T) {
 	if _, err := echoKey.Get(f.host.Scope()); err == nil {
 		t.Fatal("a service was published for a failed entry")
 	}
-	// Removing an entry that failed reports that failure.
-	if err := f.host.Disable(f.ctx(), "silent"); err == nil || !strings.Contains(err.Error(), "test.echo@1") {
-		t.Fatalf("disable of a failed entry = %v", err)
-	}
+	must(t, f.host.Disable(f.ctx(), "silent"))
 	if _, err := f.host.Status("silent"); err == nil {
 		t.Fatal("the failed entry is still registered")
 	}

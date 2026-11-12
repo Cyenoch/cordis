@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -125,31 +126,38 @@ func (i *hostInstance) endRun(r *run) error {
 
 // Status combines the kernel state with the entry's record. A disabled or
 // temporarily stopped entry reads as stopped rather than waiting or failed.
+// Waiting always names what the entry waits for.
 func (i *hostInstance) Status() contract.Status {
 	kernel := i.instance.Status()
+	waiting := i.waitReasons(kernel.Missing)
 	i.mu.Lock()
 	status := contract.Status{
 		Identity: i.identity, Enabled: i.enabled, TemporaryStopped: i.enabled && i.owner == nil && i.gate == nil,
-		Desired: i.desired, Applied: i.applied, Outcome: i.outcome.Clone(), Diagnostics: slices.Clone(i.diagnostics),
+		Desired: i.desired, Outcome: i.outcome.Clone(), Diagnostics: slices.Clone(i.diagnostics),
 		Waiting: []contract.WaitReason{},
 	}
-	// A revision has taken effect once nothing is starting or stopping for it.
-	if i.updating == 0 && kernel.State != cordis.Starting && kernel.State != cordis.Quiescing {
-		i.applied = i.desired
-		status.Applied = i.applied
+	status.State = contract.State(kernel.State.String())
+	switch halted := status.TemporaryStopped || !status.Enabled; {
+	case halted && (kernel.State == cordis.Waiting || kernel.State == cordis.Failed):
+		status.State = contract.Stopped
+	case kernel.State == cordis.Waiting && len(waiting) == 0:
+		// Nothing the entry requires is missing: its run gate or the
+		// kernel has yet to get to it, and it is starting.
+		status.State = contract.Starting
+	case kernel.State == cordis.Waiting:
+		status.Waiting = waiting
 	}
+	// A revision has taken effect once nothing is starting or stopping for it.
+	if i.updating == 0 && status.State != contract.Starting && status.State != contract.Quiescing {
+		i.applied = i.desired
+	}
+	status.Applied = i.applied
 	run, failed := i.run, i.failed
 	i.mu.Unlock()
 	if status.Identity == (contract.Identity{}) {
 		status.Identity = contract.Identity{Package: i.pkg.Ref.ID, Entry: i.id, Digest: i.pkg.Ref.Digest}
 	}
-	status.State = contract.State(kernel.State.String())
-	halted := status.TemporaryStopped || !status.Enabled
-	if halted && (kernel.State == cordis.Waiting || kernel.State == cordis.Failed) {
-		status.State = contract.Stopped
-		return status
-	}
-	if kernel.State == cordis.Failed {
+	if status.State == contract.Failed {
 		err := kernel.Err
 		if run != nil {
 			err = run.reported(err)
@@ -161,11 +169,18 @@ func (i *hostInstance) Status() contract.Status {
 			status.Error = err.Error()
 		}
 	}
-	for _, missing := range kernel.Missing {
+	return status
+}
+
+// waitReasons says what the entry waits for. The run gate is not a reason:
+// it is up whenever the entry is not stopped.
+func (i *hostInstance) waitReasons(missing []cordis.Missing) []contract.WaitReason {
+	reasons := []contract.WaitReason{}
+	for _, missing := range missing {
 		switch {
 		case missing.Service == runKey(i.id).Name():
 		case i.parent != "" && missing.Service == parentKey(i.parent).Name():
-			status.Waiting = append(status.Waiting, contract.WaitReason{Kind: "parent", Parent: i.parent, Visible: []contract.Service{}, Reason: "unpublished"})
+			reasons = append(reasons, contract.WaitReason{Kind: "parent", Parent: i.parent, Visible: []contract.Service{}, Reason: "unpublished"})
 		default:
 			for _, consumer := range i.spec.Requires {
 				required := consumer.Requirement
@@ -177,11 +192,11 @@ func (i *hostInstance) Status() contract.Status {
 				if errors.As(missing.Reason, &version) {
 					reason.Visible, reason.Reason = []contract.Service{version.Visible}, "incompatible"
 				}
-				status.Waiting = append(status.Waiting, reason)
+				reasons = append(reasons, reason)
 			}
 		}
 	}
-	return status
+	return reasons
 }
 
 // Wait blocks until the entry is Active, and returns the error it failed
@@ -353,7 +368,7 @@ func (i *hostInstance) Stop(ctx context.Context) error {
 // halt stops what runs for the entry and keeps it registered.
 func (i *hostInstance) halt(ctx context.Context) error {
 	if i.owner != nil {
-		err := i.instance.Stop(ctx)
+		err := i.stopForGood(ctx)
 		if i.gone() {
 			// A stopped child is gone for good; its identifier is free again.
 			h := i.host
@@ -365,6 +380,7 @@ func (i *hostInstance) halt(ctx context.Context) error {
 		}
 		return err
 	}
+	before := i.instance.Status()
 	i.mu.Lock()
 	gate := i.gate
 	i.gate = nil
@@ -372,24 +388,73 @@ func (i *hostInstance) halt(ctx context.Context) error {
 		i.closing = gate.Done()
 	}
 	i.mu.Unlock()
-	// A failed entry stops with the error it failed with.
-	var failure error
-	if kernel := i.instance.Status(); kernel.State == cordis.Failed {
-		failure = kernel.Err
-	}
 	if gate == nil {
-		return errors.Join(i.instance.Wait(ctx), failure)
+		return i.settled(ctx, before)
 	}
 	// Withdrawing the gate lets the entry clean up like any consumer. The
 	// gate is gone as soon as the entry has let go of it; the entry reports
 	// the end of its own stop a moment later, and the caller is told when
-	// that has happened too.
+	// that has happened too, with what went wrong while it stopped.
 	stopErr := gate.Stop(ctx)
-	i.instance.Wait(ctx)
-	if stopErr == nil {
-		stopErr = ctx.Err()
+	if ctx.Err() != nil {
+		if stopErr == nil {
+			stopErr = ctx.Err()
+		}
+		return stopErr
 	}
-	return errors.Join(stopErr, failure)
+	return errors.Join(stopErr, i.settled(ctx, before))
+}
+
+// settled waits until nothing starts or stops for the entry and returns
+// what it went wrong with since before.
+func (i *hostInstance) settled(ctx context.Context, before cordis.Status) error {
+	err := i.instance.Wait(ctx)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return since(before, err)
+}
+
+// stopForGood stops the kernel instance for good and returns what went
+// wrong while it stopped.
+func (i *hostInstance) stopForGood(ctx context.Context) error {
+	before := i.instance.Status()
+	err := i.instance.Stop(ctx)
+	if !i.gone() {
+		return err
+	}
+	return since(before, err)
+}
+
+// since leaves out of a stop's result the failure the instance was already
+// in, or already failing with, before the stop. It cleans up because of
+// that failure rather than because of the stop; the failure stays in its
+// status and run history and would only make a stop that went fine look
+// like one that did not.
+func since(before cordis.Status, err error) error {
+	if before.Err != nil && holds(err, before.Err) {
+		return nil
+	}
+	return err
+}
+
+// holds reports whether err is target itself or wraps that very value.
+// errors.Is would not do: a *contract.Error matches any other one with the
+// same code, and most plugin failures share plugin_failed.
+func holds(err, target error) bool {
+	if err == nil {
+		return false
+	}
+	if reflect.TypeOf(err).Comparable() && err == target {
+		return true
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() error }:
+		return holds(wrapped.Unwrap(), target)
+	case interface{ Unwrap() []error }:
+		return slices.ContainsFunc(wrapped.Unwrap(), func(err error) bool { return holds(err, target) })
+	}
+	return false
 }
 
 // open lets a temporarily stopped entry run again.
@@ -407,9 +472,7 @@ func (i *hostInstance) open() {
 
 // retire stops the entry for good.
 func (i *hostInstance) retire(ctx context.Context) error {
-	// A failed entry stops with the error it failed with: the caller learns
-	// that what it removes never worked.
-	err := i.instance.Stop(ctx)
+	err := i.stopForGood(ctx)
 	i.mu.Lock()
 	gate := i.gate
 	i.gate = nil

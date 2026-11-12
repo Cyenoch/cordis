@@ -87,7 +87,9 @@ Host 提供给 native 插件的服务用 `hosting.Requester(ctx)` 得知请求�
 | `host.Replace(ctx, ref)` | 校验新包后替换当前运行实例 |
 | `host.Uninstall(ctx, ref)` | 卸载未被使用且不阻塞启用依赖的代码 |
 
-健康检查读 `host.Instances()` 或 `instance.Status()`：`State` 为 `active` 表示可以服务，`waiting` 的 `Waiting` 说明缺什么，`failed` 的 `Error` 与 `Outcome` 说明原因。
+停止类操作（`Stop`、`Disable`、`Remove`、`Replace`）只返回停止过程中出的错：清理失败、期限到达、存储写入失败。已经失败（或正在为失败清理）的登记照常停用或删除并返回 nil，它的失败在停止前的 `Status().Outcome` 中，停止后见 `host.Store().Runs()`。
+
+健康检查读 `host.Instances()` 或 `instance.Status()`：`State` 为 `active` 表示可以服务，`starting` 表示正在启动（包括刚 `Enable` 或 `Resume` 之后），`waiting` 的 `Waiting` 至少有一项说明缺什么，`failed` 的 `Error` 与 `Outcome` 说明原因。
 
 插件用 `sdk.CreateChild` 创建的子实例、配置文件加载器运行的条目是动态实例：它们也能经 `host.Instance("parent.child")` 取得句柄并 `Wait`、`Update`、`Stop`。`host.Instances()` 的 `Origin` 为 `persistent` 或 `dynamic`，动态项的 `Owner` 是创建它的完整父激活身份。动态实例不写入包目录，`Disable`、`Remove`、`Resume` 面向持久登记，对动态 ID 明确报错；父重建后须重新查找，旧句柄不能控制新实例。
 
