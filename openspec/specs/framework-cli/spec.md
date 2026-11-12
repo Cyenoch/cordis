@@ -30,7 +30,7 @@ CLI SHALL 提供 list/install/select/enable/disable/remove/uninstall/status，�
 - **THEN** 校验并保留原字段；只有显式传入空父项、空隔离列表或新 JSON 才分别替换对应值
 
 ### Requirement: 显式信任与可组合输出
-install/select/enable 和前台 host SHALL 使用显式指定的信任文件，采用已有公钥、publisher/包 ID 授权、撤销语义；list/status/disable/remove/uninstall 不要求信任文件，但仍须取得独占目录。不得从包自签名信息推导信任。生产管理不支持全局跳过验签；run/dev 的开发许可只限本次精确摘要。命令结果输出 JSON 至 stdout，诊断写 stderr，沿用 0/1/2 退出码；CLI 不推断多层环境配置。
+install/select/enable 和前台 host SHALL 使用显式指定的信任文件，采用已有公钥、publisher/包 ID 授权、撤销语义；list/status/disable/remove/uninstall 不要求信任文件，但仍须取得独占目录。不得从包自签名信息推导信任。生产管理不支持全局跳过验签；run/dev 的开发许可只限本次精确摘要。命令结果输出 JSON 至 stdout，诊断写 stderr，沿用 0/1/2 退出码；CLI 不推断多层环境配置。run 与 dev SHALL 把插件 stderr 转发到 CLI 的 stderr，每行标明来源 entry 与截断；host MUST 仅在显式开启时转发。
 
 #### Scenario: 未授权签名
 - **WHEN** 用户安装一个签名有效但签名者不在指定信任文件中的包
@@ -40,8 +40,16 @@ install/select/enable 和前台 host SHALL 使用显式指定的信任文件，�
 - **WHEN** 已提交的离线 enable 在写 stdout 时失败
 - **THEN** 命令报告输出失败及已提交事实，不把记录删除或自动重复 enable
 
+#### Scenario: 开发时看到插件崩溃
+- **WHEN** 用 run 调用的方法 panic，插件进程退出
+- **THEN** stderr 含 panic 文本，行首标明 entry；命令非零退出
+
+#### Scenario: 生产宿主默认不转发
+- **WHEN** 未显式开启转发的 host 运行一个写 stderr 的插件
+- **THEN** 插件输出不出现在 CLI 输出中
+
 ### Requirement: 单一前台宿主
-`cordis host` SHALL 独占指定目录、按当前信任显式恢复已启用 entry，并在前台保持运行直到取消；不后台脱离，默认无控制端口，只有显式 control-file 才开放符合 framework-control 的本机认证控制。逐实例 Waiting/Failed SHALL 可诊断，不能报告全部就绪；默认不自动重试，仅显式 recovery 策略文件可启用符合 framework-recovery 的有限恢复。宿主启动本身失败时非零退出；信号退出使用独立清理期限，清理不完整须报告，不等同于业务回滚。
+`cordis host` SHALL 独占指定目录、按当前信任显式恢复已启用 entry，并在前台保持运行直到取消；不后台脱离，默认无控制端口，只有显式 control-file 才开放符合 framework-control 的本机认证控制。逐实例 Waiting/Failed SHALL 可诊断，不能报告全部就绪；默认不自动重试，仅显式 recovery 策略文件可启用符合 framework-recovery 的有限恢复。宿主启动本身失败时非零退出；信号退出使用独立清理期限，默认 SHALL 覆盖一次用尽宽限的 native 停止；清理不完整须报告并保留仍在使用的目录，不等同于业务回滚。
 
 #### Scenario: 前台恢复多实例
 - **WHEN** 目录有两个启用 entry，其中一个缺少 provider
@@ -58,6 +66,10 @@ install/select/enable 和前台 host SHALL 使用显式指定的信任文件，�
 #### Scenario: 显式恢复策略
 - **WHEN** 用户提供合法 recovery 文件并启动 host
 - **THEN** 仅指定持久 native 实例按策略恢复，前台及在线状态展示进度；省略文件仍保持 Failed 等待人工处理
+
+#### Scenario: 插件慢关
+- **WHEN** 插件收到停止后用掉宽限才退出，用户中断 host 或 run
+- **THEN** 默认期限内完成回收，不留孤儿进程和临时目录；期限被调短而未完成时，命令说明清理未完成并保留目录
 
 ### Requirement: 单包开发循环
 `cordis dev` SHALL 对显式授权的一个本地作者目录执行监视、构建、打包、预检和重启，首版要求作者声明只有一个匹配当前平台的 native 目标，运行一个选定 definition 及其同包 children。监视包含模块源码、资源文件、作者声明、契约、go.mod/go.sum 和显式配置文件；工具生成文件、产物和临时目录不触发自循环。模块外输入只在用户显式增加监视目录时监视；不自动运行任意 hooks。

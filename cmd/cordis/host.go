@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -19,7 +21,8 @@ func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, e
 	trustFile := flags.String("trust", "", "explicit JSON/TOML/YAML public-key trust file")
 	controlFile := flags.String("control-file", "", "create a private local-control connection file")
 	recoveryFile := flags.String("recovery", "", "explicit per-entry recovery policy file")
-	shutdownTimeout := flags.Duration("shutdown-timeout", 5*time.Second, "maximum shutdown wait")
+	shutdownTimeout := flags.Duration("shutdown-timeout", defaultShutdown, "maximum shutdown wait")
+	pluginStderr := flags.Bool("plugin-stderr", false, "forward what plugins write to stderr")
 	if done, err := parse(); done {
 		return err
 	}
@@ -33,7 +36,12 @@ func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, e
 	if err != nil {
 		return err
 	}
+	errOut = &syncWriter{w: errOut}
 	logger := slog.New(slog.NewJSONHandler(errOut, nil))
+	var stderr func(contract.StderrRecord) error
+	if *pluginStderr {
+		stderr = forwardStderr(errOut)
+	}
 	var recovery map[string]hosting.RecoveryPolicy
 	if *recoveryFile != "" {
 		recovery, err = loadRecovery(*recoveryFile)
@@ -41,7 +49,7 @@ func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, e
 			return err
 		}
 	}
-	h, err := hosting.Open(hosting.Options{Directory: *directory, Trust: trust, Logger: logger, Recovery: recovery})
+	h, err := hosting.Open(hosting.Options{Directory: *directory, Trust: trust, Logger: logger, Stderr: stderr, Recovery: recovery})
 	if err != nil {
 		return err
 	}
@@ -114,10 +122,35 @@ func hostCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, e
 	}
 }
 
+// defaultShutdown outlasts a native stop that spends every grace, answering
+// shutdown, exiting after the signal and draining stderr for up to two, with
+// one grace left for killing and reaping.
+const defaultShutdown = 5 * hosting.DefaultGrace
+
+// closeTemporaryHost removes directory, which holds h's store, once cleanup
+// has finished, and keeps it while processes may still use it.
+func closeTemporaryHost(h *hosting.Host, timeout time.Duration, directory string) (bool, error) {
+	err := closeHost(h, timeout)
+	select {
+	case <-h.Done():
+		return true, errors.Join(err, os.RemoveAll(directory))
+	default:
+		return false, fmt.Errorf("retained %s: %w", directory, err)
+	}
+}
+
+// closeHost reports a cleanup still running at the deadline, whose plugin
+// processes and directories may outlive the command.
 func closeHost(h *hosting.Host, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return h.Close(ctx)
+	err := h.Close(ctx)
+	select {
+	case <-h.Done():
+		return err
+	default:
+		return fmt.Errorf("cleanup did not finish within %s; plugin processes may still be running: %w", timeout, err)
+	}
 }
 
 func writeRestore(out io.Writer, report contract.RestoreReport) error {

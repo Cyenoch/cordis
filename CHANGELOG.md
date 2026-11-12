@@ -4,6 +4,8 @@
 
 ## 未发布
 
+- `cordis run` 与 `cordis dev` 把插件写到 stderr 的内容转发出来，每行带 `[entry]` 前缀，插件崩溃时能看到 panic 栈；`cordis host` 用 `-plugin-stderr` 开启。
+- `run`、`dev`、`host` 的默认关闭期限由 5 秒改为 25 秒，覆盖一次用尽各段宽限的 native 停止；到期仍未清理完时报错，`run` 与 `dev` 保留仍可能被使用的临时目录并报告路径，不再提前删除。
 - CI 在推送、PR 和每周定时运行 govulncheck（仓库与示例插件）；Release 在它通过后才发布。
 
 ## v0.3.0

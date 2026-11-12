@@ -83,4 +83,16 @@ func TestRunCallsDeclaredMinorTwoFromIndependentPlugin(t *testing.T) {
 			}
 		})
 	}
+	t.Run("plugin panic", func(t *testing.T) {
+		command := exec.CommandContext(t.Context(), cli, "run", "-dev-unsigned", "-definition", "provider", "-service", "chain.a",
+			"-input", `{"method":"execute","input":{"operation":"panic"}}`, archive)
+		var diagnostics bytes.Buffer
+		command.Stderr = &diagnostics
+		if err := command.Run(); err == nil {
+			t.Fatal("run succeeded after the plugin panicked")
+		}
+		if !strings.Contains(diagnostics.String(), "[cli.instance] panic: chain provider panicked") {
+			t.Fatalf("plugin panic missing from run stderr:\n%s", &diagnostics)
+		}
+	})
 }

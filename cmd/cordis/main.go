@@ -68,7 +68,7 @@ var commandUsage = map[string]string{
 	"remove":    "remove -store DIR ENTRY",
 	"uninstall": "uninstall -store DIR ID@VERSION#DIGEST",
 	"status":    "status -store DIR [ENTRY]",
-	"host":      "host -store DIR -trust FILE [-control-file FILE] [-recovery FILE] [-shutdown-timeout DURATION]",
+	"host":      "host -store DIR -trust FILE [-control-file FILE] [-recovery FILE] [-shutdown-timeout DURATION] [-plugin-stderr]",
 	"control":   "control -connection FILE [-timeout DURATION] status|enable|disable|stop|resume|retry [ENTRY]",
 	"dev":       "dev -dev-unsigned (-project FILE | -go-package PACKAGE [FLAGS] DIRECTORY)",
 }

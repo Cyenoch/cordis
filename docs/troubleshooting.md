@@ -26,4 +26,4 @@ description: 从实例状态和错误定位依赖、启动、调用与清理问�
 
 初始化失败时，结构化日志记录 Starting 到 Quiescing/Failed 的转换，含 entry、activation、启动耗时和错误类别，不记录成功发布。意外的 exit 0 是 `unexpected_exit`；主动停止是 `requested_stop`，`Forced` 另行表示是否升级为强制终止。清理失败保存在独立的 `CleanupCode`，不覆盖退出原因。
 
-排查 native 启动时，用 `Options.Stderr` 收集带 `Owner` 的 `StderrRecord`；`Truncated` 表示该激活已超过转发预算，管道仍继续排空。转发失败会返回错误。错误用 `errors.Is` / `errors.As` 分类；框架不会自动脱敏用户返回的错误文本。
+`cordis run`、`cordis dev` 直接把插件 stderr 带 `[entry]` 前缀写到 stderr，`cordis host` 需加 `-plugin-stderr`。自建 Host 排查 native 启动时，用 `Options.Stderr` 收集带 `Owner` 的 `StderrRecord`；`Truncated` 表示该激活已超过转发预算，管道仍继续排空。转发失败会返回错误。错误用 `errors.Is` / `errors.As` 分类；框架不会自动脱敏用户返回的错误文本。

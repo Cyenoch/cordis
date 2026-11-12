@@ -136,6 +136,8 @@ func (p *providerServer) Execute(ctx context.Context, input Request) (Response, 
 		return Response{}, ctx.Err()
 	case "crash":
 		os.Exit(7)
+	case "panic":
+		panic("chain provider panicked")
 	case "exit":
 		os.Exit(0)
 	}

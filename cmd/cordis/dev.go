@@ -25,13 +25,7 @@ type devCandidate struct {
 }
 
 func (c *devCandidate) close(timeout time.Duration) (bool, error) {
-	err := closeHost(c.host, timeout)
-	select {
-	case <-c.host.Done():
-		return true, errors.Join(err, os.RemoveAll(c.directory))
-	default:
-		return false, fmt.Errorf("host cleanup incomplete; retained %s: %w", c.directory, err)
-	}
+	return closeTemporaryHost(c.host, timeout, c.directory)
 }
 
 type devOptions struct {
@@ -44,6 +38,7 @@ type devOptions struct {
 	extra           []string
 	startupTimeout  time.Duration
 	shutdownTimeout time.Duration
+	stderr          func(contract.StderrRecord) error
 }
 
 type devUpdate struct {
@@ -62,7 +57,7 @@ func devCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 	flags.StringVar(&options.project, "project", "", "explicit JSON/TOML/YAML multi-package development project")
 	flags.Var(&extra, "watch", "additional external input directory; repeat for multiple directories")
 	flags.DurationVar(&options.startupTimeout, "startup-timeout", 30*time.Second, "maximum wait for each candidate's startup")
-	flags.DurationVar(&options.shutdownTimeout, "shutdown-timeout", 5*time.Second, "maximum wait for complete old-host cleanup")
+	flags.DurationVar(&options.shutdownTimeout, "shutdown-timeout", defaultShutdown, "maximum wait for complete old-host cleanup")
 	options.configuration.register(flags, "config")
 	if done, err := parse(); done {
 		return err
@@ -129,6 +124,8 @@ func devCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 	watchCtx, stop := context.WithCancel(ctx)
 	go watcher.watch(watchCtx)
 	defer func() { stop(); <-watcher.done }()
+	errOut = &syncWriter{w: errOut}
+	options.stderr = forwardStderr(errOut)
 	logger := slog.New(slog.NewJSONHandler(errOut, nil))
 	var current *devCandidate
 	defer func() {
@@ -262,7 +259,7 @@ func prepareDevCandidate(ctx context.Context, options devOptions, input devInput
 		trust.Publishers[pkg.Manifest.Publisher] = append(trust.Publishers[pkg.Manifest.Publisher], pkg.Ref.ID)
 	}
 	h, err := hosting.Open(hosting.Options{
-		Directory: filepath.Join(dir, "store"), Logger: logger, Trust: trust,
+		Directory: filepath.Join(dir, "store"), Logger: logger, Trust: trust, Stderr: options.stderr,
 	})
 	if err != nil {
 		return nil, err

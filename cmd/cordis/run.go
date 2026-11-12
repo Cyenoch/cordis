@@ -144,21 +144,20 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, os.RemoveAll(root)) }()
+	errOut = &syncWriter{w: errOut}
 	host, err := hosting.Open(hosting.Options{
-		FrameBytes: contract.MaxFrameBytes, Directory: filepath.Join(root, "store"),
+		FrameBytes: contract.MaxFrameBytes, Directory: filepath.Join(root, "store"), Stderr: forwardStderr(errOut),
 		Trust: packagehost.TrustPolicy{
 			Digests:    map[string]bool{pkg.Ref.Digest: true},
 			Publishers: map[string][]string{pkg.Manifest.Publisher: {pkg.Ref.ID}},
 		},
 	})
 	if err != nil {
-		return err
+		return errors.Join(err, os.RemoveAll(root))
 	}
 	defer func() {
-		closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stop()
-		result = errors.Join(result, host.Close(closeCtx))
+		_, err := closeTemporaryHost(host, defaultShutdown, root)
+		result = errors.Join(result, err)
 	}()
 	pkg.Package, err = host.Install(startupCtx, flags.Arg(0))
 	if err != nil {

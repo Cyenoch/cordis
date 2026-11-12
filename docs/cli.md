@@ -109,7 +109,7 @@ Pack 仅发布元数据、全部声明产物和顶层 `resources` 的精确文�
 ./bin/cordis host -store ./state -trust ./trust.json
 ```
 
-pack、sign、install 输出的 `exact` 即 `select`、`uninstall` 所需的完整引用。`enable` 只保存意图，`host` 才执行插件。前台输出每个实例的状态、等待原因和恢复错误；部分实例失败或缺依赖时继续运行，默认不自动重试。Ctrl+C 使用独立的关闭期限回收进程，默认 `5s`，可用 `-shutdown-timeout` 调整。
+pack、sign、install 输出的 `exact` 即 `select`、`uninstall` 所需的完整引用。`enable` 只保存意图，`host` 才执行插件。前台输出每个实例的状态、等待原因和恢复错误；部分实例失败或缺依赖时继续运行，默认不自动重试。Ctrl+C 使用独立的关闭期限回收进程，默认 `25s`，可用 `-shutdown-timeout` 调整；到期仍未清理完时报错退出，进程可能仍在运行。插件 stderr 默认不转发，`-plugin-stderr` 把它写到 stderr，每行前缀为 `[entry]`。
 
 `host -control-file FILE` 显式开启[本机在线控制](local-control.md)，供另一个终端通过 connection 文件执行 status、enable、disable、stop、resume、retry。它只管理已有持久 entry，动态子项只查询。请求默认 30s，可用 `control -timeout` 调整至 1ms–5m；超时后的写入结果可能不确定，先查询，不自动重发。
 
@@ -137,7 +137,7 @@ pack、sign、install 输出的 `exact` 即 `select`、`uninstall` 所需的完�
 ./bin/cordis dev -dev-unsigned -go-package . -config-file ./development.toml ./my-plugin
 ```
 
-每个作者包只接受一个匹配本机的 native target；单包的 `-definition` 选择一个定义，默认使用包的默认定义。运行范围包含它创建的同包 children。多目标声明明确报错，不会替你删改；`-startup-timeout` 默认 `30s`，`-shutdown-timeout` 默认 `5s`，project 模式对整个候选组计时。
+每个作者包只接受一个匹配本机的 native target；单包的 `-definition` 选择一个定义，默认使用包的默认定义。运行范围包含它创建的同包 children。多目标声明明确报错，不会替你删改；`-startup-timeout` 默认 `30s`，`-shutdown-timeout` 默认 `25s`，project 模式对整个候选组计时。
 
 监视最近 Go 模块目录中的源码、资源、作者声明、契约、go.mod/go.sum，以及显式配置文件。模块外依赖用可重复的 `-watch DIRECTORY` 加入；不自动遍历 `replace` 的外部目录。配置可用 `-config` 或 `-config-file`，不能来自 stdin。生成文件、声明产物、`.git` 和工具临时文件不触发自身重建。系统临时根不能位于受监视目录内；这种布局会明确报错，需将 `TMPDIR`（Windows 为 `TMP`）改到外部。
 
@@ -145,7 +145,7 @@ pack、sign、install 输出的 `exact` 即 `select`、`uninstall` 所需的完�
 
 编译、Pack、配置预检失败时当前实例继续运行；输入改变后才重试。预检通过才关闭当前 Host，关闭完成后再核对输入 generation，仅启动最新候选。当前 Host 已排空但带历史错误时，输出错误并继续；未完成清理则停止切换、报告保留路径。新插件初始化失败后保持 Failed，等待下次编辑，不恢复上一个进程、内存或业务请求。
 
-stdout 输出带 generation 的 `build`、`build_failed`、`runtime` JSON；stderr 输出结构化诊断。退出取消监视与构建进程树，完成 Host 关闭后删除临时目录。
+stdout 输出带 generation 的 `build`、`build_failed`、`runtime` JSON；stderr 输出结构化诊断和插件 stderr，后者每行带 `[entry]` 前缀。退出取消监视与构建进程树，完成 Host 关闭后删除临时目录；清理未完成时保留目录并报告路径。
 
 ## 本地运行
 
@@ -173,7 +173,7 @@ printf '%s' '{"method":"execute","input":{"operation":"get","delta":0}}' | ./bin
 
 配置、调用输入与契约文件共用 `config` loader。它拒绝重复键、尾随文档和不支持的语法，不猜类型、不合并环境变量、不失败后换格式。TOML 适合对象；显式 null、非对象根使用 YAML 或 JSON。错误保留输入来源和可获得的位置。
 
-启动等待状态变化时，stderr 输出有界 `startup` JSON 诊断：definition、状态、实际 Requirement 范围、可见 provider 和不兼容原因；缺 provider 到期后非零退出。stdout 只输出最终状态或调用结果。启动超时不等于业务调用超时，取消也不回滚外部副作用。
+启动等待状态变化时，stderr 输出有界 `startup` JSON 诊断：definition、状态、实际 Requirement 范围、可见 provider 和不兼容原因；缺 provider 到期后非零退出。插件 stderr 每行带 `[entry]` 前缀写到 stderr，崩溃栈因此可见。stdout 只输出最终状态或调用结果。启动超时不等于业务调用超时，取消也不回滚外部副作用。
 
 应用服务可通过[宿主公开 API](host-guide.md)组合。`-dev-unsigned` 批准本次产物的精确摘要，包里的签名不影响结果；`signature.json` 格式错误仍会拒绝（见[信任](packages.md#信任)）。正式交付由宿主 TrustPolicy 明确授权。Native 仍拥有用户权限，不是沙箱；初始化和构建不会额外授权执行。
 

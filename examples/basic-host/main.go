@@ -38,7 +38,29 @@ func run(artifact string) (result error) {
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, os.RemoveAll(root)) }()
+	// Each Host owns its service registry. Separate hosts can provide the same key.
+	hosts := make([]*hosting.Host, 0, 2)
+	defer func() {
+		finished := true
+		for _, host := range hosts {
+			// A native stop may spend a grace answering shutdown, one exiting
+			// after the signal and two draining its output.
+			closeCtx, stop := context.WithTimeout(context.Background(), 5*hosting.DefaultGrace)
+			result = errors.Join(result, host.Close(closeCtx))
+			stop()
+			select {
+			case <-host.Done():
+			default:
+				finished = false
+			}
+		}
+		// The stores live under root; keep it while a plugin may still use them.
+		if !finished {
+			result = errors.Join(result, fmt.Errorf("cleanup did not finish; retained %s", root))
+			return
+		}
+		result = errors.Join(result, os.RemoveAll(root))
+	}()
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return err
@@ -74,15 +96,6 @@ func run(artifact string) (result error) {
 		Keys:       map[string]packagehost.TrustedKey{"example": {PublicKey: public, Publisher: manifest.Publisher}},
 		Publishers: map[string][]string{manifest.Publisher: {manifest.ID}},
 	}
-	// Each Host owns its service registry. Separate hosts can provide the same key.
-	hosts := make([]*hosting.Host, 0, 2)
-	defer func() {
-		for _, host := range hosts {
-			closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
-			result = errors.Join(result, host.Close(closeCtx))
-			stop()
-		}
-	}()
 	instances := make([]contract.Instance, 0, 2)
 	for index, initial := range []int{10, 100} {
 		host, err := hosting.Open(hosting.Options{Directory: filepath.Join(root, fmt.Sprint(index)), Trust: trust})
