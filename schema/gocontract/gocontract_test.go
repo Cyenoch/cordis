@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 	"os"
 	"path/filepath"
@@ -330,6 +331,36 @@ func TestRejectedSources(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The derived request fits the expansion budget, but the contract as written,
+// where every object also says additionalProperties is false, does not: 400
+// fields of about 2.6 KB derive to some 6 KB under 1 MiB, and the 29 bytes
+// each object gains put it some 5 KB over. The generator reports that file
+// rather than write what nothing can read back.
+func TestUnreadableContractIsNotWritten(t *testing.T) {
+	var fields strings.Builder
+	for i := range 400 {
+		fmt.Fprintf(&fields, "\tF%03d struct{} `json:\"f%03d%s\"`\n", i, i, strings.Repeat("x", 1272))
+	}
+	source := "package big\n\nimport \"context\"\n\n//cordis:service example.big 1\ntype Big interface {\n\tDo(ctx context.Context, request Request) error\n}\n\ntype Request struct {\n" + fields.String() + "}\n"
+	dir, err := os.MkdirTemp("testdata", "unreadable-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	if err := os.WriteFile(filepath.Join(dir, "big.go"), []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = gocontract.Generate(t.Context(), dir, gocontract.Target{})
+	if err == nil || !strings.Contains(err.Error(), filepath.Join(dir, gocontract.ContractFile)+": the generated contract does not parse") || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("Generate = %v, want the contract file and its byte limit", err)
+	}
+	for _, name := range []string{gocontract.GoFile, gocontract.ContractFile} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s was written: %v", name, err)
+		}
 	}
 }
 

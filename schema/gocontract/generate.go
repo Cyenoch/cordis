@@ -79,11 +79,13 @@ func generated(ctx context.Context, dir string, target Target) (*Package, []gene
 	if err != nil {
 		return nil, nil, err
 	}
-	code, err := p.Source()
+	// The contract goes first: a contract that does not read back is reported
+	// as such, before the bindings are derived from it.
+	declared, err := p.Contract()
 	if err != nil {
 		return nil, nil, err
 	}
-	declared, err := p.Contract()
+	code, err := p.Source()
 	if err != nil {
 		return nil, nil, err
 	}

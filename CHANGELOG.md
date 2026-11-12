@@ -4,6 +4,9 @@
 
 ## 未发布
 
+- 修复：契约的引用展开预算按复制进结果的紧凑字节计，每个字节只计一次，不再随嵌套深度和缩进重复计费。此前紧凑后只有约 92 KB 的契约会因超出 1 MiB 被拒绝，导入它的包无法 `cordis generate`。上限值与按契约文件计的范围不变；超限错误改为 `expanded schemas exceed the cumulative byte limit of 1048576`。
+- `cordis generate` 写出前用 `schema.Parse` 读回 `cordis_gen.json`，读不回时报出该文件路径并且两个文件都不写；`gocontract.Package.Contract` 同样会因此失败。
+- `session.schema.json` 中响应的 `error.code` 放宽为任意字符串，与运行时一致：处理函数返回的应用错误码（如 `game_running`）原样送达，此前按 schema 校验的实现会拒绝这些响应。只放宽，按旧 schema 有效的消息仍然有效。
 - `cordis init` 在 go.mod 写入 SDK 所需的 Go 版本，不再写构建 CLI 的更新版本。
 - `plugintest.Start` 收到不配对的 spec 与定义时，错误同时说出两者，不再只报 unknown plugin definition。
 - `Host.Store()` 返回只读的 `hosting.Catalog`（`Installed`、`Get`、`Selected`、`Entries`、`Runs`、`Preflight`、`PendingRemovals`）；修改须经 Host，以免绕过它对运行实例的协调。迁移：`host.Store().UpdateTrust` 改为 `host.UpdateTrust`，`RetryRemovals` 同理；安装、选择、启用与卸载用 Host 的同名方法。

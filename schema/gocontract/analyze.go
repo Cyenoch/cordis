@@ -499,11 +499,16 @@ func (a *analysis) reference(file *ast.File, d directive, expression string) (*s
 	return a.service(object, found, false)
 }
 
-// Contract returns the derived contract as written to ContractFile.
+// Contract returns the derived contract as written to ContractFile. It fails
+// unless schema.Parse, which reads that file back, accepts the result.
 func (p *Package) Contract() ([]byte, error) {
 	data, err := json.MarshalIndent(p.Definition, "", "  ")
 	if err != nil {
 		return nil, err
 	}
-	return append(data, '\n'), nil
+	data = append(data, '\n')
+	if _, err := schema.Parse(data); err != nil {
+		return nil, fmt.Errorf("%s: the generated contract does not parse: %w", filepath.Join(p.source.root.Dir, ContractFile), err)
+	}
+	return data, nil
 }

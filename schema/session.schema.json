@@ -129,19 +129,7 @@
           "type": "object",
           "properties": {
             "code": {
-              "enum": [
-                "invalid_message",
-                "incompatible",
-                "not_ready",
-                "denied",
-                "timeout",
-                "canceled",
-                "reentrant_call",
-                "plugin_failed",
-                "internal",
-                "conflict",
-                "superseded"
-              ]
+              "type": "string"
             },
             "message": {
               "type": "string"

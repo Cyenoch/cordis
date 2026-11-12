@@ -333,7 +333,7 @@ var (
 
 ## 互操作向量
 
-`schema/{package,session,integrity,signature}.schema.json` 是独立 Draft 2020-12 envelope schema；受限契约生成器使用上文自己的数据方言。外部环境提供 Python `jsonschema` 后执行 `python3 conformance/validate-schemas.py`，验证四份 metaschema、97 个结构向量和固定签名字节/SHA-256。该脚本明确不执行 codeVectors 或 Ed25519；后者由 `go test ./packagehost -run '^TestIndependentSigningInteroperabilityVector$'` 校验固定 UTF-8 输入、公钥、签名、信任及篡改拒绝。协议方向、状态、比较式语义和 nullable/64 位 codec 由真实 Go 回归验证，不能由 envelope schema 通过推断。
+`schema/{package,session,integrity,signature}.schema.json` 是独立 Draft 2020-12 envelope schema；受限契约生成器使用上文自己的数据方言。外部环境提供 Python `jsonschema` 后执行 `python3 conformance/validate-schemas.py`，验证四份 metaschema、105 个结构向量和固定签名字节/SHA-256。该脚本明确不执行 codeVectors 或 Ed25519；后者由 `go test ./packagehost -run '^TestIndependentSigningInteroperabilityVector$'` 校验固定 UTF-8 输入、公钥、签名、信任及篡改拒绝。协议方向、状态、比较式语义和 nullable/64 位 codec 由真实 Go 回归验证，不能由 envelope schema 通过推断。
 
 ## 手写类型的数据规则
 
@@ -366,4 +366,4 @@ if err := document.Decode(&settings); err != nil { return err }
 
 `Document.Positions` 以 JSON Pointer 为键，空路径表示根，行列从 1 开始；对象成员通常定位到键，数组项定位到值。`document.Locate("/database/port", cause)` 保留原错误和请求路径，缺少精确位置时使用最近已知祖先。`*config.Error` 暴露 `Source`、`Path`、`Line`、`Column`、`Cause` 并支持 `errors.Is/As`；语法错误也带来源和可获得的行列。`Decode` 尽可能定位未知字段：同名字段出现多处或自定义 codec 不提供路径时，可能只能定位到根。YAML 依赖库的语法错误通常只提供行号，列号为 0。来源可能包含可信本地路径，对外展示前应由宿主做安全投影。
 
-同一声明图内的类型、方法与 definition 的本地引用展开共享累计 1 MiB 字节预算（包括中间副本）、32 层深度和 10000 节点限制；重复引用也消耗预算，过大的声明在生成或宿主预检前拒绝。这不是 Go 进程的硬内存上限。
+一份契约内的类型、方法与 definition 配置的本地引用展开共用 1 MiB 字节预算、32 层深度和 10000 节点限制；单独编译的一个 schema 自成一份。预算计的是复制进展开结果的紧凑字节：每个文档计一次，每次引用在复制前按目标计一次，因此与空白和嵌套深度无关，重复引用照样计费。过大的声明在生成或宿主预检前拒绝；`cordis generate` 写出 `cordis_gen.json` 前确认 `schema.Parse` 能读回它。这不是 Go 进程的硬内存上限。

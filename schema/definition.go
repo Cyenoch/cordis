@@ -177,7 +177,10 @@ func (d Definition) normalized() (Definition, error) {
 		return Definition{}, field("", "required", "at least one type, service or definition is required")
 	}
 	out := Definition{Schema: d.Schema, Types: map[string]json.RawMessage{}, Services: []Service{}, Definitions: []PluginDefinition{}}
-	refs := resolver{types: d.Types, active: map[string]bool{}}
+	refs, err := newResolver(d.Types)
+	if err != nil {
+		return Definition{}, err
+	}
 	resolve := func(raw json.RawMessage) (json.RawMessage, error) {
 		expanded, err := refs.resolve(raw)
 		if err != nil {

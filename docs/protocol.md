@@ -91,4 +91,4 @@ Host 在 `initialize` 的 `features` 中列出所支持的特性，包的 `proto
 
 取消载荷为 `{id}`。属于当前激活的合法 ID 已经不活动时返回 `inactive`；畸形、其他激活的 ID 或重复登记返回错误。取消阻止后续准入，等待已准入的投递进入会话发送顺序或确定未发送，不等待回调完成，因此回调可以取消自己。`once` 在准入时消费；已消费但投递未能发出时，Host 反向发送 `event.unsubscribe` 释放插件的引用。
 
-错误只携带 `code` 与 `message`，调用方按错误类别处理；框架不接管应用错误的脱敏。
+错误只携带 `code` 与 `message`，调用方按错误类别处理；框架不接管应用错误的脱敏。框架自己的 `code` 为 `invalid_message`、`incompatible`、`not_ready`、`denied`、`timeout`、`canceled`、`reentrant_call`、`plugin_failed`、`panic`、`internal`、`conflict`、`superseded`。处理函数返回带 `code` 的错误（`contract.Fail`、`contract.Wrap`）时，`code` 与 `message` 原样送达调用方，应用可以有自己的 `code`（如 `game_running`）；不带 `code` 的错误按类别送达：取消为 `canceled`，超时为 `timeout`，其余为 `plugin_failed`。schema 只要求 `code` 是字符串。
