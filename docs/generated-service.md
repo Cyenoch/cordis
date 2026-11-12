@@ -175,18 +175,14 @@ Go 类型表达不了的形状（标记联合）和与非 Go 实现共享的契�
 
 ### 建立独立项目
 
-从 Cordis 仓库根执行：
-
 ```sh
-CORDIS_ROOT="$(pwd)"
 mkdir -p /tmp/cordis-generated/echo
 cd /tmp/cordis-generated
 go mod init example.com/cordis-generated
-go mod edit -require=github.com/Cyenoch/cordis@v0.0.0
-go mod edit -replace="github.com/Cyenoch/cordis=$CORDIS_ROOT"
+go get github.com/Cyenoch/cordis@latest
 ```
 
-Windows 使用空目录，并将 replace 指向本地检出的绝对路径。
+Windows 使用一个空目录。
 
 ### 写契约并生成
 

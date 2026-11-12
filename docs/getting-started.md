@@ -5,20 +5,18 @@ description: 用 Go 类型声明独立插件，完成生成、构建、调用、
 
 # 快速开始
 
-本页只写 Go：服务、请求、响应和配置是普通类型，`cordis generate` 从它们推导契约并生成适配代码；随后构建、调用、持续开发并以签名包运行。依赖使用本地 Cordis 检出，这样教程与你检出的代码一致；兼容性承诺见[稳定性](stability.md)。
+本页只写 Go：服务、请求、响应和配置是普通类型，`cordis generate` 从它们推导契约并生成适配代码；随后构建、调用、持续开发并以签名包运行。兼容性承诺见[稳定性](stability.md)。
 
 ## 准备工具
 
-需要 Go **{{docs.goVersion}}** 和 Git；不必初始化 `third_party/cordis` submodule。在 Cordis 仓库根目录执行：
+需要 Go **{{docs.goVersion}}**。安装 CLI：
 
 ```sh
-CORDIS_ROOT="$(pwd)"
-mkdir -p bin
-go build -o ./bin/cordis ./cmd/cordis
-CORDIS="$CORDIS_ROOT/bin/cordis"
+go install github.com/Cyenoch/cordis/cmd/cordis@latest
+CORDIS="$(go env GOPATH)/bin/cordis"
 ```
 
-本页 shell 命令面向 macOS / Linux。Windows 使用 PowerShell、`cordis.exe`，本地检出的路径也必须是绝对路径。
+也可使用[发布页](https://github.com/Cyenoch/cordis/releases)的预编译归档。本页 shell 命令面向 macOS / Linux；Windows 使用 PowerShell 与 `cordis.exe`。
 
 ## 初始化独立 module
 
@@ -26,12 +24,11 @@ CORDIS="$CORDIS_ROOT/bin/cordis"
 
 ```sh
 PLUGIN="$(mktemp -d)/hello"
-"$CORDIS" init -module example.net/cordis-hello -sdk-version v0.0.0 -id example.hello -publisher example.author "$PLUGIN"
+"$CORDIS" init -module example.net/cordis-hello -id example.hello -publisher example.author "$PLUGIN"
 cd "$PLUGIN"
-go mod edit -replace="github.com/Cyenoch/cordis=$CORDIS_ROOT"
 ```
 
-`v0.0.0` 只是本地 module 占位，实际依赖由 `replace` 指向刚才的真实检出；不是可下载安装的发行版。`init` 写入 `plugin.toml`、独立 `go.mod`、业务入口、启动测试和生成物 `cordis_gen.go`、`cordis_gen.json`，不覆盖已有文件，也不授予原生执行信任。`plugin.toml` 只保存发行身份和原生运行目标；原生目标使用当前 `GOOS/GOARCH`，交叉编译时需同时修改声明和构建参数。
+`go.mod` 依赖与 CLI 相同的 Cordis 版本。`init` 写入 `plugin.toml`、独立 `go.mod`、业务入口、启动测试和生成物 `cordis_gen.go`、`cordis_gen.json`，不覆盖已有文件，也不授予原生执行信任。`plugin.toml` 只保存发行身份和原生运行目标；原生目标使用当前 `GOOS/GOARCH`，交叉编译时需同时修改声明和构建参数。
 
 ## 声明服务
 
