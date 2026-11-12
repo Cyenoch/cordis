@@ -61,7 +61,7 @@ func start(ctx context.Context, s *cordis.Scope, config Config) error {
 }
 ```
 
-`Message` 可以是导入包里的接口，也可以是本包声明的、只含自己调用的方法的接口，Host 按方法指纹匹配（示例见 `examples/plugins/consumer`）。
+`Message` 可以是导入包里的接口，也可以是本包声明的、只含自己调用的方法的接口（示例见 `examples/plugins/consumer`）。Host 按服务名、major 和 minor 范围绑定，不比对方法形状：与提供方不一致的请求在调用时以 `invalid_message` 失败，错误指出不符的字段。
 
 调用另一个进程里的服务与调用本进程的服务写法一致，经由 Host 路由，数据按契约校验。提供方在调用期间停止或崩溃时，调用方得到 `not_ready`，文本带原因；这与提供方自己回答的失败不同，等它回来后可以重试。`Start` 内可以发出这类请求，也可以登记事件、查询和中间件；这些请求以初始化为父，在初始化成功后才对外生效。
 

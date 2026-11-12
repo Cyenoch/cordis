@@ -180,7 +180,7 @@ func TestGuestKernelFailures(t *testing.T) {
 			s.Go(func(ctx context.Context) error {
 				select {
 				case <-fail:
-					return errors.New("worker lost its connection")
+					return contract.Fail(contract.Invalid, "worker lost its connection")
 				case <-ctx.Done():
 					return nil
 				}
@@ -213,7 +213,8 @@ func TestGuestKernelFailures(t *testing.T) {
 	eventually(t, "the consumer", func() bool { return user.Status().State == cordis.Active })
 	close(fail)
 	eventually(t, "the entry to fail", func() bool { return f.state("worker") == contract.Failed })
-	if status := worker.Status(); !strings.Contains(status.Error, "worker lost its connection") {
+	// The code of the plugin's error is reported once, not again in its text.
+	if status := worker.Status(); !strings.Contains(status.Error, "worker lost its connection") || strings.Count(status.Error, string(contract.Invalid)) != 1 {
 		t.Fatalf("status = %+v", status)
 	}
 	eventually(t, "the consumer to wait", func() bool { return user.Status().State == cordis.Waiting })

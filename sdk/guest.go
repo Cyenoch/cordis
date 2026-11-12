@@ -296,7 +296,10 @@ func (g *guest) fail(cause error) {
 		return
 	}
 	message := "plugin failed"
-	if cause != nil {
+	if coded, ok := cause.(*contract.Error); ok {
+		// The code travels on its own; its text would repeat it.
+		message = coded.Message
+	} else if cause != nil {
 		message = cause.Error()
 	}
 	if data, err := json.Marshal(contract.Failure{Error: contract.Error{Code: contract.ErrorCode(cause), Message: message}}); err == nil {
