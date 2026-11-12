@@ -11,6 +11,7 @@ description: 从实例状态和错误定位依赖、启动、调用与清理问�
 |---|---|
 | Waiting | `Status.Waiting` 里的服务版本范围、可见 provider 与不兼容原因，或父实例是否已发布；包依赖与服务依赖分开看 |
 | Starting 不结束 | `Start` 是否在等自己的子实例或循环调用；是否在 `Start` 里消费流；检查 context 期限 |
+| macOS 上 native 启动慢 | 每次激活从新复制的可执行文件启动，系统首次运行一个新文件要先检查它：空闲时约 0.2 秒，机器很忙时观察到超过 10 秒。`cordis run`/`dev` 用 `-startup-timeout` 放宽 |
 | Failed | `Status.Error`、`Outcome.FailureCode` 与 `Wait` 返回的错误；按 activation 关联日志，修正后显式 `Update` 或 `Retry` |
 | 重复 provider | 同一个解析空间里同 key 的服务不能被两个激活同时提供（`conflict`） |
 | 配置更新被取代 | 后续有效更新接管了期望 revision，检查 `UpdateResult.Superseded` |

@@ -6,6 +6,7 @@
 
 - `cordis pack` 先核对 `cordis_gen.go`、`cordis_gen.json` 与 Go 源码一致：改了契约没有重新生成时报错，不再打包旧契约。新增 `gocontract.Check`。
 - 插件以带错误码的错误失败时，Host 报告的错误只带一次错误码（此前为 `invalid_message: invalid_message: …`）。
+- `cordis run` 启动超时时若插件仍在 Starting，错误说明这一点并提示放宽 `-startup-timeout`。
 - `plugintest.Start` 在 ctx 的期限内（没有期限时 30 秒）等不到所需服务时返回它在等什么，不再一直等到 `go test` 超时。
 
 ## v0.2.0

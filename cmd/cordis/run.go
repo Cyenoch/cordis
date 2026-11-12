@@ -156,6 +156,11 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 		return err
 	}
 	if err := waitForStartup(startupCtx, instance, selected, errOut); err != nil {
+		if instance.Status().State == contract.Starting {
+			// Nothing to wait for but the plugin itself: its process, or the
+			// system starting it, was slower than the timeout.
+			return fmt.Errorf("start definition %q: still starting after %s; a busy machine may need a longer -startup-timeout: %w", selected, *startupTimeout, err)
+		}
 		return fmt.Errorf("start definition %q (timeout %s): %w", selected, *startupTimeout, err)
 	}
 	cancel()
