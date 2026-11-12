@@ -201,10 +201,10 @@ func TestRecoveryRetriesWithinItsBudget(t *testing.T) {
 			t.Fatalf("%s started", id)
 		}
 	}
-	// A failed entry is not restarted unless recovery is configured for it.
-	time.Sleep(100 * time.Millisecond)
-	if f.log.count("flaky") != 1 {
-		t.Fatalf("attempts without a policy: %q", f.log.get())
+	// A failed entry is not restarted unless recovery is configured for it:
+	// nothing is scheduled, so nothing can start it again.
+	if scheduled := f.host.RecoveryStatus(); len(scheduled) != 0 || f.log.count("flaky") != 1 {
+		t.Fatalf("without a policy: recovery %+v, attempts %q", scheduled, f.log.get())
 	}
 	f.host.Close(f.ctx()) // reports the failures of the two entries
 
@@ -225,9 +225,11 @@ func TestRecoveryRetriesWithinItsBudget(t *testing.T) {
 	if f.log.count("flaky") != 4 || f.log.count("broken") != 4 || f.state("broken") != contract.Failed {
 		t.Fatalf("attempts: flaky %d, broken %d", f.log.count("flaky"), f.log.count("broken"))
 	}
-	time.Sleep(100 * time.Millisecond)
-	if f.log.count("broken") != 4 {
-		t.Fatal("an exhausted entry was retried")
+	// Exhausted is final: no further retry is scheduled.
+	for _, info := range f.host.RecoveryStatus() {
+		if info.Entry == "broken" && (info.State != RecoveryExhausted || info.NextRetryAt != nil || info.Used != info.MaxRetries) {
+			t.Fatalf("an exhausted entry may be retried: %+v", info)
+		}
 	}
 	// A manual retry is one more attempt and a fresh budget.
 	if err := f.host.Retry(f.ctx(), "broken"); err == nil || !strings.Contains(err.Error(), "broken is not ready") {

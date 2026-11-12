@@ -184,10 +184,12 @@ func TestOnceListenerWhoseDeliveryIsNeverSent(t *testing.T) {
 	cancel()
 	noteEvent.Emit(canceled, f.host.Scope(), note{Text: "lost"})
 	must(t, noteEvent.Emit(f.ctx(), f.host.Scope(), note{Text: "after"}))
+	// Emit returns when every listener has answered: had the listener
+	// still been registered, its call would be here by now.
 	select {
 	case text := <-calls:
 		t.Fatalf("a consumed once listener ran with %q", text)
-	case <-time.After(100 * time.Millisecond):
+	default:
 	}
 	if f.state("once") != contract.Active {
 		t.Fatalf("the entry is %s", f.state("once"))
