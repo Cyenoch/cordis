@@ -21,7 +21,7 @@ bun run docs:build
 
 ## 文档与源码同步
 
-项目尚未发布，文档直接对应当前检出。公开 API 变动时同次修改文档与示例，不再为每页维护另一份历史提交映射，也不查询远程发行版。
+文档对应当前检出，站点随 main 部署，可能先于发布描述新变化；各版本的差别见 CHANGELOG.md。公开 API 变动时同次修改文档与示例，不再为每页维护另一份历史提交映射，也不查询远程发行版。
 
 `site/build-data.mjs` 从当前 `go.mod` 读取 `modulePath`、`goVersion`。正文和代码可使用 `{{docs.goVersion}}` 等变量；标题、链接和 front matter 不使用变量。未知变量和缺少配置使构建失败。Markdown 源文件不回写，直接阅读时可从 `go.mod` 查看实际值。
 
