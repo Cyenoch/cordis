@@ -70,6 +70,7 @@ func cliArchive(t *testing.T, manifest contract.Manifest, key ed25519.PrivateKey
 }
 
 func TestOfflineCLIManagesIntentAndIncompatibleUpgrade(t *testing.T) {
+	t.Parallel()
 	key, trust := cliTrust(t, "example", "demo")
 	m := contract.Manifest{
 		Schema: contract.PackageSchema, ID: "demo", Version: "1.0.0", Publisher: "example",
@@ -249,6 +250,7 @@ func brokenStdout(t *testing.T, binary string, args ...string) (int, string) {
 }
 
 func TestOfflineCLIProtectsEnabledReverseDependencies(t *testing.T) {
+	t.Parallel()
 	key, trust := cliTrust(t, "example", "demo", "dep")
 	manifest := contract.Manifest{
 		Schema: contract.PackageSchema, ID: "dep", Version: "1.0.0", Publisher: "example",
@@ -292,6 +294,7 @@ func TestOfflineCLIProtectsEnabledReverseDependencies(t *testing.T) {
 }
 
 func TestForegroundHostReportsPartialStateAndClosesNativeProcesses(t *testing.T) {
+	t.Parallel()
 	binary := filepath.Join(t.TempDir(), "chain")
 	command := exec.CommandContext(t.Context(), "go", "build", "-o", binary, ".")
 	command.Dir = "../../examples/plugins/chain"

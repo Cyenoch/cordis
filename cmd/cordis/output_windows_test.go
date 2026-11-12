@@ -9,6 +9,7 @@ import (
 )
 
 func TestAtomicOutputKeepsOldFileWhenRenameIsDenied(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "api.go")
 	old := "package previous\n"
 	if err := os.WriteFile(path, []byte(old), 0644); err != nil {

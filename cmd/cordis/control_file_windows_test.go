@@ -8,6 +8,7 @@ import (
 )
 
 func TestControlWindowsDACLIsPrivateAtCreation(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "connection.json")
 	file, err := createControlFile(path)
 	if err != nil {

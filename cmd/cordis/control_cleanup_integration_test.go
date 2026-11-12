@@ -58,6 +58,7 @@ func (s *controlBlockedSession) Err() error            { return nil }
 func (s *controlBlockedSession) Close() error          { s.once.Do(func() { close(s.done) }); return nil }
 
 func TestControlSlowCleanupRemainsQueryableAndCancellationDoesNotUndoStop(t *testing.T) {
+	t.Parallel()
 	directory, trustFile, ref := controlStore(t)
 	trust, err := loadTrust(trustFile)
 	if err != nil {

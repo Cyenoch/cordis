@@ -24,6 +24,7 @@ import (
 )
 
 func TestCLIProcesses(t *testing.T) {
+	t.Parallel()
 	binary := filepath.Join(t.TempDir(), "cordis")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
@@ -343,6 +344,7 @@ func writeCLIFile(t *testing.T, path, text string) {
 }
 
 func TestInspectCLIReportsReleaseFiles(t *testing.T) {
+	t.Parallel()
 	archive := missingProviderArchive(t)
 	var output, diagnostics bytes.Buffer
 	if err := execute(t.Context(), []string{"inspect", archive}, strings.NewReader(""), &output, &diagnostics); err != nil {

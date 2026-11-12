@@ -12,6 +12,7 @@ import (
 )
 
 func TestDevSourceRevertedDuringBuildInvalidatesCandidate(t *testing.T) {
+	t.Parallel()
 	options, directory, _ := projectFixture(t)
 	watcher, err := newDevWatcher(options.plan)
 	if err != nil {
@@ -92,6 +93,7 @@ func projectFixture(t *testing.T) (devOptions, string, string) {
 }
 
 func TestDevProjectPathsAndValidation(t *testing.T) {
+	t.Parallel()
 	options, directory, original := projectFixture(t)
 	plan, err := options.plan()
 	if err != nil {
@@ -122,6 +124,7 @@ func TestDevProjectPathsAndValidation(t *testing.T) {
 }
 
 func TestDevPlanCannotUseNewFingerprintForOldConfiguration(t *testing.T) {
+	t.Parallel()
 	options, _, original := projectFixture(t)
 	write := func(text string) {
 		t.Helper()
@@ -156,6 +159,7 @@ func TestDevPlanCannotUseNewFingerprintForOldConfiguration(t *testing.T) {
 }
 
 func TestDevProjectWatchesOutputsAndRepairsConfiguration(t *testing.T) {
+	t.Parallel()
 	options, directory, original := projectFixture(t)
 	for _, name := range []string{"provider", "consumer"} {
 		if err := os.Remove(filepath.Join(directory, name, "go.mod")); err != nil {
@@ -212,6 +216,7 @@ func TestDevProjectWatchesOutputsAndRepairsConfiguration(t *testing.T) {
 }
 
 func TestDevProjectRejectsConflictingCLIInputs(t *testing.T) {
+	t.Parallel()
 	for _, extra := range [][]string{
 		{"directory"}, {"-go-package", "."}, {"-config", "{}"}, {"-config-file", "settings.json"},
 		{"-config-format", "json"}, {"-definition", "main"},
@@ -225,6 +230,7 @@ func TestDevProjectRejectsConflictingCLIInputs(t *testing.T) {
 }
 
 func TestDevProjectUpdatesPackageWatchSet(t *testing.T) {
+	t.Parallel()
 	options, directory, original := projectFixture(t)
 	watcher, err := newDevWatcher(options.plan)
 	if err != nil {

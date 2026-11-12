@@ -52,6 +52,7 @@ func controlStore(t *testing.T) (string, string, contract.PackageRef) {
 // The helper runs the real host command in a separate process; closing stdin
 // supplies portable cancellation, including on Windows without a console.
 func TestControlHostProcess(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("CORDIS_TEST_CONTROL_HOST") != "1" {
 		return
 	}
@@ -68,6 +69,7 @@ func TestControlHostProcess(t *testing.T) {
 }
 
 func TestLocalControlAcrossProcesses(t *testing.T) {
+	t.Parallel()
 	directory, trust, ref := controlStore(t)
 	run := func(args ...string) {
 		t.Helper()
@@ -237,6 +239,7 @@ func controlState(response controlResponse, id string) contract.State {
 }
 
 func TestNativeRecoveryAndOnlineManualRetry(t *testing.T) {
+	t.Parallel()
 	directory, trustFile, ref := controlStore(t)
 	trust, err := loadTrust(trustFile)
 	if err != nil {

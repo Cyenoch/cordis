@@ -17,6 +17,7 @@ import (
 )
 
 func TestRunCallsDeclaredMinorTwoFromIndependentPlugin(t *testing.T) {
+	t.Parallel()
 	source := t.TempDir()
 	binary := "chain"
 	if runtime.GOOS == "windows" {

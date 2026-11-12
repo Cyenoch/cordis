@@ -10,6 +10,7 @@ import (
 )
 
 func TestAtomicOutputKeepsExistingFileOnUnwritableDirectory(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "api.go")
 	old := []byte("package previous\n")
@@ -38,6 +39,7 @@ func TestAtomicOutputKeepsExistingFileOnUnwritableDirectory(t *testing.T) {
 // init copies the scaffold's bindings out as they are committed, so they must
 // be what generating from the scaffold's source gives.
 func TestScaffoldBindingsAreCurrent(t *testing.T) {
+	t.Parallel()
 	p, err := gocontract.Load(t.Context(), "scaffold", gocontract.Target{})
 	if err != nil {
 		t.Fatal(err)

@@ -12,6 +12,7 @@ import (
 )
 
 func TestWaitingDiagnosticsContainRangeAndVisibleProviders(t *testing.T) {
+	t.Parallel()
 	required := contract.Requirement{Name: "echo", Major: 1, MinMinor: 1, MaxMinor: 3}
 	instance := waitingInstance{status: contract.Status{
 		State: contract.Waiting,

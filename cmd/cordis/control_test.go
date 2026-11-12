@@ -41,6 +41,7 @@ func testControl(t *testing.T) (*controlServer, string) {
 }
 
 func TestControlPrivateConnectionAndAuthentication(t *testing.T) {
+	t.Parallel()
 	s, path := testControl(t)
 	connection, err := readControlConnection(path)
 	if err != nil {
@@ -68,6 +69,7 @@ func TestControlPrivateConnectionAndAuthentication(t *testing.T) {
 }
 
 func TestControlRejectsMalformedAndBrowserRequests(t *testing.T) {
+	t.Parallel()
 	s, _ := testControl(t)
 	body, _ := json.Marshal(controlRequest{Version: 1, Session: s.connection.Session, Action: "status", TimeoutMillis: 1000})
 	for _, test := range []struct{ name, body, origin, host string }{
@@ -115,6 +117,7 @@ func TestControlNeverUsesProxyOrRedirects(t *testing.T) {
 }
 
 func TestControlConnectionRejectsRemoteAddressesAndPreservesReplacement(t *testing.T) {
+	t.Parallel()
 	s, path := testControl(t)
 	for _, address := range []string{"example.test:80", "[::1]:80", "127.0.0.2:80", "127.0.0.1:0", "127.0.0.1:080", "127.0.0.1:65536"} {
 		connection := s.connection
@@ -143,6 +146,7 @@ func TestControlConnectionRejectsRemoteAddressesAndPreservesReplacement(t *testi
 }
 
 func TestControlCloseCancelsIncompleteRequestAndRemovesOwnFile(t *testing.T) {
+	t.Parallel()
 	s, path := testControl(t)
 	reader, writer := io.Pipe()
 	done := make(chan error, 1)

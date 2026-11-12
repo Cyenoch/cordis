@@ -10,6 +10,7 @@ import (
 )
 
 func TestServiceSelectionUsesDeclaredVersion(t *testing.T) {
+	t.Parallel()
 	m := contract.Manifest{Definitions: []contract.DefinitionSpec{{ID: "main", ConfigSchema: json.RawMessage(`{"type":"object"}`), Requires: []contract.Consumer{}, Provides: []contract.Service{{Name: "echo", Major: 1, Minor: 1}, {Name: "echo", Major: 2, Minor: 4}}}}}
 	if _, err := selectService(m, "main", "echo", 0, 0, uint(^uint32(0))); err == nil {
 		t.Fatal("ambiguous major accepted")
@@ -30,6 +31,7 @@ func TestServiceSelectionUsesDeclaredVersion(t *testing.T) {
 
 // A mistyped command suggests the one it most likely meant.
 func TestUnknownCommandSuggestsTheClosest(t *testing.T) {
+	t.Parallel()
 	for typed, want := range map[string]string{
 		"instal":  "unknown command: instal; did you mean install?",
 		"stauts":  "unknown command: stauts; did you mean status?",

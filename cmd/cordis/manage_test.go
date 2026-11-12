@@ -11,6 +11,7 @@ import (
 // A mistyped -store fails instead of reporting, or hosting, an empty store,
 // and leaves no directory behind.
 func TestStoreCommandsRefuseAMissingStore(t *testing.T) {
+	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "stat")
 	trust := filepath.Join(t.TempDir(), "trust.json")
 	if err := os.WriteFile(trust, []byte(`{"keys":{}}`), 0600); err != nil {

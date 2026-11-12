@@ -8,6 +8,7 @@ import (
 )
 
 func TestControlCreationDoesNotInheritDarwinACL(t *testing.T) {
+	t.Parallel()
 	s, _ := testControl(t)
 	directory := t.TempDir()
 	if output, err := exec.Command("/bin/chmod", "+a", "everyone allow read,readsecurity,writesecurity,file_inherit", directory).CombinedOutput(); err != nil {

@@ -8,6 +8,7 @@ import (
 )
 
 func TestRecoveryPolicyFilesAreStrictAndUseDurationStrings(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct{ name, source string }{
 		{"policy.json", `{"entry":{"maxRetries":3,"initialDelay":"50ms","maxDelay":"1s"}}`},
 		{"policy.toml", "[entry]\nmaxRetries=3\ninitialDelay='50ms'\nmaxDelay='1s'\n"},

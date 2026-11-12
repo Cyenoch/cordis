@@ -211,6 +211,7 @@ func TestDevProjectNativeGroupSwitching(t *testing.T) {
 }
 
 func TestDevPackageSelectionHonorsRequiredAndOptionalDependencies(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"required", "missing", "incompatible", "cycle", "optional-cycle"} {
 		t.Run(scenario, func(t *testing.T) {
 			key, trustFile := cliTrust(t, "example.author", "example.a", "example.b")

@@ -350,6 +350,7 @@ func TestDevInputsExcludeOutputsAndWatchExternalFiles(t *testing.T) {
 }
 
 func TestDevCandidateRetainsDirectoryUntilCleanupCompletes(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	h, err := hosting.Open(hosting.Options{Directory: filepath.Join(directory, "store")})
 	if err != nil {
