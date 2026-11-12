@@ -40,7 +40,7 @@ data, err := scope.Call(ctx, requiresA, input)          // 原始 JSON
 <pre><code>child, err := contract.CreateChild(ctx, scope, contract.Child{
     ID: "optional", Definition: "middle", Config: scope.Config(),
 })
-// 只登记，不等待；父发布后再 child.Wait(ctx)。初始化里 Wait 自己的子实例会返回 reentrant_call。</code></pre>
+// 只登记，不等待：子实例在父发布后才启动，父发布后再 child.Wait(ctx)。</code></pre>
 
 <p>子实例不参与服务依赖解析：它解决的是“这个包的可选功能”，不是“我需要另一个包的服务”。</p>
 

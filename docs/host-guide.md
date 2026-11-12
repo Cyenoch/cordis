@@ -56,7 +56,20 @@ data, err := host.Call(ctx, contract.Requirement{Name: "example.counter", Major:
 result, err := host.Emit(ctx, contract.Event{Kind: contract.KindEvent, Name: "example.changed", Input: payload, Mode: contract.Sequential})
 ```
 
-`Call` 按根作用域解析 provider；`Emit` 触发事件（`Sequential`、`Parallel`）或查询（`First`，结果带显式的 `Handled`），覆盖进程内插件和所有 native 实例。`host.Caller(id)` 返回某个已登记 entry 看到的解析视图，用法同 `Call`；entry 移除后视图失效，它不是插件身份，也没有清理特权。
+`Call` 按根作用域解析 provider；`Emit` 触发事件（`Sequential`、`Parallel`）或查询（`First`，结果带显式的 `Handled`），覆盖进程内插件和所有 native 实例。
+
+`host.Caller(id)` 返回某个持久 entry 看到的解析视图，隔离在 entry 内的服务也能找到。`view.Call` 用法同 `Call`；`view.Endpoint` 返回校验过版本的 endpoint，交给生成的客户端，一元与流式方法都能调用：
+
+```go
+view, err := host.Caller("feed-a")
+endpoint, err := view.Endpoint(FeedConsumer(0, 0).Requirement)
+feed, err := NewFeedClient(endpoint)
+for line, err := range feed.Tail(ctx, TailRequest{Count: 10}) { /* ... */ }
+```
+
+endpoint 指向取得时的 provider，不随 provider 重启切换；native provider 停止后，在它上面的调用以 `not_ready` 失败，重新取一次即可。视图属于取得时的那次登记：entry 停用、移除或被替换后，视图以 `not_ready` 失败；恢复重启不影响它。视图不是插件身份，也没有清理特权。
+
+Host 提供给 native 插件的服务用 `hosting.Requester(ctx)` 得知请求来自哪个激活（`contract.Identity`：包、entry、激活、摘要）。Host 代插件处理的调用、流、事件、链与子实例操作都带着它；处理者用这个 ctx 调用另一个插件、后者再调用 Host 时，请求方是后者。应用和进程内插件用不继承 native 请求的 ctx 发起的调用报告 `false`。它只是信息，Cordis 不据此授权。
 
 `host.Resolver()` 返回供[配置文件加载器](loader.md)使用的解析器：条目的 plugin 写作 `package:<id>`（默认定义）或 `package:<id>#<definition>`，即可由配置文件运行已安装的 native 包。
 

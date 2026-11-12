@@ -84,7 +84,7 @@ var ShoutPlugin = cordis.Plugin[struct{}]{
 
 provider 停止或重启时，依赖它的实例先完成清理，provider 之后才释放自己的资源；provider 回来后它们以新的绑定重新启动。没有声明就获取别的实例的服务会得到 `ErrNotRequired`。可选依赖用 `s.When(requires, start)`：它只在依赖齐备时运行，不让实例自己等待。
 
-服务需要知道是谁在调用时，让方法显式接收调用方的作用域，例如 `router.Handle(s, path, h)`，并在该作用域上 `Defer`。
+服务需要知道是谁在调用时，让方法显式接收调用方的作用域，例如 `router.Handle(s, path, h)`，并在该作用域上 `Defer`。调用来自 native 插件时，Host 在 ctx 上标出请求方，见 [Host 指南](host-guide.md#调用与事件)；进程内的调用只在沿用 native 请求的 ctx 时带着这个标记。
 
 ## 运行
 

@@ -47,7 +47,7 @@ Host 管理的实例用 `contract.Instance`：`Status`、`Wait`、`Update`（返
 
 `hosting.Host`：
 
-- 作用域与调用：`Scope`、`ProvideParent`、`Call(ctx, requirement, method, input)`、`Caller(id)`、`Emit(ctx, contract.Event)`、`Resolver()`。
+- 作用域与调用：`Scope`、`ProvideParent`、`Call(ctx, requirement, method, input)`、`Caller(id)` 与 `Caller.Endpoint(required)`、`Emit(ctx, contract.Event)`、`Resolver()`；包级 `Requester(ctx)` 报告 native 请求方，见[接入宿主](host-guide.md#调用与事件)。
 - 包：`Install`、`Select`、`Replace`、`Uninstall`、`Store`。
 - 实例：`Enable`、`Disable`、`Remove`、`Resume`、`Retry`、`Instance`、`Instances`、`Status`、`Restore`、`Close`、`Done`。
 - 恢复：`RecoveryStatus`，策略由 `Options.Recovery` 给出。

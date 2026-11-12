@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -208,17 +209,39 @@ func (h *Host) unlockOperation() {
 	h.flushRecoveryDiagnostics()
 }
 
-// Caller calls services as an entry sees them.
-type Caller struct{ scope *cordis.Scope }
+// Caller resolves services as one persistent entry sees them: through the
+// isolation boundaries of the entry and of the entries above it. It keeps
+// the host's authority; it is not a plugin identity and bypasses no
+// cleanup. It belongs to the registration it was taken from: once the entry
+// has been disabled, removed or replaced it fails with not_ready, while a
+// recovery restart keeps it.
+type Caller struct {
+	host     *Host
+	id       string
+	instance *hostInstance
+}
+
+// Endpoint returns the provider that satisfies required in the view, for a
+// generated NewXClient, contract.Invoke or contract.InvokeStream. Like
+// Service.Get on Scope, it is the provider of the moment and does not
+// follow a restart: once a native provider stops, calls on it fail with
+// not_ready and a new endpoint is taken.
+func (c Caller) Endpoint(required contract.Requirement) (contract.Endpoint, error) {
+	c.host.mu.Lock()
+	current := c.host.entries[c.id] == c.instance
+	scope := c.instance.scope
+	c.host.mu.Unlock()
+	if !current {
+		return nil, contract.Fail(contract.NotReady, "view of entry "+strconv.Quote(c.id)+" is out of date: the entry was disabled, removed or replaced")
+	}
+	return resolve(scope, required)
+}
 
 // Call invokes one method of the provider that satisfies required.
 func (c Caller) Call(ctx context.Context, required contract.Requirement, method string, input json.RawMessage) (json.RawMessage, error) {
-	provider, err := contract.EndpointKey(required.Name, required.Major).Get(c.scope)
+	provider, err := c.Endpoint(required)
 	if err != nil {
-		return nil, errors.Join(contract.Fail(contract.NotReady, "service "+required.Key()+" is not available"), err)
-	}
-	if !required.Accepts(provider.Service()) {
-		return nil, &contract.VersionError{Required: required, Visible: provider.Service()}
+		return nil, err
 	}
 	return provider.Call(ctx, method, input)
 }
@@ -226,12 +249,27 @@ func (c Caller) Call(ctx context.Context, required contract.Requirement, method 
 // Call invokes a method of a service as the root scope sees it. Typed code
 // uses a generated client on an endpoint from Scope instead.
 func (h *Host) Call(ctx context.Context, required contract.Requirement, method string, input json.RawMessage) (json.RawMessage, error) {
-	return Caller{scope: h.app.Scope()}.Call(ctx, required, method, input)
+	provider, err := resolve(h.app.Scope(), required)
+	if err != nil {
+		return nil, err
+	}
+	return provider.Call(ctx, method, input)
 }
 
-// Caller resolves services through an entry's isolation boundaries. It
-// keeps the host's authority and is only valid while that entry is
-// registered.
+// resolve returns the provider s sees for required, if its minor is in range.
+func resolve(s *cordis.Scope, required contract.Requirement) (contract.Endpoint, error) {
+	provider, err := contract.EndpointKey(required.Name, required.Major).Get(s)
+	if err != nil {
+		return nil, errors.Join(contract.Fail(contract.NotReady, "service "+required.Key()+" is not available"), err)
+	}
+	if !required.Accepts(provider.Service()) {
+		return nil, &contract.VersionError{Required: required, Visible: provider.Service()}
+	}
+	return provider, nil
+}
+
+// Caller returns the view of the persistent entry entryID for as long as
+// its current registration lasts.
 func (h *Host) Caller(entryID string) (Caller, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -239,7 +277,7 @@ func (h *Host) Caller(entryID string) (Caller, error) {
 	if instance == nil {
 		return Caller{}, contract.Fail(contract.NotReady, "entry does not exist")
 	}
-	return Caller{scope: instance.scope}, nil
+	return Caller{host: h, id: entryID, instance: instance}, nil
 }
 
 // Emit runs the listeners of a cross-process event, or the handlers of a

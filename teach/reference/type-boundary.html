@@ -96,7 +96,7 @@
 <tr><td><code>not_ready</code></td><td>尚未可用</td><td>启动未完成、实例已被替换</td></tr>
 <tr><td><code>denied</code></td><td>未授权</td><td>能力未声明/未授予、scope 校验失败</td></tr>
 <tr><td><code>timeout</code> / <code>canceled</code></td><td>期限/取消</td><td>调用等待超时、context 取消</td></tr>
-<tr><td><code>reentrant_call</code></td><td>重入</td><td>初始化里等自己的子实例、middleware 二次 next、依赖环</td></tr>
+<tr><td><code>reentrant_call</code></td><td>重入</td><td>回调里等调用链上的实例停止、middleware 二次 next、依赖环</td></tr>
 <tr><td><code>plugin_failed</code> / <code>internal</code></td><td>插件/框架内部失败</td><td>Start 返回错误、协议错误</td></tr>
 </tbody>
 </table>

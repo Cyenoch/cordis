@@ -91,7 +91,7 @@ provider major 2  + requirement major 1                        → false（永�
 <tr><td>API</td><td><code>Enable(Entry{Parent: "parent.id"})</code></td><td><code>contract.CreateChild(ctx, scope, Child{...})</code></td></tr>
 <tr><td>持久化</td><td>是，进 catalog；<code>Restore</code> 需宿主显式恢复</td><td>否，绑定当前 activation，重启父时重建</td></tr>
 <tr><td>停用</td><td><code>Disable(parent)</code> 持久停用整棵子树</td><td>父退役自动回收；新 activation 的旧 handle 失效</td></tr>
-<tr><td>启动顺序</td><td>父先于子；子未就绪不阻塞父</td><td>同左；初始化里 <code>Wait</code> 自己的子实例会得到 <code>reentrant_call</code></td></tr>
+<tr><td>启动顺序</td><td>父先于子；子未就绪不阻塞父</td><td>同左；初始化里只登记，父发布后再 <code>Wait</code> 子实例</td></tr>
 <tr><td>数量上限</td><td>—</td><td>每个 activation 最多 256 个直接子实例</td></tr>
 </tbody>
 </table>

@@ -334,8 +334,26 @@ func (e *guestEndpoint) Stream(ctx context.Context, method string, input json.Ra
 	}
 }
 
+// requesterKey marks the ctx of a request the host serves for a native
+// activation.
+type requesterKey struct{}
+
+// Requester reports the native activation that sent the request ctx belongs
+// to. The host sets it for everything it serves a plugin: the calls and
+// streams of the services it requires, the events and queries it emits,
+// its chains and its child operations. The ctx carries it on to whatever
+// the handler calls with it; when that reaches another plugin, which calls
+// the host in turn, that plugin is the requester of its own request. Calls
+// that the application or an in-process plugin starts report false. It is
+// information: Cordis authorizes nothing with it.
+func Requester(ctx context.Context) (contract.Identity, bool) {
+	identity, ok := ctx.Value(requesterKey{}).(contract.Identity)
+	return identity, ok
+}
+
 // stream serves the guest's streaming calls of the services it requires.
 func (r *run) stream(ctx context.Context, method string, input json.RawMessage) iter.Seq2[json.RawMessage, error] {
+	ctx = context.WithValue(ctx, requesterKey{}, r.identity)
 	var request contract.ServiceCall
 	if err := contract.Decode(input, &request); err != nil {
 		return contract.FailedStream(err)
@@ -356,6 +374,7 @@ func (r *run) stream(ctx context.Context, method string, input json.RawMessage) 
 // handle serves the requests of the guest on behalf of the entry: they act
 // with the entry's bindings and end with its activation.
 func (r *run) handle(ctx context.Context, method string, input json.RawMessage) (json.RawMessage, error) {
+	ctx = context.WithValue(ctx, requesterKey{}, r.identity)
 	switch method {
 	case "call":
 		var request contract.ServiceCall
