@@ -250,27 +250,27 @@ func SignatureInput(entries []IntegrityEntry) ([]byte, error) {
 
 func (t TrustPolicy) verify(m contract.Manifest, digest string, input []byte, sig *Signature) error {
 	if t.RevokedPublishers[m.Publisher] {
-		return fmt.Errorf("publisher %q is revoked", m.Publisher)
+		return contract.Fail(contract.Denied, fmt.Sprintf("publisher %q is revoked", m.Publisher))
 	}
 	if !slices.Contains(t.Publishers[m.Publisher], m.ID) {
-		return fmt.Errorf("publisher %q is not authorized for plugin %q", m.Publisher, m.ID)
+		return contract.Fail(contract.Denied, fmt.Sprintf("publisher %q is not authorized for plugin %q", m.Publisher, m.ID))
 	}
 	if t.Digests[digest] {
 		return nil
 	}
 	if sig == nil {
-		return fmt.Errorf("package %s requires an authorized signature or an approved exact digest", m.ID)
+		return contract.Fail(contract.Denied, fmt.Sprintf("package %s requires an authorized signature or an approved exact digest", m.ID))
 	}
 	key, ok := t.Keys[sig.KeyID]
 	if !ok || key.Revoked || key.Publisher != m.Publisher || len(key.PublicKey) != ed25519.PublicKeySize {
-		return fmt.Errorf("untrusted, revoked or publisher-mismatched signing key %q", sig.KeyID)
+		return contract.Fail(contract.Denied, fmt.Sprintf("untrusted, revoked or publisher-mismatched signing key %q", sig.KeyID))
 	}
 	signature, err := base64.StdEncoding.Strict().DecodeString(sig.Signature)
 	if err != nil {
-		return fmt.Errorf("decode signature: %w", err)
+		return contract.Wrap(contract.Denied, fmt.Errorf("decode signature: %w", err))
 	}
 	if !ed25519.Verify(key.PublicKey, input, signature) {
-		return fmt.Errorf("invalid package signature")
+		return contract.Fail(contract.Denied, "invalid package signature")
 	}
 	return nil
 }

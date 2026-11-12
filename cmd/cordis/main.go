@@ -14,6 +14,8 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"slices"
+	"strings"
 	"syscall"
 
 	"github.com/Cyenoch/cordis/contract"
@@ -127,6 +129,14 @@ func execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 		}
 		if err != nil {
 			return true, &usageError{message: args[0] + ": " + err.Error()}
+		}
+		// Parsing stops at the first argument, so a flag after it would
+		// otherwise be taken for another argument. After "--" it is one.
+		for _, arg := range flags.Args() {
+			name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+			if strings.HasPrefix(arg, "-") && flags.Lookup(name) != nil && !slices.Contains(args, "--") {
+				return true, &usageError{message: fmt.Sprintf("%s: flag %s comes after the arguments; put flags first: cordis %s", args[0], arg, usage)}
+			}
 		}
 		if *version {
 			return true, printVersion(out)

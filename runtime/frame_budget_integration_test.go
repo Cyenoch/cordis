@@ -75,7 +75,7 @@ func main() {
 	}
 	for _, budget := range []int{4096, 16384} {
 		t.Run(fmt.Sprint(budget), func(t *testing.T) {
-			adapter := native.New()
+			adapter := native.New(native.Options{})
 			start := func() contract.Session {
 				identity := contract.Identity{Package: "budget", Entry: "one", Activation: contract.NewID()}
 				session, err := adapter.Start(t.Context(), contract.Launch{FrameBytes: budget, Identity: identity, Directory: root, Artifact: artifact, Handle: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {

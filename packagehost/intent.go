@@ -23,7 +23,7 @@ func (s *Store) EnableEntry(ctx context.Context, entry contract.Entry) (saved co
 	var exists bool
 	ref, exists = s.catalog.Selected[entry.Package]
 	if !exists {
-		return saved, ErrNotSelected
+		return saved, notSelected(entry.Package)
 	}
 	p, err := s.get(ref)
 	if err != nil {

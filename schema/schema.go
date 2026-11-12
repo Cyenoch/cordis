@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -26,6 +27,19 @@ type FieldError struct {
 	Path    string
 	Keyword string
 	Message string
+}
+
+// jsonField reports data that is not acceptable JSON at path. The error
+// keeps the check's message without its code, which the caller classifies.
+func jsonField(path string, err error) error {
+	if located, ok := errors.AsType[*contract.PathError](err); ok {
+		path += located.Path
+	}
+	message := err.Error()
+	if coded, ok := errors.AsType[*contract.Error](err); ok {
+		message = coded.Message
+	}
+	return field(path, "json", message)
 }
 
 func (e *FieldError) Error() string {
@@ -77,7 +91,7 @@ func Compile(data json.RawMessage) (*Schema, error) {
 		return nil, field("/schema", "json", "invalid UTF-8")
 	}
 	if err := contract.CheckJSON(data, 32, 10000); err != nil {
-		return nil, field("/schema", "json", err.Error())
+		return nil, jsonField("/schema", err)
 	}
 	data, err := resolveSchema(data, nil)
 	if err != nil {
@@ -118,7 +132,7 @@ func (s *Schema) Validate(value json.RawMessage) error {
 		return field("", "json", "invalid UTF-8")
 	}
 	if err := contract.CheckJSON(value, 32, 10000); err != nil {
-		return field("", "json", err.Error())
+		return jsonField("", err)
 	}
 	return s.root.validate(value, "")
 }

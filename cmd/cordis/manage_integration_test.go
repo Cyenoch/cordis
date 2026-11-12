@@ -113,7 +113,7 @@ func TestOfflineCLIManagesIntentAndIncompatibleUpgrade(t *testing.T) {
 	misspelt := filepath.Join(t.TempDir(), "root.toml")
 	writeCLIFile(t, misspelt, "value = \"old\"\nlabl = \"x\"\n")
 	if _, err := run("enable", "-store", directory, "-trust", trust, "-package", "demo", "-config-file", misspelt, "root"); err == nil ||
-		!strings.Contains(err.Error(), "config from "+misspelt+": /labl: additionalProperties: unknown property; known: value") {
+		!strings.Contains(err.Error(), "config from "+misspelt+": invalid_message: /labl: additionalProperties: unknown property; known: value") {
 		t.Fatalf("misspelt config: %v", err)
 	}
 	must("enable", "-store", directory, "-trust", trust, "-package", "demo", "-isolate", "db@1", "-config", `{"value":"old"}`, "root")

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
 	"runtime"
 	"slices"
 	"sync"
@@ -25,6 +26,9 @@ type run struct {
 	host     *Host
 	instance *hostInstance
 	identity contract.Identity
+	parent   string    // the parent's activation, when the parent is native
+	began    time.Time // when the activation started starting
+	startup  time.Duration
 	scope    *cordis.Scope
 	session  contract.Session
 	slots    chan struct{} // bounds the requests in flight to the guest
@@ -49,7 +53,7 @@ func (i *hostInstance) start(ctx context.Context, s *cordis.Scope, config json.R
 		return err
 	}
 	owner := contract.Identity{Package: i.pkg.Ref.ID, Entry: i.id, Digest: i.pkg.Ref.Digest, Activation: contract.NewID()}
-	r := &run{host: h, instance: i, identity: owner, scope: s, listened: map[string]*listener{},
+	r := &run{host: h, instance: i, identity: owner, began: time.Now(), scope: s, listened: map[string]*listener{},
 		chains: chainCalls{stops: map[string]func(){}, nexts: map[string]*chainCall{}},
 		// Subscription control shares the session's limit with business requests.
 		slots: make(chan struct{}, h.options.Inflight-8)}
@@ -61,9 +65,20 @@ func (i *hostInstance) start(ctx context.Context, s *cordis.Scope, config json.R
 		s.Defer(func(context.Context) error { return i.endRun(r) })
 	}
 	if beginErr != nil {
+		if !catalogCommitted(beginErr) {
+			// No run was recorded, so endRun will not report this one.
+			h.logActivation(r, slog.LevelError, "activation failed", "stage", "starting", "error", beginErr)
+		}
 		return beginErr
 	}
 	s.Defer(func(context.Context) error { return h.forgetChildren(owner) })
+	if i.parent != "" {
+		parent, err := parentKey(i.parent).Get(s)
+		if err != nil {
+			return err
+		}
+		r.parent = parent.Activation
+	}
 	// A package built for another protocol never gets a process.
 	minor, err := i.pkg.Manifest.Protocol.Negotiate(contract.Protocol{Major: contract.ProtocolMajor})
 	if err != nil {
@@ -149,7 +164,29 @@ func (i *hostInstance) start(ctx context.Context, s *cordis.Scope, config json.R
 		}
 	})
 	// Persistent entries that name this one as their parent may start now.
-	return parentKey(i.id).Provide(s, owner)
+	if err := parentKey(i.id).Provide(s, owner); err != nil {
+		return err
+	}
+	r.startup = time.Since(r.began)
+	h.logActivation(r, slog.LevelInfo, "activation started", "startup", r.startup)
+	return nil
+}
+
+// logActivation writes a record that names the activation it is about, so
+// it can be matched with Status and the store's run history.
+func (h *Host) logActivation(r *run, level slog.Level, message string, attrs ...any) {
+	if h.options.Logger == nil {
+		return
+	}
+	attrs = append([]any{"package", r.identity.Package, "entry", r.identity.Entry,
+		"activation", r.identity.Activation, "digest", r.identity.Digest}, attrs...)
+	if r.instance.parent != "" {
+		attrs = append(attrs, "parent", r.instance.parent)
+	}
+	if r.parent != "" {
+		attrs = append(attrs, "parentActivation", r.parent)
+	}
+	h.options.Logger.Log(context.Background(), level, message, attrs...)
 }
 
 func sessionError(session contract.Session) error {

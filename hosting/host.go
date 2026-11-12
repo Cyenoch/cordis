@@ -17,7 +17,6 @@ import (
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/packagehost"
 	"github.com/Cyenoch/cordis/runtime/native"
-	"github.com/Cyenoch/cordis/schema"
 )
 
 type Options struct {
@@ -103,7 +102,7 @@ func Open(options Options) (*Host, error) {
 		return nil, err
 	}
 	if options.Runtime == nil {
-		options.Runtime = native.New()
+		options.Runtime = native.New(native.Options{})
 	}
 	if options.Inflight == 0 {
 		options.Inflight = contract.DefaultInflight
@@ -406,7 +405,7 @@ func (h *Host) enableEntry(ctx context.Context, entry contract.Entry, parent *ru
 		entry.Config = json.RawMessage(`{}`) // an omitted configuration is an empty object
 	}
 	// Nothing is saved or started for a configuration the definition rejects.
-	if err := schema.Validate(spec.ConfigSchema, entry.Config); err != nil {
+	if err := validConfig(spec, entry.Config); err != nil {
 		return nil, err
 	}
 	instance := &hostInstance{host: h, id: entry.ID, diagnostics: diagnostics, pkg: pkg, spec: spec,

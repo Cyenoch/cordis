@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
@@ -65,7 +67,7 @@ func (i *hostInstance) plugin() cordis.Plugin[json.RawMessage] {
 	return cordis.Plugin[json.RawMessage]{
 		Name:     i.id,
 		Requires: requires,
-		Validate: func(config json.RawMessage) error { return schema.Validate(i.spec.ConfigSchema, config) },
+		Validate: func(config json.RawMessage) error { return validConfig(i.spec, config) },
 		Start: func(ctx context.Context, s *cordis.Scope, config json.RawMessage) (err error) {
 			defer func() { i.note(err) }()
 			return i.start(ctx, s, config)
@@ -109,6 +111,7 @@ func (i *hostInstance) endRun(r *run) error {
 	if failed = r.reported(failed); failed != nil && outcome.FailureCode == "" {
 		outcome.FailureCode = contract.ErrorCode(failed)
 	}
+	outcome.StartupDuration = r.startup
 	state := "stopped"
 	if outcome.FailureCode == contract.Canceled {
 		state = "canceled"
@@ -116,6 +119,7 @@ func (i *hostInstance) endRun(r *run) error {
 		state = "failed"
 	}
 	i.setOutcome(r, outcome)
+	i.host.logEnd(r, state, outcome, failed)
 	return i.host.store.EndRun(context.Background(), r.identity, state, outcome)
 }
 
@@ -245,7 +249,7 @@ func (i *hostInstance) Update(ctx context.Context, config json.RawMessage) (cont
 		config = json.RawMessage(`{}`)
 	}
 	// Nothing is saved or stopped for a configuration the definition rejects.
-	if err := schema.Validate(i.spec.ConfigSchema, config); err != nil {
+	if err := validConfig(i.spec, config); err != nil {
 		release()
 		h.unlockOperation()
 		return contract.UpdateResult{}, err
@@ -451,4 +455,48 @@ func orderedEntries(entries []contract.Entry) []contract.Entry {
 		return 0
 	})
 	return entries
+}
+
+// logEnd records how an activation ended. One that failed before it was
+// active has no startup, and its duration says how long starting took.
+func (h *Host) logEnd(r *run, state string, outcome contract.Outcome, failed error) {
+	attrs := []any{"state", state, "duration", time.Since(r.began)}
+	if r.startup == 0 {
+		attrs = append(attrs, "stage", "starting")
+	}
+	if outcome.Reason != "" {
+		attrs = append(attrs, "reason", outcome.Reason)
+	}
+	if outcome.ExitCode != nil {
+		attrs = append(attrs, "exitCode", *outcome.ExitCode)
+	}
+	if outcome.Signal != "" {
+		attrs = append(attrs, "signal", outcome.Signal)
+	}
+	if outcome.Forced {
+		attrs = append(attrs, "forced", true)
+	}
+	if state != "failed" {
+		h.logActivation(r, slog.LevelInfo, "activation "+state, attrs...)
+		return
+	}
+	if outcome.FailureCode != "" {
+		attrs = append(attrs, "errorCode", outcome.FailureCode)
+	}
+	if failed != nil {
+		attrs = append(attrs, "error", failed)
+	}
+	if outcome.CleanupCode != "" {
+		attrs = append(attrs, "cleanupCode", outcome.CleanupCode)
+	}
+	h.logActivation(r, slog.LevelError, "activation failed", attrs...)
+}
+
+// validConfig rejects a configuration the definition's schema does not
+// accept, as invalid.
+func validConfig(spec contract.DefinitionSpec, config json.RawMessage) error {
+	if err := schema.Validate(spec.ConfigSchema, config); err != nil {
+		return contract.Wrap(contract.Invalid, err)
+	}
+	return nil
 }

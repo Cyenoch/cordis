@@ -181,3 +181,14 @@ func TestMaps(t *testing.T) {
 		t.Fatal("equal maps have different fingerprints")
 	}
 }
+
+// A value past the JSON limits is located once, without the code its check
+// carries, which the caller adds.
+func TestJSONLimitNamesWhere(t *testing.T) {
+	t.Parallel()
+	value := `{"a":{"b":[` + strings.Repeat("0,", 10000) + `0]}}`
+	err := schema.Validate(json.RawMessage(`{"type":"object"}`), json.RawMessage(value))
+	if err == nil || err.Error() != "/a/b: json: JSON array limit exceeded" {
+		t.Fatalf("over-limit value = %v", err)
+	}
+}

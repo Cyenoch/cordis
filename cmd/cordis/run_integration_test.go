@@ -85,8 +85,8 @@ func TestRunCallsDeclaredMinorTwoFromIndependentPlugin(t *testing.T) {
 	}
 	for _, tt := range []struct{ operation, want string }{
 		{"panic", "[cli.instance] panic: chain provider panicked"},
-		{"crash", "stopped during the call: activation exited without shutdown: exit status 7"},
-		{"stdout", "stopped during the call: plugin wrote non-protocol data to stdout"},
+		{"crash", "activation exited without shutdown: exit status 7"},
+		{"stdout", "plugin wrote non-protocol data to stdout"},
 	} {
 		t.Run("plugin "+tt.operation, func(t *testing.T) {
 			command := exec.CommandContext(t.Context(), cli, "run", "-dev-unsigned", "-definition", "provider", "-service", "chain.a",
@@ -96,8 +96,9 @@ func TestRunCallsDeclaredMinorTwoFromIndependentPlugin(t *testing.T) {
 			if err := command.Run(); err == nil {
 				t.Fatal("run succeeded after the plugin failed")
 			}
-			if !strings.Contains(diagnostics.String(), tt.want) {
-				t.Fatalf("run stderr lacks %q:\n%s", tt.want, &diagnostics)
+			// The failure is reported once, though Close sees it again.
+			if strings.Count(diagnostics.String(), tt.want) != 1 {
+				t.Fatalf("run stderr does not report %q once:\n%s", tt.want, &diagnostics)
 			}
 		})
 	}

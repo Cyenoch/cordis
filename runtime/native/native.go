@@ -5,6 +5,7 @@ package native
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"time"
@@ -30,19 +31,9 @@ type Runtime struct{ options Options }
 
 // New creates an adapter with no inherited environment and no implicit restart.
 // Start's context covers startup only; set Options.Lifetime for parent lifetime.
-func New(options ...Options) *Runtime {
-	var selected Options
-	if len(options) > 0 {
-		selected = options[0]
-	}
-	if selected.Environment != nil {
-		copied := make(map[string]string, len(selected.Environment))
-		for key, value := range selected.Environment {
-			copied[key] = value
-		}
-		selected.Environment = copied
-	}
-	return &Runtime{options: selected}
+func New(options Options) *Runtime {
+	options.Environment = maps.Clone(options.Environment)
+	return &Runtime{options: options}
 }
 
 func (r *Runtime) Start(ctx context.Context, launch contract.Launch) (contract.Session, error) {

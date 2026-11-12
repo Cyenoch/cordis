@@ -137,10 +137,12 @@ text = "Cordis"
 ```
 
 ```json title="调用结果"
-{"text":"hello, Cordis"}
+{
+  "text": "hello, Cordis"
+}
 ```
 
-每次 `run` 都新建临时宿主和实例。启动等待默认有期限，等待诊断写入 stderr，调用结果写入 stdout；需要时用 `-startup-timeout 1m` 调整启动期限。
+每次 `run` 都新建临时宿主和实例。启动等待默认有期限，等待依赖时把原因写入 stderr，调用结果写入 stdout；需要时用 `-startup-timeout 1m` 调整启动期限。
 
 :::caution[仅限自己的开发产物]
 `-dev-unsigned` 只许可本次归档的精确摘要，不建立全局信任。Native 插件具有当前用户权限，不是沙箱；不要运行不受信任代码。正式交付由宿主 [TrustPolicy](packages.md#信任) 明确授权。

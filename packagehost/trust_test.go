@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"testing"
+
+	"github.com/Cyenoch/cordis/contract"
 )
 
 func TestTrustPolicyDigestApprovalAndSignatures(t *testing.T) {
@@ -79,8 +81,8 @@ func TestTrustPolicyDigestApprovalAndSignatures(t *testing.T) {
 			if tc.trusted && err != nil {
 				t.Fatalf("rejected: %v", err)
 			}
-			if !tc.trusted && err == nil {
-				t.Fatal("trusted")
+			if !tc.trusted && contract.ErrorCode(err) != contract.Denied {
+				t.Fatalf("untrusted package not denied: %v", err)
 			}
 		})
 	}

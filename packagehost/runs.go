@@ -154,19 +154,19 @@ func (s *Store) commitRuns(ctx context.Context, runs []RunRecord) error {
 		return fmt.Errorf("run history exceeds byte quota")
 	}
 	if err := durableBytes(next, raw); err != nil {
-		return fmt.Errorf("write runs candidate: %w", err)
+		return contract.Wrap(contract.Internal, fmt.Errorf("write runs candidate: %w", err))
 	}
 	s.observeCommit(commitRunsSynced)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := replaceFile(next, filepath.Join(s.root, "runs.json")); err != nil {
-		return fmt.Errorf("replace runs: %w", err)
+		return contract.Wrap(contract.Internal, fmt.Errorf("replace runs: %w", err))
 	}
 	s.runs = runs
 	s.observeCommit(commitRunsSwapped)
 	if err := syncDir(s.root); err != nil {
-		return &CommitError{Err: fmt.Errorf("sync runs: %w", err)}
+		return contract.Wrap(contract.Internal, &CommitError{Err: fmt.Errorf("sync runs: %w", err)})
 	}
 	return nil
 }

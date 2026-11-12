@@ -27,6 +27,7 @@ type trustDocument struct {
 	Publishers        map[string][]string        `json:"publishers"`
 	RevokedPublishers map[string]bool            `json:"revokedPublishers"`
 	PublisherChanges  map[string]map[string]bool `json:"publisherChanges"`
+	Digests           map[string]bool            `json:"digests"`
 }
 
 func loadTrust(file string) (packagehost.TrustPolicy, error) {
@@ -40,7 +41,12 @@ func loadTrust(file string) (packagehost.TrustPolicy, error) {
 	}
 	trust := packagehost.TrustPolicy{
 		Keys: map[string]packagehost.TrustedKey{}, Publishers: input.Publishers,
-		RevokedPublishers: input.RevokedPublishers, PublisherChanges: input.PublisherChanges,
+		RevokedPublishers: input.RevokedPublishers, PublisherChanges: input.PublisherChanges, Digests: input.Digests,
+	}
+	for digest := range input.Digests {
+		if raw, err := hex.DecodeString(digest); err != nil || len(raw) != 32 || strings.ToLower(digest) != digest {
+			return packagehost.TrustPolicy{}, fmt.Errorf("load trust: digest %q is not a lowercase sha256", digest)
+		}
 	}
 	for id, key := range input.Keys {
 		public, err := hex.DecodeString(key.PublicKey)

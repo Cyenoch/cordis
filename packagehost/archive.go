@@ -53,7 +53,10 @@ func validateConfig(raw, value json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil
 	}
-	return schema.Validate(raw, value)
+	if err := schema.Validate(raw, value); err != nil {
+		return contract.Wrap(contract.Invalid, err)
+	}
+	return nil
 }
 
 type byteBudget struct {
@@ -379,7 +382,7 @@ func inspectContent(ctx context.Context, dir, source string, development bool, l
 		return p, nil, err
 	}
 	if !bytes.Equal(input, expected) {
-		return p, nil, fmt.Errorf("package integrity mismatch")
+		return p, nil, contract.Fail(contract.Denied, "package integrity mismatch")
 	}
 	listed := map[string]bool{}
 	for _, entry := range actual {

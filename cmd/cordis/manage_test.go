@@ -31,3 +31,24 @@ func TestStoreCommandsRefuseAMissingStore(t *testing.T) {
 		}
 	}
 }
+
+// The trust file approves exact digests, which the store trusts without a
+// signature, and rejects a digest that cannot name any content.
+func TestTrustFileApprovesExactDigests(t *testing.T) {
+	t.Parallel()
+	digest := strings.Repeat("ab", 32)
+	for content, want := range map[string]string{
+		`{"digests":{"` + digest + `":true}}`:                  "",
+		`{"digests":{"` + strings.ToUpper(digest) + `":true}}`: "is not a lowercase sha256",
+		`{"digests":{"abc":true}}`:                             "is not a lowercase sha256",
+	} {
+		file := filepath.Join(t.TempDir(), "trust.json")
+		if err := os.WriteFile(file, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		trust, err := loadTrust(file)
+		if want == "" && (err != nil || !trust.Digests[digest]) || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+			t.Fatalf("%s: %+v, %v", content, trust.Digests, err)
+		}
+	}
+}

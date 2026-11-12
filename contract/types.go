@@ -37,10 +37,26 @@ const (
 type Error struct {
 	Code    Code   `json:"code"`
 	Message string `json:"message"`
+	cause   error
 }
 
 func (e *Error) Error() string             { return string(e.Code) + ": " + e.Message }
+func (e *Error) Unwrap() error             { return e.cause }
 func Fail(code Code, message string) error { return &Error{Code: code, Message: message} }
+
+// Wrap classifies err with code. The message is err's text and err stays
+// reachable through errors.Is and errors.As. An *Error that already has
+// code is returned as it is; over another code the outer one wins for
+// ErrorCode, while errors.Is matches both. Wrap of nil is nil.
+func Wrap(code Code, err error) error {
+	if err == nil {
+		return nil
+	}
+	if coded, ok := err.(*Error); ok && coded.Code == code {
+		return err
+	}
+	return &Error{Code: code, Message: err.Error(), cause: err}
+}
 func (e *Error) Is(target error) bool {
 	if other, ok := target.(*Error); ok {
 		return other != nil && e.Code == other.Code

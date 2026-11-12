@@ -99,7 +99,7 @@ Pack 仅发布元数据、全部声明产物和顶层 `resources` 的精确文�
 }
 ```
 
-还可提供 `revokedPublishers` 和 `publisherChanges`，语义与 `TrustPolicy` 相同。生产管理没有跳过验签开关；签名信息本身不能建立信任。
+还可提供 `revokedPublishers`、`publisherChanges` 和 `digests`，语义与 `TrustPolicy` 相同；`digests` 形如 `{"<sha256>": true}`，批准该精确内容而不验签名。生产管理没有跳过验签开关；签名信息本身不能建立信任。
 
 ```sh
 ./bin/cordis install -store ./state -trust ./trust.json ./hello.zip
@@ -173,7 +173,7 @@ printf '%s' '{"method":"execute","input":{"operation":"get","delta":0}}' | ./bin
 
 配置、调用输入与契约文件共用 `config` loader。它拒绝重复键、尾随文档和不支持的语法，不猜类型、不合并环境变量、不失败后换格式。TOML 适合对象；显式 null、非对象根使用 YAML 或 JSON。错误保留输入来源和可获得的位置。
 
-启动等待状态变化时，stderr 输出有界 `startup` JSON 诊断：definition、状态、实际 Requirement 范围、可见 provider 和不兼容原因；缺 provider 到期后非零退出。插件 stderr 每行带 `[entry]` 前缀写到 stderr，崩溃栈因此可见。stdout 只输出最终状态或调用结果。启动超时不等于业务调用超时，取消也不回滚外部副作用。
+启动在等待依赖时，stderr 输出有界 `startup` JSON 诊断：definition、状态、实际 Requirement 范围、可见 provider 和不兼容原因；缺 provider 到期后非零退出。插件 stderr 每行带 `[entry]` 前缀写到 stderr，崩溃栈因此可见。stdout 只输出最终状态或调用结果。启动超时不等于业务调用超时，取消也不回滚外部副作用。
 
 应用服务可通过[宿主公开 API](host-guide.md)组合。`-dev-unsigned` 批准本次产物的精确摘要，包里的签名不影响结果；`signature.json` 格式错误仍会拒绝（见[信任](packages.md#信任)）。正式交付由宿主 TrustPolicy 明确授权。Native 仍拥有用户权限，不是沙箱；初始化和构建不会额外授权执行。
 

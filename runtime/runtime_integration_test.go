@@ -369,7 +369,7 @@ func awaitReaped(t *testing.T, session contract.Session) {
 }
 
 func TestNativeStartupRejectsInvalidPaths(t *testing.T) {
-	runtime := native.New()
+	runtime := native.New(native.Options{})
 	root := t.TempDir()
 	artifact := filepath.Join(root, "artifact")
 	if err := os.WriteFile(artifact, []byte("not executable"), 0600); err != nil {

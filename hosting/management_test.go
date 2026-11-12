@@ -41,7 +41,7 @@ func TestUpdateValidatesBeforeItSavesOrStops(t *testing.T) {
 	f := newFixture(t)
 	f.pack(f.configured())
 	f.open()
-	if _, err := f.host.Enable(f.ctx(), contract.Entry{ID: "bad", Package: "test.configured", Config: []byte(`{"label":1}`)}); err == nil {
+	if _, err := f.host.Enable(f.ctx(), contract.Entry{ID: "bad", Package: "test.configured", Config: []byte(`{"label":1}`)}); contract.ErrorCode(err) != contract.Invalid {
 		t.Fatal("an entry with an invalid configuration was enabled")
 	}
 	if entries, _ := f.host.Store().Entries(); len(entries) != 0 {
@@ -49,7 +49,7 @@ func TestUpdateValidatesBeforeItSavesOrStops(t *testing.T) {
 	}
 	instance := f.enable(contract.Entry{ID: "entry", Package: "test.configured", Config: []byte(`{"label":"one"}`)})
 	must(t, instance.Wait(f.ctx()))
-	if _, err := instance.Update(f.ctx(), []byte(`{"label":"two","extra":true}`)); err == nil {
+	if _, err := instance.Update(f.ctx(), []byte(`{"label":"two","extra":true}`)); contract.ErrorCode(err) != contract.Invalid {
 		t.Fatal("an invalid update was accepted")
 	}
 	if got := f.log.get(); !slices.Equal(got, []string{"start one"}) {

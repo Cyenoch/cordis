@@ -21,7 +21,7 @@ func (r *resolver) resolve(raw json.RawMessage) (json.RawMessage, error) {
 		return nil, field("/schema", "$ref", "schema exceeds byte limit")
 	}
 	if err := contract.CheckJSON(raw, 32, 10000); err != nil {
-		return nil, field("/schema", "json", err.Error())
+		return nil, jsonField("/schema", err)
 	}
 
 	return r.expandRoot(raw, "root", 0)

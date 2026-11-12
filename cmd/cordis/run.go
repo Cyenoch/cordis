@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Cyenoch/cordis/config"
@@ -126,6 +127,16 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 	if err != nil {
 		return err
 	}
+	// The input names the method of the service and carries its input.
+	var call struct {
+		Method string          `json:"method"`
+		Input  json.RawMessage `json:"input"`
+	}
+	if *service != "" {
+		if err := contract.Decode(inputData, &call); err != nil || call.Method == "" {
+			return errors.Join(&usageError{message: `-service needs -input {"method": "...", "input": ...}`}, err)
+		}
+	}
 	startupCtx, cancel := context.WithTimeout(ctx, *startupTimeout)
 	defer cancel()
 	pkg, err := packagehost.Inspect(startupCtx, flags.Arg(0))
@@ -157,7 +168,7 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 	}
 	defer func() {
 		_, err := closeTemporaryHost(host, defaultShutdown, root)
-		result = errors.Join(result, err)
+		result = errors.Join(result, unreported(err, result))
 	}()
 	pkg.Package, err = host.Install(startupCtx, flags.Arg(0))
 	if err != nil {
@@ -184,14 +195,6 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 	if *service == "" {
 		return writeJSON(out, instance.Status())
 	}
-	// The input names the method of the service and carries its input.
-	var call struct {
-		Method string          `json:"method"`
-		Input  json.RawMessage `json:"input"`
-	}
-	if err := contract.Decode(inputData, &call); err != nil || call.Method == "" {
-		return errors.Join(&usageError{message: `-input must be {"method": "...", "input": ...}`}, err)
-	}
 	value, err := host.Call(ctx, required, call.Method, call.Input)
 	if err != nil {
 		return err
@@ -210,7 +213,8 @@ func waitForStartup(ctx context.Context, instance contract.Instance, definition 
 	lines := 0
 	report := func() error {
 		status := instance.Status()
-		if lines >= 16 || (status.State != contract.Waiting && status.State != contract.Starting) {
+		// Only a named reason says what startup waits for.
+		if lines >= 16 || len(status.Waiting) == 0 || (status.State != contract.Waiting && status.State != contract.Starting) {
 			return nil
 		}
 		reasons := append([]contract.WaitReason{}, status.Waiting[:min(4, len(status.Waiting))]...)
@@ -283,9 +287,38 @@ func selectService(manifest contract.Manifest, definition, name string, major, m
 			}
 		}
 		if len(matches) != 1 {
-			return contract.Requirement{}, &usageError{message: "service version is absent or ambiguous; specify -definition, -major and a compatible minor range"}
+			provided := make([]string, 0, len(candidate.Provides))
+			for _, service := range candidate.Provides {
+				provided = append(provided, fmt.Sprintf("%s %d.%d", service.Name, service.Major, service.Minor))
+			}
+			message := fmt.Sprintf("-service %s matches no service of definition %q, which provides [%s]", name, definition, strings.Join(provided, ", "))
+			if len(matches) > 1 {
+				message = fmt.Sprintf("-service %s matches %d versions in definition %q; choose one with -major", name, len(matches), definition)
+			}
+			return contract.Requirement{}, &usageError{message: message}
 		}
 		return contract.Requirement{Name: name, Major: matches[0].Major, MinMinor: uint32(minMinor), MaxMinor: uint32(maxMinor)}, nil
 	}
-	return contract.Requirement{}, &usageError{message: "unknown definition: " + definition}
+	definitions := make([]string, 0, len(manifest.Definitions))
+	for _, candidate := range manifest.Definitions {
+		definitions = append(definitions, candidate.ID)
+	}
+	return contract.Requirement{}, &usageError{message: fmt.Sprintf("unknown definition %q; the package defines [%s]", definition, strings.Join(definitions, ", "))}
+}
+
+// unreported leaves out of err the failures whose text reported already
+// shows, such as a plugin crash that ended the call and that Close reports
+// again.
+func unreported(err, reported error) error {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var rest []error
+		for _, e := range joined.Unwrap() {
+			rest = append(rest, unreported(e, reported))
+		}
+		return errors.Join(rest...)
+	}
+	if err != nil && reported != nil && strings.Contains(reported.Error(), err.Error()) {
+		return nil
+	}
+	return err
 }

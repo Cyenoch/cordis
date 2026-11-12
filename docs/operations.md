@@ -23,7 +23,7 @@ description: 上线前的检查、版本替换、关闭与备份、诊断日志�
 
 ## 诊断
 
-给 `Options.Logger` 设置 `slog.New(slog.NewJSONHandler(writer, nil))` 即可输出结构化诊断。先按 entry 查最近一次激活，再用 activation 关联状态、失败调用和退出记录；同一个包的多个实例各有独立身份。handler 同步执行，应及时返回，不得重入 Host 的管理方法。
+给 `Options.Logger` 设置 `slog.New(slog.NewJSONHandler(writer, nil))` 即可输出结构化诊断。每次激活写一条 `activation started`（含 `startup` 启动耗时）和一条结束记录：`activation stopped`、`activation canceled` 或 `activation failed`，带 `reason` 与已知的 `exitCode`、`signal`、`forced`；`activation failed` 另带 `errorCode`、`error`，清理失败时带 `cleanupCode`；未完成启动就结束的带 `stage: "starting"`。所有记录带 `package`、`entry`、`activation`、`digest`，子 entry 另带 `parent`，父 entry 是 native 时还带 `parentActivation`，可与 `Status` 和运行历史对应；同一个包的多个实例各有独立身份。`instance state` 记录来自内核，名称是内部的。handler 同步执行，应及时返回，不得重入 Host 的管理方法。
 
 包操作的 outcome 分为 `rejected`、`committed`、`committed_error` 和没有变更的 `unchanged`。提交后失败仍须处理返回的错误，不应直接重试。运行历史保留最近 256 条终态，含退出与清理类别；它不是实时进程探测，也不是完整审计日志。
 

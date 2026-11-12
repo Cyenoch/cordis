@@ -402,14 +402,14 @@ func (s *Store) commit(ctx context.Context, c catalog) error {
 		return fmt.Errorf("validate candidate catalog: %w", err)
 	}
 	if err = durableBytes(filepath.Join(s.root, "catalog.next"), raw); err != nil {
-		return err
+		return contract.Wrap(contract.Internal, err)
 	}
 	s.observeCommit(commitCatalogSynced)
 	if err = ctx.Err(); err != nil {
 		return err
 	}
 	if err := replaceFile(filepath.Join(s.root, "catalog.next"), filepath.Join(s.root, "catalog.json")); err != nil {
-		return err
+		return contract.Wrap(contract.Internal, err)
 	}
 	s.observeCommit(commitCatalogSwapped)
 	s.catalog = c
@@ -419,7 +419,7 @@ func (s *Store) commit(ctx context.Context, c catalog) error {
 		s.observeCommit(commitRootSynced)
 	}
 	if err != nil {
-		return &CommitError{err}
+		return contract.Wrap(contract.Internal, &CommitError{err})
 	}
 	return nil
 }
@@ -479,7 +479,7 @@ func (s *Store) install(ctx context.Context, source string, dev bool) (p Package
 		return p, err
 	}
 	if old := s.catalog.Publishers[p.Ref.ID]; old != "" && old != p.Manifest.Publisher && !s.trust.PublisherChanges[p.Ref.ID][p.Manifest.Publisher] {
-		return p, fmt.Errorf("publisher change for %s from %s to %s requires explicit approval", p.Ref.ID, old, p.Manifest.Publisher)
+		return p, contract.Fail(contract.Denied, fmt.Sprintf("publisher change for %s from %s to %s requires explicit approval", p.Ref.ID, old, p.Manifest.Publisher))
 	}
 	for _, pending := range s.catalog.Pending {
 		if pending.Ref.ID == p.Ref.ID {
@@ -583,7 +583,7 @@ func (s *Store) Selected(id string) (Package, error) {
 	}
 	ref, ok := s.catalog.Selected[id]
 	if !ok {
-		return Package{}, fmt.Errorf("package %s: %w", id, ErrNotSelected)
+		return Package{}, notSelected(id)
 	}
 	return s.get(ref)
 }
@@ -1123,4 +1123,10 @@ func syncTree(root string) error {
 		}
 	}
 	return nil
+}
+
+// notSelected reports a package with no selected version, which is ready
+// once one is selected.
+func notSelected(id string) error {
+	return contract.Wrap(contract.NotReady, fmt.Errorf("package %s: %w", id, ErrNotSelected))
 }

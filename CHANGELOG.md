@@ -4,6 +4,15 @@
 
 ## 未发布
 
+- `native.New` 改为接收一个 `native.Options`；原来的可变参数会静默忽略第一个之后的选项。无选项时写 `native.New(native.Options{})`。
+- CLI 信任文件新增 `digests`，批准精确摘要的包而无需签名，与 `TrustPolicy.Digests` 相同；拒绝错误提到的“approved exact digest”现在可以配置。
+- `cordis run` 只在启动确有等待原因时输出 `startup` 诊断，正常启动不再打印空的等待行。
+- 各命令的 flag 写在参数之后时，报出该 flag 并提示放到参数前，不再误报缺少参数。
+- `cordis run -service` 缺少或写错 `-input` 时，在启动插件前报错。
+- `cordis run` 的 `-service` 或 `-definition` 写错时，错误列出该定义提供的服务或包内的定义。
+- 插件在调用中退出时，`cordis run` 只报告一次原因，不再在关闭时重复打印。
+- 错误码按原因区分，不再一律是 `plugin_failed`：信任校验与签名失败为 `denied`，配置不符合 schema 为 `invalid_message`，包未选定为 `not_ready`，存储写入失败为 `internal`；消息带上相应前缀。新增 `contract.Wrap(code, err)`，给错误加上错误码且保留原错误，`errors.Is` / `errors.As`（如 `ErrNotSelected`、`*schema.FieldError`）照常可用。
+- Host 的 Logger 为每次激活写 `activation started` 与 `activation stopped`/`canceled`/`failed`，带 package、entry、activation、digest（子 entry 另带 parent）、启动耗时与退出结果，能与 `Status` 和运行历史对应。`Outcome.StartupDuration` 此前从未填写，现在记录启动耗时。
 - 插件在调用中退出时，调用方的错误带上退出码（`activation exited without shutdown: exit status 7`），不再只是 `read frame: EOF`；插件往 stdout 写了非协议内容时，错误指出 stdout 只传协议帧。新增 `wire.ErrRead`，标记因对端发来的内容无法读成帧而结束的会话。
 - `cordis run` 与 `cordis dev` 把插件写到 stderr 的内容转发出来，每行带 `[entry]` 前缀，插件崩溃时能看到 panic 栈；`cordis host` 用 `-plugin-stderr` 开启。
 - `run`、`dev`、`host` 的默认关闭期限由 5 秒改为 25 秒，覆盖一次用尽各段宽限的 native 停止；到期仍未清理完时报错，`run` 与 `dev` 保留仍可能被使用的临时目录并报告路径，不再提前删除。

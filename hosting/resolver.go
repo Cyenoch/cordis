@@ -8,7 +8,6 @@ import (
 	"github.com/Cyenoch/cordis"
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/loader"
-	"github.com/Cyenoch/cordis/schema"
 )
 
 // Resolver lets a configuration loader run installed native packages: an
@@ -63,7 +62,7 @@ func (l loaded) Update(ctx context.Context, config json.RawMessage) error {
 	if len(config) == 0 {
 		config = json.RawMessage(`{}`)
 	}
-	if err := schema.Validate(l.instance.spec.ConfigSchema, config); err != nil {
+	if err := validConfig(l.instance.spec, config); err != nil {
 		return err
 	}
 	return l.instance.instance.Update(ctx, config)

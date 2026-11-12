@@ -78,7 +78,7 @@ func TestStoreInstallRecoveryAndSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Selected("demo"); !errors.Is(err, ErrNotSelected) {
+	if _, err = s.Selected("demo"); !errors.Is(err, ErrNotSelected) || contract.ErrorCode(err) != contract.NotReady {
 		t.Fatalf("installed without selection: %v", err)
 	}
 	if err = s.Select(ctx, p1.Ref, ChangeOptions{}); err != nil {
