@@ -117,7 +117,10 @@ func TestDevProjectNativeGroupSwitching(t *testing.T) {
 	})
 	next := func(event string) devUpdate {
 		t.Helper()
-		timer := time.NewTimer(time.Minute)
+		// One step may build, close the old group (shutdown-timeout, 25s)
+		// and start the new one (startup-timeout, 30s); a minute is not
+		// enough on a loaded machine.
+		timer := time.NewTimer(3 * time.Minute)
 		defer timer.Stop()
 		var skipped []devUpdate
 		for {
