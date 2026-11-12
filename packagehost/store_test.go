@@ -317,7 +317,7 @@ func TestStoreResignedDigestRefreshesTrustDurably(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = trust.verify(p.Manifest, p.Ref.Digest, input, sig, false); err != nil {
+	if err = trust.verify(p.Manifest, p.Ref.Digest, input, sig); err != nil {
 		t.Fatal("private snapshot did not carry current proof", err)
 	}
 	if err = snapshot.Close(); err != nil {
@@ -350,7 +350,7 @@ func TestStoreUnsignedDigestCanAcquireSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	trust.DevDigests = map[string]bool{p.Ref.Digest: true}
+	trust.Digests = map[string]bool{p.Ref.Digest: true}
 	root := t.TempDir()
 	s := openFixture(t, root, trust)
 	if _, err = s.Install(ctx, archive); err != nil {
@@ -359,7 +359,7 @@ func TestStoreUnsignedDigestCanAcquireSignature(t *testing.T) {
 	if err = s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	trust.DevDigests = nil
+	trust.Digests = nil
 	if err = s.UpdateTrust(trust); err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestStorePublisherAuthorizationAndDevDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	trust.DevDigests = map[string]bool{dev.Ref.Digest: true}
+	trust.Digests = map[string]bool{dev.Ref.Digest: true}
 	if err = s.UpdateTrust(trust); err != nil {
 		t.Fatal(err)
 	}
@@ -503,6 +503,95 @@ func TestStorePublisherAuthorizationAndDevDigest(t *testing.T) {
 	}
 	if _, err = s.ImportDirectory(ctx, devSource); err == nil {
 		t.Fatal("digest permission leaked to changed developer directory")
+	}
+}
+
+func TestStoreApprovedDigestOutranksUnknownSignature(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, trust := signingFixture(t)
+	_, stranger, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "third-party.zip")
+	if _, err = Pack(ctx, sourceFixture(t, manifestFixture("demo", "1.0.0")), archive); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Sign(ctx, archive, "stranger", stranger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := openFixture(t, t.TempDir(), trust)
+	if _, err = s.Install(ctx, archive); err == nil {
+		t.Fatal("unknown signing key trusted without an approved digest")
+	}
+	trust.Digests = map[string]bool{p.Ref.Digest: true}
+	if err = s.UpdateTrust(trust); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Install(ctx, archive); err != nil {
+		t.Fatal("approved digest rejected for its unknown signature:", err)
+	}
+	if err = s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.Snapshot(ctx, p.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	trust.Digests = nil
+	if err = s.UpdateTrust(trust); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Snapshot(ctx, p.Ref); err == nil {
+		t.Fatal("withdrawn digest approval still executed")
+	}
+}
+
+func TestStoreApprovedDigestRejectsMalformedSignatureFile(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, trust := signingFixture(t)
+	archive := filepath.Join(t.TempDir(), "plugin.zip")
+	p, err := Pack(ctx, sourceFixture(t, manifestFixture("demo", "1.0.0")), archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust.Digests = map[string]bool{p.Ref.Digest: true}
+	s := openFixture(t, t.TempDir(), trust)
+	for name, raw := range map[string]string{
+		"not JSON":        `{"keyId":`,
+		"duplicate field": `{"keyId":"test","keyId":"test","signature":"AA=="}`,
+		"unknown field":   `{"keyId":"test","signature":"AA==","extra":true}`,
+	} {
+		stage := t.TempDir()
+		if err = extractZIP(ctx, archive, stage, DefaultLimits()); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(stage, SignatureFile), []byte(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		malformed := filepath.Join(t.TempDir(), "malformed.zip")
+		if err = writeZIP(ctx, stage, malformed, DefaultLimits()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.Install(ctx, malformed); err == nil {
+			t.Fatalf("%s: approved digest accepted a malformed %s", name, SignatureFile)
+		}
+	}
+	installed, err := s.Installed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(installed) != 0 {
+		t.Fatalf("rejected archives installed: %+v", installed)
+	}
+	if _, err = s.Install(ctx, archive); err != nil {
+		t.Fatal("approved digest rejected without signature file:", err)
 	}
 }
 

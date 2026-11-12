@@ -175,7 +175,7 @@ func copyTrust(t TrustPolicy) TrustPolicy {
 		Keys:              map[string]TrustedKey{},
 		Publishers:        map[string][]string{},
 		RevokedPublishers: map[string]bool{},
-		DevDigests:        map[string]bool{},
+		Digests:           map[string]bool{},
 		PublisherChanges:  map[string]map[string]bool{},
 	}
 	for k, v := range t.Keys {
@@ -186,7 +186,7 @@ func copyTrust(t TrustPolicy) TrustPolicy {
 		out.Publishers[k] = slices.Clone(v)
 	}
 	maps.Copy(out.RevokedPublishers, t.RevokedPublishers)
-	maps.Copy(out.DevDigests, t.DevDigests)
+	maps.Copy(out.Digests, t.Digests)
 	for id, list := range t.PublisherChanges {
 		out.PublisherChanges[id] = maps.Clone(list)
 	}
@@ -472,10 +472,10 @@ func (s *Store) install(ctx context.Context, source string, dev bool) (p Package
 	if _, err = Artifact(p.Manifest, runtime.GOOS, runtime.GOARCH); err != nil {
 		return p, err
 	}
-	if sig == nil && s.trust.DevDigests[p.Ref.Digest] {
+	if sig == nil && s.trust.Digests[p.Ref.Digest] {
 		p.Development = true
 	}
-	if err = s.trust.verify(p.Manifest, p.Ref.Digest, input, sig, p.Development); err != nil {
+	if err = s.trust.verify(p.Manifest, p.Ref.Digest, input, sig); err != nil {
 		return p, err
 	}
 	if old := s.catalog.Publishers[p.Ref.ID]; old != "" && old != p.Manifest.Publisher && !s.trust.PublisherChanges[p.Ref.ID][p.Manifest.Publisher] {
@@ -702,7 +702,7 @@ func (s *Store) prepareSelection(ctx context.Context, ref contract.PackageRef, o
 	if _, err = Artifact(checked.Manifest, runtime.GOOS, runtime.GOARCH); err != nil {
 		return catalog{}, err
 	}
-	if err = s.trust.verify(checked.Manifest, ref.Digest, input, sig, p.Development); err != nil {
+	if err = s.trust.verify(checked.Manifest, ref.Digest, input, sig); err != nil {
 		return catalog{}, err
 	}
 	c := s.cloneCatalog()
@@ -930,7 +930,7 @@ func (s *Store) Snapshot(ctx context.Context, ref contract.PackageRef) (snapshot
 	if current := s.catalog.Signatures[ref.Digest]; current != proof && (current == nil || proof == nil || *current != *proof) {
 		return nil, fmt.Errorf("package signature changed while preparing execution")
 	}
-	if err = s.trust.verify(checked.Manifest, ref.Digest, input, sig, p.Development); err != nil {
+	if err = s.trust.verify(checked.Manifest, ref.Digest, input, sig); err != nil {
 		return nil, err
 	}
 	if _, err = preflight(s.catalog, ref); err != nil {

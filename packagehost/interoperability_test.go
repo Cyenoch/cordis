@@ -72,11 +72,11 @@ func TestIndependentSigningInteroperabilityVector(t *testing.T) {
 			manifest := contract.Manifest{ID: "fixture.interop", Publisher: "fixture"}
 			trust := TrustPolicy{Keys: map[string]TrustedKey{"fixture": {PublicKey: public, Publisher: "fixture"}}, Publishers: map[string][]string{"fixture": {"fixture.interop"}}}
 			signed := &Signature{KeyID: "fixture", Signature: v.Ed25519.Signature}
-			if err := trust.verify(manifest, v.Digest, input, signed, false); err != nil {
+			if err := trust.verify(manifest, v.Digest, input, signed); err != nil {
 				t.Fatal(err)
 			}
 			input[len(input)-1] ^= 1
-			if err := trust.verify(manifest, v.Digest, input, signed, false); err == nil {
+			if err := trust.verify(manifest, v.Digest, input, signed); err == nil {
 				t.Fatal("tampered signed bytes accepted")
 			}
 		})

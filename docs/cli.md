@@ -175,7 +175,7 @@ printf '%s' '{"method":"execute","input":{"operation":"get","delta":0}}' | ./bin
 
 启动等待状态变化时，stderr 输出有界 `startup` JSON 诊断：definition、状态、实际 Requirement 范围、可见 provider 和不兼容原因；缺 provider 到期后非零退出。stdout 只输出最终状态或调用结果。启动超时不等于业务调用超时，取消也不回滚外部副作用。
 
-应用服务可通过[宿主公开 API](host-guide.md)组合。已签名但未被信任的包不会由 `-dev-unsigned` 绕过坏信任；正式签名包由宿主 TrustPolicy 加载。Native 仍拥有用户权限，不是沙箱；初始化和构建不会额外授权执行。
+应用服务可通过[宿主公开 API](host-guide.md)组合。`-dev-unsigned` 批准本次产物的精确摘要，包里的签名不影响结果；`signature.json` 格式错误仍会拒绝（见[信任](packages.md#信任)）。正式交付由宿主 TrustPolicy 明确授权。Native 仍拥有用户权限，不是沙箱；初始化和构建不会额外授权执行。
 
 ## 生成
 

@@ -17,7 +17,7 @@ type Inspection struct {
 
 // Inspect validates an archive's format, manifest and complete integrity table
 // without granting trust, installing content or executing code. Its digest is
-// suitable for an explicit exact-digest development authorization.
+// what a host approves in TrustPolicy.Digests.
 func Inspect(ctx context.Context, archive string) (p Inspection, err error) {
 	dir, err := os.MkdirTemp("", "cordis-inspect-")
 	if err != nil {

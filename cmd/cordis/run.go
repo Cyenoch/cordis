@@ -148,7 +148,7 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 	host, err := hosting.Open(hosting.Options{
 		FrameBytes: contract.MaxFrameBytes, Directory: filepath.Join(root, "store"),
 		Trust: packagehost.TrustPolicy{
-			DevDigests: map[string]bool{pkg.Ref.Digest: true},
+			Digests:    map[string]bool{pkg.Ref.Digest: true},
 			Publishers: map[string][]string{pkg.Manifest.Publisher: {pkg.Ref.ID}},
 		},
 	})

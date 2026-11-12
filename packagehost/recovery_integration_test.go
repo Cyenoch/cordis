@@ -146,7 +146,7 @@ func TestStoreRecoveryProcessExit(t *testing.T) {
 						if err != nil || checked.Ref != p.Ref {
 							t.Fatalf("recovered content is inconsistent for %+v: %+v, %v", p.Ref, checked.Ref, err)
 						}
-						if err = trust.verify(checked.Manifest, p.Ref.Digest, input, sig, p.Development); err != nil {
+						if err = trust.verify(checked.Manifest, p.Ref.Digest, input, sig); err != nil {
 							t.Fatal(err)
 						}
 					}

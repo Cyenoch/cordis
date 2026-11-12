@@ -51,11 +51,17 @@ type TrustedKey struct {
 
 // TrustPolicy is copied when opening a Store. UpdateTrust replaces it atomically.
 // Publishers maps publisher names to exact permitted plugin IDs (no wildcards).
+// A package is trusted when its publisher is authorized for its ID and not
+// revoked, and either its digest is in Digests or it carries a valid
+// signature by a non-revoked key of that publisher. A digest in Digests
+// approves that exact content on its own, in production as in development:
+// signature.json lies outside the digest, so its key and signature are not
+// verified. A malformed signature.json remains a package format error.
 type TrustPolicy struct {
 	Keys              map[string]TrustedKey
 	Publishers        map[string][]string
 	RevokedPublishers map[string]bool
-	DevDigests        map[string]bool
+	Digests           map[string]bool
 	PublisherChanges  map[string]map[string]bool
 }
 
@@ -242,18 +248,18 @@ func SignatureInput(entries []IntegrityEntry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func (t TrustPolicy) verify(m contract.Manifest, digest string, input []byte, sig *Signature, development bool) error {
+func (t TrustPolicy) verify(m contract.Manifest, digest string, input []byte, sig *Signature) error {
 	if t.RevokedPublishers[m.Publisher] {
 		return fmt.Errorf("publisher %q is revoked", m.Publisher)
 	}
 	if !slices.Contains(t.Publishers[m.Publisher], m.ID) {
 		return fmt.Errorf("publisher %q is not authorized for plugin %q", m.Publisher, m.ID)
 	}
+	if t.Digests[digest] {
+		return nil
+	}
 	if sig == nil {
-		if development && t.DevDigests[digest] {
-			return nil
-		}
-		return fmt.Errorf("package %s requires an authorized signature or exact development digest permission", m.ID)
+		return fmt.Errorf("package %s requires an authorized signature or an approved exact digest", m.ID)
 	}
 	key, ok := t.Keys[sig.KeyID]
 	if !ok || key.Revoked || key.Publisher != m.Publisher || len(key.PublicKey) != ed25519.PublicKeySize {

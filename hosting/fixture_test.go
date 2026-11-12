@@ -62,7 +62,7 @@ func (j *journal) count(event string) int {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	return &fixture{t: t, runtime: memory.New(), log: &journal{}, directory: t.TempDir(),
-		trust: packagehost.TrustPolicy{DevDigests: map[string]bool{}, Publishers: map[string][]string{}}}
+		trust: packagehost.TrustPolicy{Digests: map[string]bool{}, Publishers: map[string][]string{}}}
 }
 
 // open opens the host and installs and selects what was packed. Packages
@@ -126,7 +126,7 @@ func (f *fixture) pack(manifest contract.Manifest, definitions ...sdk.Definition
 	archive := filepath.Join(f.t.TempDir(), manifest.ID+".cordis")
 	pkg, err := packagehost.Pack(f.t.Context(), source, archive)
 	must(f.t, err)
-	f.trust.DevDigests[pkg.Ref.Digest] = true
+	f.trust.Digests[pkg.Ref.Digest] = true
 	if !slices.Contains(f.trust.Publishers["test.publisher"], manifest.ID) {
 		f.trust.Publishers["test.publisher"] = append(f.trust.Publishers["test.publisher"], manifest.ID)
 	}

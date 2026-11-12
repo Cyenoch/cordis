@@ -149,7 +149,7 @@ func TestPackDeterministicAndSnapshotImmutable(t *testing.T) {
 	if !bytes.Equal(first, second) {
 		t.Fatal("nondeterministic archive")
 	}
-	s := openFixture(t, t.TempDir(), TrustPolicy{Publishers: map[string][]string{"example": {"demo"}}, DevDigests: map[string]bool{p.Ref.Digest: true}})
+	s := openFixture(t, t.TempDir(), TrustPolicy{Publishers: map[string][]string{"example": {"demo"}}, Digests: map[string]bool{p.Ref.Digest: true}})
 	installed, err := s.ImportDirectory(ctx, dir)
 	if err != nil {
 		t.Fatal(err)

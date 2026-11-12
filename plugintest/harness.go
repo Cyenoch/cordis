@@ -97,7 +97,7 @@ func Start(ctx context.Context, spec contract.DefinitionSpec, definition sdk.Def
 	plugins := memory.New()
 	plugins.Register(manifest.ID, definitions...)
 	h.host, err = hosting.Open(hosting.Options{Directory: filepath.Join(directory, "store"), Runtime: plugins,
-		Trust: packagehost.TrustPolicy{DevDigests: map[string]bool{packed.Ref.Digest: true},
+		Trust: packagehost.TrustPolicy{Digests: map[string]bool{packed.Ref.Digest: true},
 			Publishers: map[string][]string{manifest.Publisher: {manifest.ID}}}})
 	if err != nil {
 		return h, err

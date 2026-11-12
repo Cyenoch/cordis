@@ -143,7 +143,7 @@ text = "Cordis"
 每次 `run` 都新建临时宿主和实例。启动等待默认有期限，等待诊断写入 stderr，调用结果写入 stdout；需要时用 `-startup-timeout 1m` 调整启动期限。
 
 :::caution[仅限自己的开发产物]
-`-dev-unsigned` 只许可本次归档的精确摘要，不建立全局信任。Native 插件具有当前用户权限，不是沙箱；不要运行不受信任代码。正式交付需要签名和宿主 TrustPolicy。
+`-dev-unsigned` 只许可本次归档的精确摘要，不建立全局信任。Native 插件具有当前用户权限，不是沙箱；不要运行不受信任代码。正式交付由宿主 [TrustPolicy](packages.md#信任) 明确授权。
 :::
 
 TOML 没有 null，也不能表达非对象根。请求需要显式 null、数组或标量根时改用 YAML 文件，再由 `-config-file` / `-input-file` 读取；省略字段、空字符串和字符串 `"null"` 都不是 null。JSON 适合工具交换，内联参数始终是 JSON：

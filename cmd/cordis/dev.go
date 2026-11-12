@@ -239,7 +239,7 @@ func prepareDevCandidate(ctx context.Context, options devOptions, input devInput
 			}
 		}
 	}()
-	trust := packagehost.TrustPolicy{DevDigests: map[string]bool{}, Publishers: map[string][]string{}}
+	trust := packagehost.TrustPolicy{Digests: map[string]bool{}, Publishers: map[string][]string{}}
 	packages := map[string]packagehost.Package{}
 	archives := []string{}
 	for n, source := range input.plan.packages {
@@ -258,7 +258,7 @@ func prepareDevCandidate(ctx context.Context, options devOptions, input devInput
 		}
 		archives = append(archives, archive)
 		packages[pkg.Ref.ID] = pkg
-		trust.DevDigests[pkg.Ref.Digest] = true
+		trust.Digests[pkg.Ref.Digest] = true
 		trust.Publishers[pkg.Manifest.Publisher] = append(trust.Publishers[pkg.Manifest.Publisher], pkg.Ref.ID)
 	}
 	h, err := hosting.Open(hosting.Options{
