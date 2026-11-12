@@ -15,6 +15,7 @@ import (
 	"github.com/Cyenoch/cordis/contract"
 	"github.com/Cyenoch/cordis/hosting"
 	"github.com/Cyenoch/cordis/packagehost"
+	"github.com/Cyenoch/cordis/schema"
 )
 
 type dataInput struct {
@@ -46,6 +47,23 @@ func (input dataInput) check(name string, seen map[string]bool) error {
 		return &usageError{message: "stdin requires explicit -" + name + "-format"}
 	}
 	return nil
+}
+
+// rejected names where data came from when its schema rejected it; other
+// errors pass through unchanged.
+func (input dataInput) rejected(name string, err error) error {
+	if _, ok := errors.AsType[*schema.FieldError](err); !ok {
+		return err
+	}
+	source := "-" + name
+	switch input.file {
+	case "":
+	case "-":
+		source = "stdin"
+	default:
+		source = input.file
+	}
+	return fmt.Errorf("%s from %s: %w", name, source, err)
 }
 
 func (input dataInput) load(name string, in io.Reader) (json.RawMessage, error) {
@@ -153,7 +171,7 @@ func runCommand(ctx context.Context, flags *flag.FlagSet, parse func() (bool, er
 		ID: "cli.instance", Package: pkg.Ref.ID, Definition: selected, Config: configData,
 	})
 	if err != nil {
-		return err
+		return configuration.rejected("config", err)
 	}
 	if err := waitForStartup(startupCtx, instance, selected, errOut); err != nil {
 		if instance.Status().State == contract.Starting {

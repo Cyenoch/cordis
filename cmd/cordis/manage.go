@@ -211,6 +211,9 @@ func manageCommand(ctx context.Context, command string, flags *flag.FlagSet, par
 		}
 		saved, err := store.EnableEntry(ctx, entry)
 		if err != nil {
+			if seen["config"] || seen["config-file"] {
+				return configuration.rejected("config", err)
+			}
 			return err
 		}
 		value = saved

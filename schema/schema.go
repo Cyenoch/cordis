@@ -7,9 +7,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"math/big"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -435,7 +437,7 @@ func (n *node) validate(raw json.RawMessage, path string) error {
 					child, ok = n.additional, true
 				}
 				if !ok {
-					return field(pointer(path, name), "additionalProperties", "unknown property")
+					return field(pointer(path, name), "additionalProperties", unknownProperty(n.properties))
 				}
 				if err := child.validate(value[name], pointer(path, name)); err != nil {
 					return err
@@ -607,4 +609,13 @@ func sortedKeys[V any](values map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// unknownProperty names the properties an object does accept, so a misspelt
+// key can be told from one that does not belong at all.
+func unknownProperty(properties map[string]*node) string {
+	if len(properties) == 0 {
+		return "unknown property; the object has none"
+	}
+	return "unknown property; known: " + strings.Join(slices.Sorted(maps.Keys(properties)), ", ")
 }
