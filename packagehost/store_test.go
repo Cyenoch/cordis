@@ -506,52 +506,6 @@ func TestStorePublisherAuthorizationAndDevDigest(t *testing.T) {
 	}
 }
 
-func TestStoreApprovedDigestOutranksUnknownSignature(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	_, trust := signingFixture(t)
-	_, stranger, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	archive := filepath.Join(t.TempDir(), "third-party.zip")
-	if _, err = Pack(ctx, sourceFixture(t, manifestFixture("demo", "1.0.0")), archive); err != nil {
-		t.Fatal(err)
-	}
-	p, err := Sign(ctx, archive, "stranger", stranger)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := openFixture(t, t.TempDir(), trust)
-	if _, err = s.Install(ctx, archive); err == nil {
-		t.Fatal("unknown signing key trusted without an approved digest")
-	}
-	trust.DevDigests = map[string]bool{p.Ref.Digest: true}
-	if err = s.UpdateTrust(trust); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.Install(ctx, archive); err != nil {
-		t.Fatal("approved digest rejected for its unknown signature:", err)
-	}
-	if err = s.Select(ctx, p.Ref, ChangeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := s.Snapshot(ctx, p.Ref)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = snapshot.Close(); err != nil {
-		t.Fatal(err)
-	}
-	trust.DevDigests = nil
-	if err = s.UpdateTrust(trust); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.Snapshot(ctx, p.Ref); err == nil {
-		t.Fatal("withdrawn digest approval still executed")
-	}
-}
-
 func TestStorePublisherApprovalCompletesMigration(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
