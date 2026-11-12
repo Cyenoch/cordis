@@ -421,7 +421,7 @@ func TestGraceBoundsHowLateACancellationMayBeAnswered(t *testing.T) {
 		name  string
 		grace time.Duration
 		stays bool
-	}{{"default", 0, false}, {"generous", time.Minute, true}} {
+	}{{"short", time.Second, false}, {"generous", time.Minute, true}} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t)
 			entered := make(chan struct{}, 1)
@@ -433,7 +433,7 @@ func TestGraceBoundsHowLateACancellationMayBeAnswered(t *testing.T) {
 						}
 						entered <- struct{}{}
 						<-ctx.Done()
-						time.Sleep(2 * time.Second) // well past the default grace
+						time.Sleep(2 * time.Second) // well past the short grace
 						return echoResponse{}, ctx.Err()
 					}),
 				}))

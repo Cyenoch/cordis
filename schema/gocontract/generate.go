@@ -33,33 +33,56 @@ func Generate(ctx context.Context, dir string, target Target) (*Package, error) 
 	if err != nil {
 		return nil, err
 	}
+	// Both files are written out before either takes its place, so that a
+	// disk that fills up or a directory that cannot be written leaves the
+	// previous pair, not one new file next to one old.
+	var staged []func(commit bool) error
 	for _, file := range []struct {
 		name string
 		data []byte
 	}{{ContractFile, declared}, {GoFile, code}} {
-		if err := replace(filepath.Join(dir, file.name), file.data); err != nil {
+		finish, err := stage(filepath.Join(dir, file.name), file.data)
+		if err != nil {
+			for _, discard := range staged {
+				err = errors.Join(err, discard(false))
+			}
 			return nil, err
 		}
+		staged = append(staged, finish)
+	}
+	var result error
+	for _, commit := range staged {
+		result = errors.Join(result, commit(result == nil))
+	}
+	if result != nil {
+		return nil, result
 	}
 	return p, nil
 }
 
-func replace(path string, data []byte) error {
+// stage writes data next to path. The returned function puts it in place or
+// discards it; a file whose content would not change is left alone.
+func stage(path string, data []byte) (finish func(commit bool) error, err error) {
 	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, data) {
-		return nil
+		return func(bool) error { return nil }, nil
 	}
 	file, err := os.CreateTemp(filepath.Dir(path), ".cordis-generate-*")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = file.Write(data)
-	if err = errors.Join(err, file.Chmod(0644), file.Close()); err == nil {
-		err = os.Rename(file.Name(), path)
+	if err = errors.Join(err, file.Chmod(0644), file.Close()); err != nil {
+		return nil, errors.Join(fmt.Errorf("write %s: %w", path, err), os.Remove(file.Name()))
 	}
-	if err != nil {
-		return errors.Join(fmt.Errorf("write %s: %w", path, err), os.Remove(file.Name()))
-	}
-	return nil
+	return func(commit bool) error {
+		if !commit {
+			return os.Remove(file.Name())
+		}
+		if err := os.Rename(file.Name(), path); err != nil {
+			return errors.Join(fmt.Errorf("write %s: %w", path, err), os.Remove(file.Name()))
+		}
+		return nil
+	}, nil
 }
 
 // Source returns the generated Go file.

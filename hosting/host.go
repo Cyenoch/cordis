@@ -32,8 +32,7 @@ type Options struct {
 	Stderr   func(contract.StderrRecord) error
 	// Grace is how long a plugin has to answer a cancellation, to shut down
 	// when asked, and to exit after that; a plugin that takes longer is
-	// treated as stuck and its process ended. The default is one second.
-	// A host on a heavily loaded machine gives more.
+	// treated as stuck and its process ended. Zero is DefaultGrace.
 	Grace time.Duration
 	// OnCall, when set, is told about every call and stream routed to a
 	// native entry once it has ended, for metrics and tracing. It runs on
@@ -48,6 +47,10 @@ type Options struct {
 	// Recovery is opt-in, keyed by an existing persistent native entry ID.
 	Recovery map[string]RecoveryPolicy
 }
+
+// DefaultGrace leaves room for cleanups and for a busy machine, and still
+// ends a plugin that is really stuck within seconds.
+const DefaultGrace = 5 * time.Second
 
 // CallRecord describes one finished call or stream to a native entry. It
 // carries no request or response data.
@@ -113,7 +116,7 @@ func Open(options Options) (*Host, error) {
 		dynamic:  map[string]ownedChild{}, admissions: map[string]bool{},
 		controls: map[string]bool{}, packageOps: map[string]bool{}, done: make(chan struct{})}
 	if h.options.Grace == 0 {
-		h.options.Grace = time.Second
+		h.options.Grace = DefaultGrace
 	}
 	if err := h.initRecovery(options.Recovery); err != nil {
 		return nil, errors.Join(err, store.Close())
