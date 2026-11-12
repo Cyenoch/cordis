@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -73,8 +74,15 @@ func TestDevProjectNativeGroupSwitching(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	reader, writer := io.Pipe()
 	done := make(chan error, 1)
+	var stderr bytes.Buffer
+	devLog := &syncWriter{w: &stderr}
+	logged := func() string {
+		devLog.mu.Lock()
+		defer devLog.mu.Unlock()
+		return stderr.String()
+	}
 	go func() {
-		err := execute(ctx, []string{"dev", "-dev-unsigned", "-project", projectFile}, strings.NewReader(""), writer, io.Discard)
+		err := execute(ctx, []string{"dev", "-dev-unsigned", "-project", projectFile}, strings.NewReader(""), writer, devLog)
 		writer.Close()
 		done <- err
 	}()
@@ -111,17 +119,19 @@ func TestDevProjectNativeGroupSwitching(t *testing.T) {
 		t.Helper()
 		timer := time.NewTimer(time.Minute)
 		defer timer.Stop()
+		var skipped []devUpdate
 		for {
 			select {
 			case update, ok := <-updates:
 				if !ok {
-					t.Fatal("development output ended")
+					t.Fatalf("development output ended; skipped %+v; log:\n%s", skipped, logged())
 				}
 				if update.Event == event {
 					return update
 				}
+				skipped = append(skipped, update)
 			case <-timer.C:
-				t.Fatalf("dev did not report %s", event)
+				t.Fatalf("dev did not report %s; skipped %+v; log:\n%s", event, skipped, logged())
 			}
 		}
 	}
