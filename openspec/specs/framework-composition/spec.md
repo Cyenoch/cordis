@@ -66,7 +66,7 @@ Update SHALL 是配置更新的唯一入口，同时支持失败后重新初始�
 - **THEN** 返回错误，没有进程被启动，父保持 Active
 
 ### Requirement: 可观察控制
-实例 SHALL 提供状态、等待、Update 和 Stop；Host 提供显式启用、停用、恢复、查找和关闭。查找及枚举 SHALL 包括动态子实例，区分持久/动态来源并提供完整父激活身份；动态子实例句柄支持现有控制但不产生持久意图。长等待不占全局管理准入。取消等待 SHALL 不撤销已提交的控制意图。Stop、停用、删除与替换 SHALL 只返回停止过程中发生的错误：停止一个已经 Failed、或已在为记录的失败清理的实例 MUST NOT 返回该失败，它经状态结果与运行历史可见。Waiting 状态 SHALL 带至少一个等待原因；没有可报告原因的启动窗口报 Starting。
+实例 SHALL 提供状态、等待、Update 和 Stop；Host 提供显式启用、停用、恢复、查找和关闭。查找及枚举 SHALL 包括动态子实例，区分持久/动态来源并提供完整父激活身份；动态子实例句柄支持现有控制但不产生持久意图。长等待不占全局管理准入。取消等待 SHALL 不撤销已提交的控制意图。Stop、停用、删除与替换 SHALL 只返回停止过程中发生的错误：停止一个已经 Failed、或已在为记录的失败清理的实例 MUST NOT 返回该失败，它经状态结果与运行历史可见。Waiting 状态 SHALL 带至少一个等待原因；没有可报告原因的启动窗口报 Starting。恢复临时停止的 entry SHALL 与启用后的等待一致：等到实例 Active、Failed 或停止才返回，并返回启动失败的错误；已失败的 entry 恢复时重新启动，同样报告重启的结果。
 
 #### Scenario: 等待服务期间管理其他实例
 - **WHEN** 一个实例等待缺失服务，同时登记该服务 provider
@@ -99,6 +99,10 @@ Update SHALL 是配置更新的唯一入口，同时支持失败后重新初始�
 #### Scenario: 刚启用的 entry
 - **WHEN** 宿主启用一个依赖已满足的 entry 后立即查询状态，随后启用一个缺少服务的 entry 并反复查询
 - **THEN** 前者报 Starting 或 Active，Starting 时 Applied 小于 Desired；后者在报 Waiting 时带有缺少该服务的原因，任何时刻不报没有原因的 Waiting
+
+#### Scenario: 恢复已失败的 entry
+- **WHEN** 宿主临时停止一个启动失败的持久 entry 后恢复它，一次重启仍失败，另一次重启成功
+- **THEN** 前一次恢复返回启动失败的错误且返回时 entry 为 Failed；后一次恢复返回成功且返回时 entry 为 Active
 
 ### Requirement: 受管并发与事件
 服务和事件回调 SHALL 可并发执行，native 实例的并发以会话在途上限为界，超出上限的调用等待名额而不是失败；显式受管工作在实例 Active 后启动，停止时取消并等待退出。事件支持顺序、并行和首个明确处理结果。订阅 SHALL 返回可取消句柄，支持启动期间及 Active 期间登记、once 和 prepend，自登记确认起生效。已取消或 once 已消费的句柄再次取消 SHALL 成功，活动名额释放不得使已准入投递丢失回调引用。服务隔离 MUST NOT 隐式改变事件的 Host 内广播范围。
