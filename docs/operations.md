@@ -27,7 +27,7 @@ description: 上线前的检查、版本替换、关闭与备份、诊断日志�
 
 包操作的 outcome 分为 `rejected`、`committed`、`committed_error` 和没有变更的 `unchanged`。提交后失败仍须处理返回的错误，不应直接重试。运行历史保留最近 256 条终态，含退出与清理类别；它不是实时进程探测，也不是完整审计日志。
 
-原始 stderr 需显式配置 `Options.Stderr`，进程内插件的 panic 栈需显式开启 `CapturePanic` 并配置 Logger。错误文本、原始输出和栈可能含业务数据，配置及调用内容不会被框架自动写进诊断。native 进程被强制终止时可能没有栈。
+原始 stderr 需显式配置 `Options.Stderr`（按激活送达，以 `End` 记录收尾，见[接入宿主](host-guide.md#插件的-stderr)），进程内插件的 panic 栈需显式开启 `CapturePanic` 并配置 Logger。错误文本、原始输出和栈可能含业务数据，配置及调用内容不会被框架自动写进诊断。native 进程被强制终止时可能没有栈。
 
 ## 调用观测
 

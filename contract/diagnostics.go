@@ -47,11 +47,17 @@ type ProcessSession interface {
 }
 
 // StderrRecord is sent only to an explicitly configured output sink.
-// A truncation record can have no Data and is emitted once per activation.
+// A truncation record can have no Data and is emitted once per activation;
+// no Data follows it. End marks the last record of an activation, which
+// has no Data: once it has come, nothing more comes for that activation.
+// It comes when the stream has been drained, after a truncation too. It
+// does not come after the sink has returned an error, which stops
+// forwarding, or while the sink has not returned.
 type StderrRecord struct {
 	Owner     Identity `json:"owner"`
 	Data      []byte   `json:"data,omitempty"`
 	Truncated bool     `json:"truncated,omitempty"`
+	End       bool     `json:"end,omitempty"`
 }
 
 // ErrorCode classifies an error for bounded diagnostics. Application-specific

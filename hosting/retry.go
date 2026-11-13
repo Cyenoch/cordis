@@ -47,10 +47,15 @@ func (i *hostInstance) retry() uint64 {
 	i.desired++
 	revision := i.desired
 	i.mu.Unlock()
+	i.restart()
+	return revision
+}
+
+// restart submits a restart of the kernel instance without waiting for it.
+func (i *hostInstance) restart() {
 	// Restart takes effect before it waits, so a context that is already
 	// done submits the restart without waiting for it.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	i.instance.Restart(ctx)
-	return revision
 }

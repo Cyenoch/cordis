@@ -2,6 +2,18 @@
 
 版本与承诺范围见 [稳定性](docs/stability.md)。
 
+## 未发布
+
+- **行为变化**：`Options.Stderr` 的回调在每次激活的输出排空后多收到一条 `StderrRecord{End: true}`：不带数据，是这次激活的最后一条记录，截断之后也照样送达；回调返回错误后不再送。按激活缓存行的宿主在这里丢掉未写完的行并释放缓存，见[接入宿主](docs/host-guide.md#插件的-stderr)。改法：按记录计数或逐条处理的回调须识别 `End`；只拼接 `Data` 的不受影响。
+- `cordis run` 等前台命令在激活结束时为未以换行结尾的 stderr 补上换行，下一次激活的输出不再接在上一行后面。
+- **行为变化**：`Host.Resume` 恢复已失败的 entry 时，与 `Enable` 后的 `Wait` 一样等到 Active、失败或停止，失败时返回启动错误。此前它在重启提交前就返回 nil，状态仍是 `starting`。`cordis control resume` 随之等待并带回启动错误。改法：无需改动；依赖 `Resume` 立即返回的调用方给它一个有限的 context。
+- 新增 `Host.SetRecovery` 与 `Host.ClearRecovery`：为运行中启用的 entry 登记、修改、清除有限恢复策略，校验与 `Options.Recovery` 相同；登记与修改开始新周期，以相同策略再次登记什么也不做。
+- 修复：`Instance.Wait`（以及等待它的 `Resume`）与 `Host.Close` 并发时不再一直等到 context 到期，Host 关闭后立即返回。
+- **行为变化**：`Host.Remove` 一并清除被删除 entry 的恢复策略（来自 `Options.Recovery` 或 `SetRecovery`），以相同 ID 重新启用的 entry 不再沿用旧策略。改法：重新启用后需要恢复的，调用 `SetRecovery`。
+- **破坏性变更**：删除 `hosting.RecoveryMissing`。entry 删除时策略随之清除，这个状态不再出现。改法：删去对 `missing` 的判断。
+- `RecoveryInfo.Error`（JSON `error`）给出本周期最近一次失败的错误文本，在线状态和前台输出随之显示。
+- **行为变化**：启动时包被包目录的信任或完整性校验拒绝（`denied`）的 entry 不再自动重试：恢复状态为新增的 `RecoveryDenied`（`denied`），不再安排重试。批准包后调用 `Retry`。插件自己以 `denied` 失败的照常重试。改法：监控 `exhausted` 的宿主同时处理 `denied`。
+
 ## v0.6.0
 
 - **行为变化**：停止一个已经失败的实例不再返回它之前的失败。`Host.Disable` 把这样的 entry 保存为停用并停下后返回 nil，`Host.Remove` 因此能删除坏插件的持久 entry（此前第一次 `Remove` 返回那次失败并保留记录，要再调一次才删除）；`Host.Replace`、`Instance.Stop`（持久 entry 与动态子实例）同理。失败仍在停止前的 `Status().Outcome` 与 `Store().Runs()` 中。停止过程中真正出的错（清理失败、期限到达、存储写入失败）照常返回；实例已记录失败、正在为它清理时到达的停止，这次清理的错误归入那次失败，不作为停止的结果；`Host.Close` 不变，仍返回关闭时仍失败的实例的错误。改法：需要在停用前知道 entry 是否失败的，先读 `Status` 或运行历史，不要依赖 `Disable` 的错误。

@@ -3,7 +3,6 @@ package hosting
 import (
 	"context"
 	"fmt"
-	"maps"
 	"slices"
 	"time"
 
@@ -28,7 +27,10 @@ const (
 	RecoveryExhausted     RecoveryState = "exhausted"
 	RecoveryCleanupFailed RecoveryState = "cleanup_failed"
 	RecoveryCanceled      RecoveryState = "canceled"
-	RecoveryMissing       RecoveryState = "missing"
+	// RecoveryDenied: the package store refused to run the package, by the
+	// trust policy or its integrity. A retry would be refused the same way;
+	// approve the package and Retry the entry.
+	RecoveryDenied RecoveryState = "denied"
 )
 
 // RecoveryInfo is the recovery of one entry as RecoveryStatus reports it.
@@ -40,6 +42,8 @@ type RecoveryInfo struct {
 	MaxRetries  int               `json:"maxRetries"`
 	State       RecoveryState     `json:"state"`
 	NextRetryAt *time.Time        `json:"nextRetryAt,omitempty"`
+	// Error is the last failure of the entry in this recovery cycle.
+	Error string `json:"error,omitempty"`
 }
 
 type recoveryEntry struct {
@@ -56,34 +60,94 @@ func (h *Host) initRecovery(policies map[string]RecoveryPolicy) error {
 	if err != nil {
 		return err
 	}
-	saved := make(map[string]contract.Entry, len(entries))
-	for _, entry := range entries {
-		saved[entry.ID] = entry
-	}
 	h.recovery = make(map[string]*recoveryEntry, len(policies))
-	h.options.Recovery = maps.Clone(policies)
 	for id, policy := range policies {
-		if policy.MaxRetries <= 0 || policy.InitialDelay <= 0 || policy.MaxDelay < policy.InitialDelay {
-			return contract.Fail(contract.Invalid, fmt.Sprintf("recovery %q: positive retries/delay and maxDelay >= initialDelay required", id))
-		}
-		entry, exists := saved[id]
-		if !exists {
-			return contract.Fail(contract.Invalid, fmt.Sprintf("recovery %q: persistent entry does not exist", id))
-		}
-		pkg, err := h.store.Selected(entry.Package)
-		if err != nil {
-			return fmt.Errorf("recovery %q package: %w", id, err)
-		}
-		if pkg.Manifest.Runtime.Kind != "native" {
-			return contract.Fail(contract.Invalid, fmt.Sprintf("recovery %q requires a native package", id))
+		if err := h.checkRecovery(entries, id, policy); err != nil {
+			return err
 		}
 		h.recovery[id] = &recoveryEntry{policy: policy, info: RecoveryInfo{Entry: id, MaxRetries: policy.MaxRetries, State: RecoveryIdle}}
 	}
 	return nil
 }
 
+// checkRecovery accepts policy for id if it is valid and id is a saved
+// entry of a native package.
+func (h *Host) checkRecovery(entries []contract.Entry, id string, policy RecoveryPolicy) error {
+	if policy.MaxRetries <= 0 || policy.InitialDelay <= 0 || policy.MaxDelay < policy.InitialDelay {
+		return contract.Fail(contract.Invalid, fmt.Sprintf("recovery %q: positive retries/delay and maxDelay >= initialDelay required", id))
+	}
+	index := slices.IndexFunc(entries, func(entry contract.Entry) bool { return entry.ID == id })
+	if index < 0 {
+		return contract.Fail(contract.Invalid, fmt.Sprintf("recovery %q: persistent entry does not exist", id))
+	}
+	pkg, err := h.store.Selected(entries[index].Package)
+	if err != nil {
+		return fmt.Errorf("recovery %q package: %w", id, err)
+	}
+	if pkg.Manifest.Runtime.Kind != "native" {
+		return contract.Fail(contract.Invalid, fmt.Sprintf("recovery %q requires a native package", id))
+	}
+	return nil
+}
+
+// SetRecovery gives a saved persistent native entry the recovery policy
+// policy, with the checks and the meaning of Options.Recovery, or replaces
+// the one it has. Either way a new recovery cycle begins: nothing is used of
+// the budget. Setting the policy the entry already has does nothing, so a
+// host may apply its configuration again. Removing the entry clears its
+// policy.
+func (h *Host) SetRecovery(ctx context.Context, id string, policy RecoveryPolicy) error {
+	if err := h.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer h.unlockOperation()
+	entries, err := h.store.Entries()
+	if err != nil {
+		return err
+	}
+	if err := h.checkRecovery(entries, id, policy); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	if current := h.recovery[id]; current != nil && current.policy == policy {
+		h.mu.Unlock()
+		return nil
+	}
+	if h.recovery == nil {
+		h.recovery = map[string]*recoveryEntry{}
+	}
+	h.recovery[id] = &recoveryEntry{policy: policy, info: RecoveryInfo{Entry: id, MaxRetries: policy.MaxRetries, State: RecoveryIdle}}
+	h.resetRecoveryLocked(id)
+	h.mu.Unlock()
+	h.startRecovery()
+	return nil
+}
+
+// ClearRecovery removes the recovery policy of id; a failure of the entry
+// is then left to the application. Clearing an entry without a policy does
+// nothing.
+func (h *Host) ClearRecovery(ctx context.Context, id string) error {
+	if err := h.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer h.unlockOperation()
+	h.clearRecovery(id)
+	return nil
+}
+
+// clearRecovery drops the policy of id. The caller holds the operation
+// lock, which keeps it from the coordinator's loop over the policies.
+func (h *Host) clearRecovery(id string) {
+	h.mu.Lock()
+	delete(h.recovery, id)
+	h.mu.Unlock()
+}
+
+// startRecovery starts the coordinator once there is a policy. It runs
+// until the host closes. Open calls it, and so does SetRecovery under the
+// operation lock, which Close takes before it reads recoveryCancel.
 func (h *Host) startRecovery() {
-	if len(h.recovery) == 0 {
+	if len(h.recovery) == 0 || h.recoveryCancel != nil {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -138,6 +202,9 @@ func (h *Host) recoverEntries(ctx context.Context) error {
 		return err
 	}
 	defer h.unlockOperation()
+	if len(h.recovery) == 0 {
+		return nil
+	}
 	entries, err := h.store.Entries()
 	if err != nil {
 		return err
@@ -146,16 +213,16 @@ func (h *Host) recoverEntries(ctx context.Context) error {
 	for _, entry := range entries {
 		saved[entry.ID] = entry
 	}
+	// Remove clears the policy of an entry it deletes, so every policy
+	// here has a saved entry.
 	for id, recovery := range h.recovery {
 		now := time.Now()
 		h.mu.Lock()
 		instance := h.entries[id]
-		entry, exists := saved[id]
-		if instance == nil || !exists || !entry.Enabled {
+		entry := saved[id]
+		if instance == nil || !entry.Enabled {
 			state := RecoveryIdle
-			if !exists {
-				state = RecoveryMissing
-			} else if !entry.Enabled {
+			if !entry.Enabled {
 				state = RecoveryCanceled
 			}
 			recovery.instance = nil
@@ -169,6 +236,9 @@ func (h *Host) recoverEntries(ctx context.Context) error {
 		}
 		recovery.info.Identity = status.Identity
 		recovery.info.Revision = status.Desired
+		if status.State == contract.Failed {
+			recovery.info.Error = status.Error
+		}
 		switch {
 		case recovery.info.State == RecoveryCanceled || status.TemporaryStopped || !status.Enabled:
 			h.recoveryStateLocked(recovery, RecoveryCanceled, nil)
@@ -180,6 +250,8 @@ func (h *Host) recoverEntries(ctx context.Context) error {
 			h.recoveryStateLocked(recovery, state, nil)
 		case status.Outcome.CleanupCode != "":
 			h.recoveryStateLocked(recovery, RecoveryCleanupFailed, nil)
+		case instance.refusedRun():
+			h.recoveryStateLocked(recovery, RecoveryDenied, nil)
 		case recovery.info.Used >= recovery.policy.MaxRetries:
 			h.recoveryStateLocked(recovery, RecoveryExhausted, nil)
 		default:
@@ -233,7 +305,7 @@ func (h *Host) resetRecoveryLocked(id string) {
 		return
 	}
 	recovery.instance = h.entries[id]
-	recovery.info.Used = 0
+	recovery.info.Used, recovery.info.Error = 0, ""
 	if recovery.instance != nil {
 		status := recovery.instance.Status()
 		recovery.info.Identity, recovery.info.Revision = status.Identity, status.Desired
@@ -275,6 +347,6 @@ func (h *Host) flushRecoveryDiagnostics() {
 		h.options.Logger.Info("plugin recovery", "operation", "recovery", "stage", stage,
 			"entry", event.Entry, "activation", event.Identity.Activation, "package", event.Identity.Package,
 			"digest", event.Identity.Digest, "revision", event.Revision, "used", event.Used,
-			"maxRetries", event.MaxRetries, "nextRetryAt", event.NextRetryAt)
+			"maxRetries", event.MaxRetries, "nextRetryAt", event.NextRetryAt, "error", event.Error)
 	}
 }

@@ -269,6 +269,12 @@ func Start(ctx context.Context, executable string, args []string, launch contrac
 				if errors.Is(readErr, io.EOF) || errors.Is(readErr, os.ErrClosed) {
 					readErr = nil
 				}
+				// The end comes from this goroutine, after every other
+				// record, so nothing can follow it; also when teardown has
+				// stopped waiting for it.
+				if launch.Stderr != nil && forwardErr == nil {
+					forwardErr = launch.Stderr(contract.StderrRecord{Owner: launch.Identity, End: true})
+				}
 				stderrDone <- errors.Join(readErr, forwardErr)
 				return
 			}

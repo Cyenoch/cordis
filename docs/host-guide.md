@@ -73,6 +73,37 @@ Host 提供给 native 插件的服务用 `hosting.Requester(ctx)` 得知请求�
 
 `host.Resolver()` 返回供[配置文件加载器](loader.md)使用的解析器：条目的 plugin 写作 `package:<id>`（默认定义）或 `package:<id>#<definition>`，即可由配置文件运行已安装的 native 包。
 
+## 插件的 stderr
+
+`Options.Stderr` 按激活收到 native 插件写到 stderr 的内容（`StderrRecord.Owner` 是激活身份），一条记录是一次读取，行可能跨记录。超出 `StderrBytes` 时送一条 `Truncated` 记录，之后不再有数据。每次激活的输出排空后以一条 `End` 记录收尾：它不带数据，是这次激活的最后一条，之后不会再有这次激活的记录，截断之后也照样送达。按激活缓存行的宿主在 `End` 处丢掉未写完的行并释放缓存：
+
+```go
+var mu sync.Mutex
+partial := map[string][]byte{} // activation → unfinished line
+stderr := func(record contract.StderrRecord) error {
+    mu.Lock()
+    defer mu.Unlock()
+    key := record.Owner.Activation
+    data := append(partial[key], record.Data...)
+    for {
+        line, rest, found := bytes.Cut(data, []byte("\n"))
+        if !found {
+            break
+        }
+        emit(record.Owner, redact(line))
+        data = rest
+    }
+    if record.Truncated || record.End {
+        delete(partial, key) // no more data: the unfinished last line is dropped
+    } else {
+        partial[key] = data
+    }
+    return nil
+}
+```
+
+正常结束时 `End` 先于这次激活的 `activation stopped`/`canceled`/`failed` 日志。回调与读取在一个 goroutine 中按顺序进行；进程拆除最多等两个 `Grace` 让它读完，回调到那时还没返回，拆除就不再等待（会话错误含 `stderr reader did not finish within grace`），`End` 在回调返回后送达，晚于激活结束；回调一直不返回则不会送达。回调返回错误后这次激活不再转发，也不送 `End`，宿主在返回错误时自行清理。
+
 ## 实例控制
 
 `instance.Update(ctx, config)` 先验证配置，再持久提交并重新初始化；同一入口也用于失败后重新启动。`host.Instance(id)` 取得当前登记，被替换后旧句柄不能控制新登记。
@@ -80,7 +111,7 @@ Host 提供给 native 插件的服务用 `hosting.Requester(ctx)` 得知请求�
 | 操作 | 效果 |
 |---|---|
 | `instance.Stop(ctx)` | 临时停止，保留登记和持久启用意图 |
-| `host.Resume(ctx, id)` | 恢复已临时停止的登记 |
+| `host.Resume(ctx, id)` | 恢复已临时停止的登记；已失败的重新启动。与 `Enable` 后的 `Wait` 一样，等到 Active、失败或停止才返回，失败时返回启动错误 |
 | `host.Retry(ctx, id)` | 保持配置，重试已完成清理的 Failed 登记 |
 | `host.Disable(ctx, id)` | 持久停用并移除运行树 |
 | `host.Remove(ctx, id)` | 停止后删除持久条目 |
@@ -97,4 +128,4 @@ Host 提供给 native 插件的服务用 `hosting.Requester(ctx)` 得知请求�
 
 退出时用独立且有限的 context 调用 `host.Close` 并处理错误。一次 native 停止可能依次用尽取消、关闭和退出的宽限，期限按 `Grace` 估算，CLI 取 `5 * hosting.DefaultGrace`。取消 Close 的等待不表示资源已释放：只有 `host.Done()` 关闭才表示清理和目录释放完成；此时即使 Close 返回了历史错误，也可以继续下一次 Host 启动。
 
-重开目录后，`host.Restore(ctx)` 恢复已启用的条目并创建新 activation；同一个 Host 重复 Restore 不会重试 Failed，也不会撤销本次 Host 中的临时 Stop。自动恢复须按 entry 显式配置，见[有限恢复](recovery.md)；前台 CLI 可开放[本机控制](local-control.md)。应用业务数据由应用自己管理。
+重开目录后，`host.Restore(ctx)` 恢复已启用的条目并创建新 activation；同一个 Host 重复 Restore 不会重试 Failed，也不会撤销本次 Host 中的临时 Stop。自动恢复须按 entry 显式配置：打开时用 `Options.Recovery`，运行中启用的 entry 用 `host.SetRecovery`，见[有限恢复](recovery.md)；前台 CLI 可开放[本机控制](local-control.md)。应用业务数据由应用自己管理。

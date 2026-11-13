@@ -27,7 +27,7 @@ cordis control -connection ./host-connection.json retry counter
 |---|---|
 | status | 返回当前会话、持久 Entries、实际 Instances 和 Recovery；可指定一个 entry |
 | stop | 临时停止目标树，保留启用意图 |
-| resume | 恢复一个已完全停止的静态登记；子项需要分别恢复 |
+| resume | 恢复一个已完全停止的静态登记，已失败的重新启动；等到 Active、失败或停止，失败时响应带启动错误；子项需要分别恢复 |
 | disable | 持久停用目标树并移除运行登记 |
 | enable | 使用既有保存记录的 definition、config、parent、isolate 启用 |
 | retry | 仅对已完成清理的 Failed 静态实例，以当前配置重试 |

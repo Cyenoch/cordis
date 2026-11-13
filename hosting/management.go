@@ -101,8 +101,9 @@ func (h *Host) reserveTrees(roots []string) (func(), error) {
 	}, nil
 }
 
-// Remove deletes the durable entry record after its runtime tree has stopped.
-// It does not uninstall package code.
+// Remove deletes the durable entry record after its runtime tree has stopped,
+// and the recovery policy of every entry it deletes. It does not uninstall
+// package code.
 func (h *Host) Remove(ctx context.Context, id string) error {
 	if err := h.lockOperation(ctx); err != nil {
 		return err
@@ -131,6 +132,7 @@ func (h *Host) Remove(ctx context.Context, id string) error {
 		if err != nil && !catalogCommitted(err) {
 			return result
 		}
+		h.clearRecovery(owned[n].ID)
 	}
 	return result
 }

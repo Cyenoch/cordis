@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -199,15 +200,15 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 		}
 	})
 	t.Run("final-stderr-before-exit", func(t *testing.T) {
-		var chunks []string
+		var records []contract.StderrRecord
 		session := start(t, func(launch *contract.Launch) {
 			launch.Grace = 2 * time.Second
 			launch.Stderr = func(record contract.StderrRecord) error {
-				if len(chunks) == 0 {
+				if len(records) == 0 {
 					// A slow diagnostic sink leaves the final write unread when the process exits.
 					time.Sleep(200 * time.Millisecond)
 				}
-				chunks = append(chunks, string(record.Data))
+				records = append(records, record)
 				return nil
 			}
 		})
@@ -215,14 +216,21 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 			t.Fatal("exit returned a response")
 		}
 		awaitReaped(t, session)
-		if got := strings.Join(chunks, ""); !strings.Contains(got, "final-diagnostic") {
-			t.Fatalf("stderr written before exit was dropped at teardown: %q", got)
+		var got strings.Builder
+		for _, record := range records {
+			got.Write(record.Data)
 		}
+		if !strings.Contains(got.String(), "final-diagnostic") {
+			t.Fatalf("stderr written before exit was dropped at teardown: %q", got.String())
+		}
+		// The end is told before the session is done, after everything else.
+		checkStderrEnd(t, records)
 	})
 	t.Run("stderr-forwarding-bounded", func(t *testing.T) {
 		forwarded := 0
 		truncations := 0
 		var owner contract.Identity
+		var records []contract.StderrRecord
 		session := start(t, func(launch *contract.Launch) {
 			owner = launch.Identity
 			launch.Stderr = func(record contract.StderrRecord) error {
@@ -233,6 +241,7 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 					truncations++
 				}
 				forwarded += len(record.Data)
+				records = append(records, record)
 				return nil
 			}
 		})
@@ -250,6 +259,8 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 		if forwarded != 1024 || truncations != 1 {
 			t.Fatalf("forwarded=%d truncations=%d, want 1024 bytes and one truncation", forwarded, truncations)
 		}
+		// Draining goes on after the truncation, and the end still comes.
+		checkStderrEnd(t, records)
 	})
 	t.Run("stderr-without-sink-keeps-draining", func(t *testing.T) {
 		session := start(t)
@@ -274,6 +285,42 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 		if calls != 1 || !errors.Is(session.Err(), broken) {
 			t.Fatalf("sink failure must stop forwarding but keep draining: calls=%d err=%v", calls, session.Err())
 		}
+	})
+	t.Run("stderr-ends-after-a-late-callback", func(t *testing.T) {
+		release := make(chan struct{})
+		var mu sync.Mutex
+		var records []contract.StderrRecord
+		ended := make(chan struct{})
+		session := start(t, func(launch *contract.Launch) {
+			launch.Grace = 100 * time.Millisecond
+			launch.Stderr = func(record contract.StderrRecord) error {
+				if len(record.Data) > 0 {
+					<-release
+				}
+				mu.Lock()
+				records = append(records, record)
+				mu.Unlock()
+				if record.End {
+					close(ended)
+				}
+				return nil
+			}
+		})
+		if _, err := session.Call(t.Context(), "exit-after-stderr", nil); err == nil {
+			t.Fatal("exit returned a response")
+		}
+		awaitReaped(t, session)
+		// Teardown gave up on the callback; the end comes once it returns.
+		close(release)
+		select {
+		case <-ended:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no end record after the callback returned")
+		}
+		time.Sleep(100 * time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
+		checkStderrEnd(t, records)
 	})
 	t.Run("stuck-stderr-callback-bounded", func(t *testing.T) {
 		release := make(chan struct{})
@@ -356,6 +403,21 @@ func TestExternalRuntimeIsolation(t *testing.T) {
 	})
 	if err := second.Close(); err != nil {
 		t.Fatalf("close healthy activation: %v", err)
+	}
+}
+
+// checkStderrEnd checks that an activation's stderr ended with exactly one
+// End record, carrying no data, and that nothing came after it.
+func checkStderrEnd(t *testing.T, records []contract.StderrRecord) {
+	t.Helper()
+	ends := 0
+	for _, record := range records {
+		if record.End {
+			ends++
+		}
+	}
+	if ends != 1 || !records[len(records)-1].End || len(records[len(records)-1].Data) != 0 {
+		t.Fatalf("stderr did not end with one empty End record: %+v", records)
 	}
 }
 

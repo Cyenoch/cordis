@@ -91,6 +91,11 @@ func (i *hostInstance) start(ctx context.Context, s *cordis.Scope, config json.R
 	}
 	snapshot, err := h.store.Snapshot(ctx, i.pkg.Ref)
 	if err != nil {
+		// Denied here is the store's own check of trust and integrity, never
+		// something the plugin said.
+		if contract.ErrorCode(err) == contract.Denied {
+			i.refuse(r)
+		}
 		return err
 	}
 	s.Defer(func(context.Context) error { return snapshot.Close() })

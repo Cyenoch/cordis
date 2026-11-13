@@ -31,7 +31,13 @@ type Options struct {
 	// control. Zero is contract.DefaultInflight. A caller beyond the limit
 	// waits for a place; a hop of a chain does not wait and gets not_ready.
 	Inflight int
-	Stderr   func(contract.StderrRecord) error
+	// Stderr, when set, receives what native plugins write to stderr, per
+	// activation and up to the runtime's byte limit; each activation's
+	// stream ends with a record whose End is set (see contract.StderrRecord).
+	// It is called from the runtime's goroutines. An error stops forwarding
+	// for that activation and is reported as a cleanup failure, unless the
+	// plugin kept stderr open past Grace: the activation has ended by then.
+	Stderr func(contract.StderrRecord) error
 	// Grace is how long a plugin has to answer a cancellation, to shut down
 	// when asked, and to exit after that; a plugin that takes longer is
 	// treated as stuck and its process ended. Zero is DefaultGrace.
@@ -806,8 +812,11 @@ func (h *Host) Status(id string) (contract.Status, error) {
 	return instance.Status(), nil
 }
 
-// Resume lets a temporarily stopped entry run again. Disable removes the
-// entry; use Enable to create it again after Disable instead.
+// Resume lets a temporarily stopped entry run again and, like Wait after
+// Enable, returns once it is Active, with the error it failed with, or
+// once it stops. A failed entry is restarted. Cancellation ends only the
+// wait. Disable removes the entry; use Enable to create it again after
+// Disable instead.
 func (h *Host) Resume(ctx context.Context, id string) error {
 	if err := h.lockOperation(ctx); err != nil {
 		return err
@@ -832,12 +841,15 @@ func (h *Host) Resume(ctx context.Context, id string) error {
 		return contract.Fail(contract.NotReady, "entry is persistently disabled")
 	}
 	instance.open()
+	if instance.instance.Status().State == cordis.Failed {
+		// A stopped entry does not keep an old failure. The restart is
+		// submitted here and waited for below: the run gate has only begun
+		// to load, and the kernel's own wait would end before the entry
+		// even starts.
+		instance.restart()
+	}
 	h.resetRecovery(id)
 	release()
 	h.unlockOperation()
-	if instance.instance.Status().State == cordis.Failed {
-		// A stopped entry does not keep an old failure.
-		return instance.instance.Restart(ctx)
-	}
 	return instance.Wait(ctx)
 }

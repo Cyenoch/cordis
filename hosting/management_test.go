@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -153,6 +154,52 @@ func TestStopResumeDisableAndRestore(t *testing.T) {
 	}
 	if _, err := f.host.Store().Selected("test.configured"); err != nil {
 		t.Fatalf("remove touched the package: %v", err)
+	}
+}
+
+func TestResumeReportsTheRestartOfAFailedEntry(t *testing.T) {
+	f := newFixture(t)
+	var failing atomic.Bool
+	failing.Store(true)
+	f.pack(plainManifest("test.resumed"), sdk.Define(cordis.Plugin[struct{}]{Name: "main", Start: func(context.Context, *cordis.Scope, struct{}) error {
+		if failing.Load() {
+			return errors.New("still broken")
+		}
+		return nil
+	}}))
+	f.open()
+	instance := f.enable(contract.Entry{ID: "entry", Package: "test.resumed"})
+	if err := instance.Wait(f.ctx()); err == nil {
+		t.Fatal("the entry started")
+	}
+	// Resuming a failed entry restarts it, and says how the restart went
+	// once it has gone one way or the other.
+	must(t, instance.Stop(f.ctx()))
+	if err := f.host.Resume(f.ctx(), "entry"); err == nil || !strings.Contains(err.Error(), "still broken") || f.state("entry") != contract.Failed {
+		t.Fatalf("resume of a restart that fails = %v, state %s", err, f.state("entry"))
+	}
+	must(t, instance.Stop(f.ctx()))
+	failing.Store(false)
+	if err := f.host.Resume(f.ctx(), "entry"); err != nil || f.state("entry") != contract.Active {
+		t.Fatalf("resume of a restart that succeeds = %v, state %s", err, f.state("entry"))
+	}
+}
+
+// A Wait on an entry that waits for a service ends when the host closes.
+func TestWaitEndsWhenTheHostCloses(t *testing.T) {
+	f := newFixture(t)
+	f.pack(echoManifest("test.waiting", false, echoRequirement(0, 9)), sdk.Define(cordis.Plugin[struct{}]{Name: "main", Start: func(context.Context, *cordis.Scope, struct{}) error { return nil }}))
+	f.open()
+	instance := f.enable(contract.Entry{ID: "entry", Package: "test.waiting"})
+	waited := make(chan error, 1)
+	go func() { waited <- instance.Wait(f.ctx()) }()
+	eventually(t, "the entry to wait", func() bool { return f.state("entry") == contract.Waiting })
+	must(t, f.host.Close(f.ctx()))
+	select {
+	case err := <-waited:
+		must(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Wait outlived the host")
 	}
 }
 

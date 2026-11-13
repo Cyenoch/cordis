@@ -421,7 +421,10 @@ type Launch struct {
 	// Inflight is the in-flight limit of the session; zero is DefaultInflight.
 	Inflight int
 	Grace    time.Duration
-	Stderr   func(StderrRecord) error
+	// Stderr receives the activation's stderr. A Runtime calls it from one
+	// goroutine and, unless it returned an error, ends with a record whose
+	// End is set.
+	Stderr func(StderrRecord) error
 }
 
 // Runtime starts activations. Start's context bounds only the start.

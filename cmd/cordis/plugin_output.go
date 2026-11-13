@@ -47,6 +47,11 @@ func forwardStderr(w io.Writer) func(contract.StderrRecord) error {
 			text.WriteString(prefix + "stderr truncated\n")
 			open = false
 		}
+		if record.End && open {
+			// The activation ended in the middle of a line.
+			text.WriteByte('\n')
+			open = false
+		}
 		if open {
 			midLine[record.Owner.Activation] = true
 		} else {

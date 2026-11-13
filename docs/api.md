@@ -50,7 +50,7 @@ Host 管理的实例用 `contract.Instance`：`Status`、`Wait`、`Update`（返
 - 作用域与调用：`Scope`、`ProvideParent`、`Call(ctx, requirement, method, input)`、`Caller(id)` 与 `Caller.Endpoint(required)`、`Emit(ctx, contract.Event)`、`Resolver()`；包级 `Requester(ctx)` 报告 native 请求方，见[接入宿主](host-guide.md#调用与事件)。
 - 包：`Install`、`Select`、`Replace`、`Uninstall`、`Store`。
 - 实例：`Enable`、`Disable`、`Remove`、`Resume`、`Retry`、`Instance`、`Instances`、`Status`、`Restore`、`Close`、`Done`。
-- 恢复：`RecoveryStatus`，策略由 `Options.Recovery` 给出。
+- 恢复：`RecoveryStatus`、`SetRecovery`、`ClearRecovery`，启动时的策略由 `Options.Recovery` 给出。
 
 各操作的语义见[接入宿主](host-guide.md)、[恢复](recovery.md)；组合规则（隔离、清理顺序）见[组合](composition.md)。`Options.Logger` 与 `packagehost.Options.Logger` 接受可选的 `*slog.Logger`，nil 保持静默；handler 在状态锁外同步执行，须及时返回，不得重入管理或关闭方法。
 

@@ -41,6 +41,7 @@ type hostInstance struct {
 	identity contract.Identity
 	outcome  contract.Outcome
 	failed   error // why the last activation failed, as far as the bridge knows
+	refused  bool  // the package store refused to run the last activation's package
 	cleanup  error
 }
 
@@ -78,8 +79,26 @@ func (i *hostInstance) plugin() cordis.Plugin[json.RawMessage] {
 
 func (i *hostInstance) begin(r *run) {
 	i.mu.Lock()
-	i.run, i.identity, i.outcome, i.failed, i.cleanup = r, r.identity, contract.Outcome{}, nil, nil
+	i.run, i.identity, i.outcome, i.failed, i.refused, i.cleanup = r, r.identity, contract.Outcome{}, nil, false, nil
 	i.mu.Unlock()
+}
+
+// refuse records that the package store refused to run the package of r.
+func (i *hostInstance) refuse(r *run) {
+	i.mu.Lock()
+	if i.run == r {
+		i.refused = true
+	}
+	i.mu.Unlock()
+}
+
+// refusedRun reports whether the last activation failed because the
+// package store refused to run its package. Starting again is refused the
+// same way until the package is approved.
+func (i *hostInstance) refusedRun() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.refused
 }
 
 func (i *hostInstance) note(err error) {
@@ -201,7 +220,7 @@ func (i *hostInstance) waitReasons(missing []cordis.Missing) []contract.WaitReas
 
 // Wait blocks until the entry is Active, and returns the error it failed
 // with. An entry that waits for a service or for its parent keeps Wait
-// waiting; a stopped one does not.
+// waiting; a stopped one does not, and nor does a closed Host.
 func (i *hostInstance) Wait(ctx context.Context) error {
 	for {
 		changed := i.host.changes()
@@ -235,6 +254,9 @@ func (i *hostInstance) Wait(ctx context.Context) error {
 		}
 		select {
 		case <-changed:
+		case <-i.host.done:
+			// Close stops every instance and reports no further change.
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
